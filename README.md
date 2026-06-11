@@ -46,13 +46,13 @@ And the security model becomes simple and ancient: **the code that runs on your 
 
 ⚓ **A crew, natively.** Users are a built-in primitive. Every service you create already knows who's aboard and who can reach it — **every row in every database knows who's allowed to see it.** You never bolt auth on. It's in the water.
 
-📡 **Everything is an event.** Services emit to the ship's log; anything can subscribe. Apps stop being silos and become little hobgoblins spanning services — update a record in one place and the dashboard, the planner, and *your friend's ship across the water* all hear it instantly. (This is the bet we're most excited about and least certain of. Come argue with us on the forum.)
+📡 **Everything is an event.** Services emit to the ship's log; anything can subscribe. Apps stop being silos and become little hobgoblins spanning services — update a record in one place and the dashboard, the planner, and *your friend's ship across the water* all hear it instantly. (This is the bet we're most excited about and least certain of. Come argue with us on the board.)
 
 🏗 **Services are the native unit.** A CRUD database + backend logic + a CLI to drive it: Skylark mints these in one motion and registers them with the agent immediately. New service, and the agent already speaks it.
 
 🐚 **A tiny hull, and a home that's all yours.** See the shape of the ship below. The ethos: keep `hull/` brutally small and maximally expressive, push everything possible up into the rigging, and leave `home/` as your sovereign weird space.
 
-🏴‍☠️ **A forum, not a ticket queue.** Orchestration is issue-based, but issues feel like forum threads — proposals, riffs, votes, lore. The agent decomposes work in the background; what you see is your crew designing software together. And of course you'll build your own frontend for the forum. Two crews might share the same forum service and read it through completely different frontends they each wrote. Your forum pulls threads from every crew you sail with.
+🏴‍☠️ **A message board, not a ticket queue.** Orchestration is issue-based, but issues feel like threads on the crew's board — proposals, riffs, votes, lore. The agent decomposes work in the background; what you see is your crew designing software together. And of course you'll build your own frontend for the board. Two crews might share the same board service and read it through completely different frontends they each wrote. Your board pulls threads from every crew you sail with — the BBSes did this in 1986 and called it echomail; we're bringing it back.
 
 ## The shape of the ship
 
