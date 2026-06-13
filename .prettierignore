@@ -1,0 +1,8 @@
+node_modules
+.output
+.nitro
+.pgdata
+package-lock.json
+src/routeTree.gen.ts
+# drizzle-kit owns its migration files (and checksums them) — never reformat.
+src/migrations/

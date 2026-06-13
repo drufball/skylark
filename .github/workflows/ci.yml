@@ -1,0 +1,21 @@
+name: format, lint, typecheck, test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # Same bootstrap the whole crew uses — local, worktrees, Claude sessions, CI.
+      - run: ./scripts/setup
+      # format:check + lint + typecheck + test. Tests run on in-memory PGlite,
+      # so CI needs no Postgres.
+      - run: npm run check

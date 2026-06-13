@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scripts/hoist — bring the ship up.
+#
+# In Skylark, `npm run dev` IS the production server. hoist is that one move,
+# plus a setup if you've never run it. (The tunnel to the open sea — log in from
+# any phone — lands in a later issue.)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+[ -d node_modules ] || ./scripts/setup
+
+# Bring up Postgres. (Assumes Docker is running — making hoist start Docker
+# itself is a later issue.) If it can't, sail anyway: the app degrades to
+# "database: down" rather than refusing to start.
+npm run db:up || echo "⚠ couldn't start Postgres — is Docker running? continuing anyway"
+
+exec npm run dev

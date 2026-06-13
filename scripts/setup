@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Bootstrap a Skylark worktree. Safe to run any number of times, and shared by
+# everything that needs a working tree: local clones, git worktrees, Claude Code
+# sessions, and CI. (Bringing up the live database is hoist's job, not setup's —
+# tests run on in-memory PGlite, so most environments never need Postgres.)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "⚓ Skylark setup"
+
+echo "→ installing dependencies"
+if [ "${CI:-}" = "true" ]; then
+  npm ci
+else
+  npm install
+fi
+
+echo "→ generating routes"
+npm run generate-routes >/dev/null
+
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo "→ wrote .env from .env.example"
+fi
+
+echo "✓ setup complete — \`npm run dev\` to sail (\`./scripts/hoist\` brings up Postgres too)."
