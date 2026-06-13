@@ -32,7 +32,7 @@ Skylark is not built to scale, and never will be. It's built to be **cloned**. E
 
 ### 5. You write all your own code
 
-There's a sharing community, but what people share are **zines**, not binaries. (A zine is Skylark's word for a spec — a small, readable pamphlet describing a piece of software.) A zine doesn't have to be comprehensive: it holds the parts that should survive a rebuild — the taste, the hard-won decisions, the edge cases that matter — and it should be a genuine pleasure to read. Your agent implements the zine in *your* codebase, customized however you want. And when upstream ships an update, it's literally the next **issue** of the zine — your agent reads it and conforms your code.
+There's a sharing community, but what people share are **zines**, not binaries. (A zine is a tiny spec — a small, readable pamphlet describing a piece of software.) A zine doesn't have to be comprehensive: it holds the parts that should survive a rebuild — the taste, the hard-won decisions, the edge cases that matter — and it should be a genuine pleasure to read. Your agent implements the zine in *your* codebase, customized however you want. And when upstream ships an update, it's literally the next **issue** of the zine — your agent reads it and conforms your code.
 
 And the security model becomes simple and ancient: **the code that runs on your ship was written on your ship.**
 
@@ -40,13 +40,13 @@ And the security model becomes simple and ancient: **the code that runs on your 
 
 ⛵ **Boom, you're hosted.** Clone the repo, run `./hoist` on the machine you want as your host, and you're live — local server, tunnel to the outside world, log in from any phone or laptop. That's the entire deployment story.
 
-🤖 **A first mate.** An agent-first UX from the first second: your personal assistant, plus orchestration for tasks and subagents. The agent isn't a feature of Skylark — it's the primary resident.
+🤖 **A first mate.** An agent-first UX from the start: your personal assistant, plus orchestration for tasks and subagents. The agent isn't a feature of Skylark — it's the primary resident.
 
 🧰 **A harness that just works.** A baked-in stack, design system, and skills for creating software, so the agent never bikesheds tech choices. You describe what you want. Not the tech.
 
 ⚓ **A crew, natively.** Users are a built-in primitive. Every service you create already knows who's aboard and who can reach it — **every row in every database knows who's allowed to see it.** You never bolt auth on. It's in the water.
 
-📡 **Everything is an event.** Services emit to the ship's log; anything can subscribe. Apps stop being silos and become little hobgoblins spanning services — update a record in one place and the dashboard, the planner, and *your friend's ship across the water* all hear it instantly. (This is the bet we're most excited about and least certain of. Come argue with us on the board.)
+📡 **Everything is an event.** Services emit to the ship's log; anything can subscribe. Apps stop being silos and become little hobgoblins spanning services — update a record in one place and the dashboard, the planner, and *your friend's ship across the water* all hear it instantly. (This is the bet we're most excited about and least certain of. Come argue with us onboard.)
 
 🏗 **Services are the native unit.** A CRUD database + backend logic + a CLI to drive it: Skylark mints these in one motion and registers them with the agent immediately. New service, and the agent already speaks it.
 
@@ -71,9 +71,9 @@ You'll do most of your living in `home/`. You *can* hack the hull — it's your 
 
 Every ship comes crewed. Three reviewers live in [`.claude/agents/`](.claude/agents/) and sail with every clone — hand them any feature or project for an outside opinion:
 
-- **Tilde, the Shipwright** 🔨 — structure & architecture. Walks the hull, checks the joints, names the barnacles, keeps the hull honest.
+- **Tilde, the Shipwright** 🔨 — structure & architecture. Walks the hull, checks the joints, scrapes the barnacles, keeps the hull honest.
 - **Dot, the Quartermaster** 📰 — crew experience. Editor of the ship's zine; reviews everything by asking what your actual friends will feel when they touch it.
-- **Bix, the Lookout** 📡 — edge cases & weather. Old phone phreak in the crow's nest; charts the reefs so you can sail *faster*, not slower.
+- **Bix, the Lookout** 📡 — edge cases & weather. Old man of the sea in the crow's nest; charts the reefs so you can sail *faster*, not slower.
 
 They're yes-anders with sharp eyes: vision-aligned, allergic to scale-brain, and every concern comes with a fix attached.
 
