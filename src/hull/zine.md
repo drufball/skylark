@@ -23,13 +23,15 @@ holds the database connection and the health service.
 `db/client.ts` creates one connection and exports `db`. Services elsewhere
 import it and query their own tables: `db.select().from(yourTable)`. The
 connection carries no aggregated schema — services pass their own tables — which
-keeps the hull from ever importing upward into rigging or home. The schema
-barrel that drizzle-kit reads lives up in `src/schema.ts`.
+keeps the hull from ever importing upward into rigging or home. (drizzle-kit
+finds tables on its own by globbing every `src/**/schema.ts`.)
 
 ## Decisions
 
 - **One shared connection, with no schema attached.** Services pass their own
-  tables; this keeps the hull free of upward imports.
+  tables (`db.select().from(t)`); this keeps the hull free of upward imports.
+  The cost, by design: Drizzle's relational API (`db.query.*`) is unavailable —
+  use the query builder.
 - **The crew invariant is enforced in the hull.** When tables arrive,
   crew-scoping lives here — a security invariant is the most load-bearing thing
   on the ship.

@@ -32,8 +32,8 @@ with Tailwind and shadcn.
   service.
 - **Route** — a file in `src/routes` binding a URL to a view and the data it
   needs. Thin: the view itself contains no routing.
-- **Barrel** — a module that re-exports from many others to give one import
-  point. `src/schema.ts` is the schema barrel.
+- **Schema** — each service's own `schema.ts` holds its tables; drizzle-kit
+  auto-discovers every `src/**/schema.ts`, so there's nothing to wire by hand.
 - **Crew** — the people aboard; the identity the whole system is scoped to.
   _(Not yet implemented.)_
 - **The ship's log** — the event channel services emit to and subscribe on.
@@ -52,8 +52,9 @@ logic in a deck → the logic queries Postgres through the shared connection `db
 from `@hull/db/client` → the typed result flows back out to the view. One server
 (Vite in dev, Nitro in build) runs all of it in one process.
 
-**Schema.** Each service owns its tables; `src/schema.ts` re-exports them all so
-drizzle-kit can see the whole database to generate migrations.
+**Schema.** Each service owns its tables in its own `schema.ts`; drizzle-kit
+discovers every `src/**/schema.ts` automatically (`drizzle.config.ts`), so a new
+service's tables join migrations with nothing to wire up by hand.
 
 **Tests.** Service logic is database-agnostic, so tests drive it against
 in-memory PGlite — real Postgres, no external database.

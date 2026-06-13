@@ -9,7 +9,9 @@ description:
 # Creating a service
 
 A **service** is Skylark's native unit of work: a slice of data, the logic over
-it, and the doors onto it. The worked reference is `src/hull/health/`.
+it, and the doors onto it. (`src/hull/health/` shows the file layout, but it's a
+special case — it answers a raw `select 1` rather than querying tables, so take
+the query approach from step 4 below, not from health.)
 
 ## 1. Pick the deck
 
@@ -24,15 +26,16 @@ if customizing it would cascade into breakage (core data, security), it's
 <deck>/<name>/
   schema.ts    the Drizzle tables this service owns
   service.ts   pure logic — framework-free and database-agnostic
-  server.ts    createServerFn doors — how the web reaches the logic
-  cli.ts       how the terminal & agent reach the same logic (optional)
+  cli.ts       the default door — how the agent & terminal drive the service
+  server.ts    the web door — added when the service grows a UI
   zine.md      optional — only if you want this service to be shareable
 ```
 
 ## 3. Define the tables (`schema.ts`)
 
-Drizzle tables, owned by this service. Then re-export them from `src/schema.ts`
-(the schema barrel) so drizzle-kit sees them, and generate a migration:
+Drizzle tables, owned by this service. drizzle-kit discovers every
+`src/**/schema.ts` automatically (see `drizzle.config.ts`) — there's no barrel
+to re-export into and nothing to forget. Generate and apply the migration:
 
 ```
 npm run db:generate   # writes a migration from the schema change
@@ -44,17 +47,31 @@ services through events, never by querying their tables.
 
 ## 4. Write the logic (`service.ts`)
 
-Plain functions. Keep them **pure and database-agnostic** — take the database as
-a parameter — so tests can drive them against PGlite and the live server can
-pass the real connection. Query through the shared connection's API, passing
-your own tables: `database.select().from(yourTable)`.
+Plain functions, kept **pure and database-agnostic**: take the database as a
+parameter typed `Database` (from `@hull/db/client`). Both the live connection
+and the in-memory PGlite client used in tests satisfy that type, so the same
+logic runs in tests and in production. Query with the builder, passing your own
+tables:
+
+```ts
+import type { Database } from '@hull/db/client'
+
+import { widgets } from './schema'
+
+export function listWidgets(db: Database) {
+  return db.select().from(widgets)
+}
+```
 
 ## 5. Add the doors
 
-- **`server.ts`** — wrap the logic in `createServerFn`, passing the live `db`
-  from `@hull/db/client`. This is what routes/views call.
-- **`cli.ts`** — optional; call the same `service.ts` functions from the
-  terminal.
+Skylark is agent-first: a service's first door is its CLI.
+
+- **`cli.ts`** — the default door. Call the `service.ts` functions from the
+  terminal so the agent (and you) can drive the service the moment it exists.
+- **`server.ts`** — the web door, added when the service grows a UI: wrap the
+  logic in `createServerFn`, passing the live `db` from `@hull/db/client`. This
+  is what routes/views call.
 
 ## 6. Wire a view (if it has UI)
 

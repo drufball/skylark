@@ -47,6 +47,11 @@ export function ShipStatus({ health }: { health: ShipHealth }) {
               <span className="font-medium text-foreground">{health.db}</span>
             </span>
           </div>
+          {!up && (
+            <p className="text-sm text-muted-foreground">
+              The ship is asleep — try <code>npm run db:up</code>.
+            </p>
+          )}
           <Button className="w-fit">Hoist the sails ☀️🏴‍☠️</Button>
         </CardContent>
       </Card>
