@@ -2,13 +2,13 @@
 
 **An operating system for personal software.**
 
-Skylark is a self-hosted home for software that agents build *for you* — you, your friends, your small crew. Clone the repo, run one script on a machine you own, and you've got a ship: a personal server with an agent aboard, a tunnel to the outside world, and a hull ready for whatever you dream up.
+Skylark is a self-hosted home for software that agents build _for you_ — you, your friends, your small crew. Clone the repo, run one script on a machine you own, and you've got a ship: a personal server with an agent aboard, a tunnel to the outside world, and a hull ready for whatever you dream up.
 
-> *Skylarking (n.) — age-of-sail slang for unauthorized joy in the rigging.* Sailors got punished for it. We built an OS around it.
+> _Skylarking (n.) — age-of-sail slang for unauthorized joy in the rigging._ Sailors got punished for it. We built an OS around it.
 
 ## The wrong question
 
-The entire industry is asking the same question: *when will agents be ready to write production software?*
+The entire industry is asking the same question: _when will agents be ready to write production software?_
 
 Wrong question. **Production is the problem.** Horizontal scale, zero-downtime deploys, compliance reviews, the edge cases of a million strangers — that's where agents struggle. (Humans too, for what it's worth.)
 
@@ -24,7 +24,7 @@ If it's just your crew, you don't need environments and release pipelines. A dev
 
 ### 3. Agent-first
 
-You don't build An App with nav and settings and forty screens. You start with an API. The agent talks to it directly. When you want to *see* something, the agent codes that one view and pipes the data in. A design system accretes. Full apps eventually emerge — but everything starts as agent + CLI, and **the app grows out of use.**
+You don't build An App with nav and settings and forty screens. You start with an API. The agent talks to it directly. When you want to _see_ something, the agent codes that one view and pipes the data in. A design system accretes. Full apps eventually emerge — but everything starts as agent + CLI, and **the app grows out of use.**
 
 ### 4. Small scale (this is the point)
 
@@ -32,13 +32,13 @@ Skylark is not built to scale, and never will be. It's built to be **cloned**. E
 
 ### 5. You write all your own code
 
-There's a sharing community, but what people share are **zines**, not binaries. (A zine is a tiny spec — a small, readable pamphlet describing a piece of software.) A zine doesn't have to be comprehensive: it holds the parts that should survive a rebuild — the taste, the hard-won decisions, the edge cases that matter — and it should be a genuine pleasure to read. Your agent implements the zine in *your* codebase, customized however you want. And when upstream ships an update, it's literally the next **issue** of the zine — your agent reads it and conforms your code.
+There's a sharing community, but what people share are **zines**, not binaries. (A zine is a tiny spec — a small, readable pamphlet describing a piece of software.) A zine doesn't have to be comprehensive: it holds the parts that should survive a rebuild — the taste, the hard-won decisions, the edge cases that matter — and it should be a genuine pleasure to read. Your agent implements the zine in _your_ codebase, customized however you want. And when upstream ships an update, it's literally the next **issue** of the zine — your agent reads it and conforms your code.
 
 And the security model becomes simple and ancient: **the code that runs on your ship was written on your ship.**
 
 ## What Skylark gives you
 
-⛵ **Boom, you're hosted.** Clone the repo, run `./hoist` on the machine you want as your host, and you're live — local server, tunnel to the outside world, log in from any phone or laptop. That's the entire deployment story.
+⛵ **Boom, you're hosted.** Clone the repo, run `./scripts/hoist` on the machine you want as your host, and you're live — local server, tunnel to the outside world, log in from any phone or laptop. That's the entire deployment story.
 
 🤖 **A first mate.** An agent-first UX from the start: your personal assistant, plus orchestration for tasks and subagents. The agent isn't a feature of Skylark — it's the primary resident.
 
@@ -46,7 +46,7 @@ And the security model becomes simple and ancient: **the code that runs on your 
 
 ⚓ **A crew, natively.** Users are a built-in primitive. Every service you create already knows who's aboard and who can reach it — **every row in every database knows who's allowed to see it.** You never bolt auth on. It's in the water.
 
-📡 **Everything is an event.** Services emit to the ship's log; anything can subscribe. Apps stop being silos and become little hobgoblins spanning services — update a record in one place and the dashboard, the planner, and *your friend's ship across the water* all hear it instantly. (This is the bet we're most excited about and least certain of. Come argue with us onboard.)
+📡 **Everything is an event.** Services emit to the ship's log; anything can subscribe. Apps stop being silos and become little hobgoblins spanning services — update a record in one place and the dashboard, the planner, and _your friend's ship across the water_ all hear it instantly. (This is the bet we're most excited about and least certain of. Come argue with us onboard.)
 
 🏗 **Services are the native unit.** A CRUD database + backend logic + a CLI to drive it: Skylark mints these in one motion and registers them with the agent immediately. New service, and the agent already speaks it.
 
@@ -65,7 +65,7 @@ skylark/
 
 (We needed a better name than "stdlib." It's the **rigging**: everything built on the hull that makes it actually sail.)
 
-You'll do most of your living in `home/`. You *can* hack the hull — it's your ship — but the deal we make as a community: the hull stays small so it can stay open to everyone, rigging carries the weight, and home is sovereign. Your OS and your apps live in one monorepo, because **the repo is the ship.**
+You'll do most of your living in `home/`. You _can_ hack the hull — it's your ship — but the deal we make as a community: the hull stays small so it can stay open to everyone, rigging carries the weight, and home is sovereign. Your OS and your apps live in one monorepo, because **the repo is the ship.**
 
 ## The crew
 
@@ -73,7 +73,7 @@ Every ship comes crewed. Three reviewers live in [`.claude/agents/`](.claude/age
 
 - **Tilde, the Shipwright** 🔨 — structure & architecture. Walks the hull, checks the joints, scrapes the barnacles, keeps the hull honest.
 - **Dot, the Quartermaster** 📰 — crew experience. Editor of the ship's zine; reviews everything by asking what your actual friends will feel when they touch it.
-- **Bix, the Lookout** 📡 — edge cases & weather. Old man of the sea in the crow's nest; charts the reefs so you can sail *faster*, not slower.
+- **Bix, the Lookout** 📡 — edge cases & weather. Old man of the sea in the crow's nest; charts the reefs so you can sail _faster_, not slower.
 
 They're yes-anders with sharp eyes: vision-aligned, allergic to scale-brain, and every concern comes with a fix attached.
 

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Bootstrap a Skylark worktree. Safe to run any number of times.
+# Run this at the start of every fresh clone, git worktree, or cloud session.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "⚓ Skylark setup"
+
+echo "→ installing dependencies"
+npm install
+
+echo "→ generating routes"
+npm run generate-routes >/dev/null
+
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo "→ wrote .env from .env.example"
+fi
+
+echo "→ database"
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  npm run db:up
+  echo "  ✓ Postgres up (docker)"
+else
+  echo "  • Docker not running — skipping the live database."
+  echo "    Tests use in-memory PGlite, so they run fine without it."
+  echo "    For the live app, start Docker and run: npm run db:up"
+fi
+
+echo "✓ setup complete — run \`npm run dev\` to sail."

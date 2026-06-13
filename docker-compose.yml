@@ -1,0 +1,19 @@
+# Local Postgres for the ship.
+#
+# Tests do NOT need this — they run on in-memory PGlite. This is only for
+# running the live app against a persistent database.
+#
+#   npm run db:up        # start it (detached)
+#   docker compose down  # stop it (data persists in ./.pgdata)
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: skylark
+    ports:
+      - '5432:5432'
+    volumes:
+      - ./.pgdata:/var/lib/postgresql/data
