@@ -6,15 +6,15 @@ market. Small scale is the point; `npm run dev` is production.
 Start here:
 
 - [`README.md`](README.md) — the bet.
-- [`src/zine.md`](src/zine.md) — how the codebase works: the `src/` serving layer,
-  the three decks (hull/rigging/home), and the structural rules.
+- [`src/zine.md`](src/zine.md) — how the codebase works: the `src/` serving
+  layer, the three decks (hull/rigging/home), and the structural rules.
 
 **The stack is settled — don't re-litigate it.**
 
 ## Stack
 
-- **TanStack Start (v1) + Vite** — one server serves UX _and_ services; cross the
-  client/server line with `createServerFn`.
+- **TanStack Start (v1) + Vite** — one server serves UX _and_ services; cross
+  the client/server line with `createServerFn`.
 - **Drizzle** + **Postgres** (live, in Docker) / **PGlite** (tests).
 - **Tailwind v4 + shadcn/ui** — components are our code in
   `src/rigging/components/ui` (`npx shadcn@latest add <x>`); a theme is CSS
@@ -39,15 +39,17 @@ npm run db:generate      drizzle-kit: migration from src/schema.ts  (· db:migra
 npm run generate-routes  regenerate src/routeTree.gen.ts (gitignored)
 ```
 
-Ollama and pi.dev run **natively** (Docker can't reach the Mac GPU); only Postgres
-is containerized.
+Ollama and pi.dev run **natively** (Docker can't reach the Mac GPU); only
+Postgres is containerized.
 
 ## Skills
 
-- **create-service** — adding a service: folder shape, which deck, wiring, tests.
+- **create-service** — adding a service: folder shape, which deck, wiring,
+  tests.
 - **author-zine** — writing or updating a zine: sections + principles.
 
-They live under `src/.claude/skills/` and surface when you work in the source tree.
+They live under `src/.claude/skills/` and surface when you work in the source
+tree.
 
 ## Testing
 
@@ -64,6 +66,6 @@ PGlite — no external database (example: `src/hull/health/service.test.ts`). Wo
 
 ## The crew
 
-Three reviewers in [`.claude/agents/`](.claude/agents/) — **Tilde** (architecture),
-**Dot** (crew experience & copy), **Bix** (edge cases & data safety). Hand them
-work for an outside opinion.
+Three reviewers in [`.claude/agents/`](.claude/agents/) — **Tilde**
+(architecture), **Dot** (crew experience & copy), **Bix** (edge cases & data
+safety). Hand them work for an outside opinion.

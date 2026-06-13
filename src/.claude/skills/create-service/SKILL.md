@@ -1,6 +1,9 @@
 ---
 name: create-service
-description: Use when adding a new Skylark service — the native unit of data + logic + doors (web/CLI). Covers the folder shape, which deck it belongs in, wiring it to a view, testing it, and when to give it a zine.
+description:
+  Use when adding a new Skylark service — the native unit of data + logic +
+  doors (web/CLI). Covers the folder shape, which deck it belongs in, wiring it
+  to a view, testing it, and when to give it a zine.
 ---
 
 # Creating a service
@@ -11,9 +14,9 @@ it, and the doors onto it. The worked reference is `src/hull/health/`.
 ## 1. Pick the deck
 
 Services live in `hull`, `rigging`, or `home`. Choose by **load-bearingness**:
-if customizing it would cascade into breakage (core data, security), it's `hull`;
-a starting point people freely tweak is `rigging`; your own stuff is `home`. (See
-the Decisions in `src/zine.md`.)
+if customizing it would cascade into breakage (core data, security), it's
+`hull`; a starting point people freely tweak is `rigging`; your own stuff is
+`home`. (See the Decisions in `src/zine.md`.)
 
 ## 2. Lay out the folder
 
@@ -42,21 +45,22 @@ services through events, never by querying their tables.
 ## 4. Write the logic (`service.ts`)
 
 Plain functions. Keep them **pure and database-agnostic** — take the database as
-a parameter — so tests can drive them against PGlite and the live server can pass
-the real connection. Query through the shared connection's API, passing your own
-tables: `database.select().from(yourTable)`.
+a parameter — so tests can drive them against PGlite and the live server can
+pass the real connection. Query through the shared connection's API, passing
+your own tables: `database.select().from(yourTable)`.
 
 ## 5. Add the doors
 
 - **`server.ts`** — wrap the logic in `createServerFn`, passing the live `db`
   from `@hull/db/client`. This is what routes/views call.
-- **`cli.ts`** — optional; call the same `service.ts` functions from the terminal.
+- **`cli.ts`** — optional; call the same `service.ts` functions from the
+  terminal.
 
 ## 6. Wire a view (if it has UI)
 
-Routes are **thin mounts**. Put the view in a deck (usually `rigging`) and bind it
-in `src/routes/<path>.tsx`: the route's `loader` calls your server function and
-hands the data to the view as a prop. The view stays routing-agnostic.
+Routes are **thin mounts**. Put the view in a deck (usually `rigging`) and bind
+it in `src/routes/<path>.tsx`: the route's `loader` calls your server function
+and hands the data to the view as a prop. The view stays routing-agnostic.
 
 ## 7. Test it
 

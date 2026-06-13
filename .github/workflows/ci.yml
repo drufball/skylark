@@ -1,4 +1,4 @@
-name: check
+name: format, lint, typecheck, test
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  check:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -14,9 +14,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      # routeTree.gen.ts is generated and gitignored — recreate it before checks.
-      - run: npm run generate-routes
+      # Same bootstrap the whole crew uses — local, worktrees, Claude sessions, CI.
+      - run: ./scripts/setup
       # format:check + lint + typecheck + test. Tests run on in-memory PGlite,
       # so CI needs no Postgres.
       - run: npm run check
