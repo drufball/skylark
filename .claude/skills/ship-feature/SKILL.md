@@ -52,13 +52,22 @@ gh pr create --fill          # then flesh out the body: what changed and why
 
 CI is more than the test suite. On top of `npm run check` and the coverage
 gates, every PR draws **agentic reviews** — an architecture review, a mutation
-review — and these take **minutes**, not seconds. Poll on the order of a couple
-of minutes; don't hammer it every few seconds.
+review — and these take **minutes**, not seconds.
+
+Don't block the session waiting, and don't tight-poll. Kick off a watch **in the
+background** — it exits when the checks settle and notifies you, so you can keep
+working meanwhile:
 
 ```
-gh pr checks <pr> --watch    # or re-run `gh pr view <pr>` every ~2 min
-gh pr view <pr> --comments   # read the review comments
+gh pr checks <pr> --watch --interval 30   # run in the background; resolves when all checks finish
+gh run watch <run-id> --interval 20 --exit-status   # watch one run; nonzero exit if it fails
+gh pr view <pr> --comments                # read the review comments when it's done
 ```
+
+When the watch returns red, fix and push (each push re-runs the gates), then
+start another background watch. Only `gh pr view`/`gh pr checks` for a quick
+one-off status peek — for anything longer than a few seconds, background the
+watch rather than polling in the foreground.
 
 Then close the loop on everything red or unresolved:
 
