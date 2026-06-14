@@ -19,6 +19,10 @@ src/routeTree.gen.ts
 # local postgres data (the docker compose volume)
 .pgdata/
 
+# mutation testing (Stryker) — reports and scratch space, never committed
+reports/
+.stryker-tmp/
+
 # logs & OS cruft
 *.log
 .DS_Store
