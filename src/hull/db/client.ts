@@ -2,7 +2,7 @@ import { type PgDatabase, type PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
-/** Local default. Override with DATABASE_URL (see scripts/setup, .env). */
+/** Local default. Override with DATABASE_URL (see .env / .env.example). */
 export const DEFAULT_DATABASE_URL =
   'postgres://postgres:postgres@localhost:5432/skylark'
 
