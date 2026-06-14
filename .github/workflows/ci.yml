@@ -34,7 +34,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       # Provides uvx so scripts/coverage-diff can run diff-cover — nothing to install.
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v8.2.0
       - run: ./scripts/setup
       # Global gate: fails if overall coverage drops below the threshold.
       - name: Global coverage gate
