@@ -13,8 +13,14 @@ cd "$(dirname "$0")/.."
 
 block() { echo "$1" >&2; exit 2; }
 
+# Local-dev guardrail only. In CI (GitHub Actions) the agentic reviews and
+# weekly agents run with their own gates and write temp files — never let this
+# hook touch them.
+[ "${GITHUB_ACTIONS:-}" = "true" ] && exit 0
+
 # Already continuing from a prior landing-gate block? One nudge is enough — let
-# the agent stop rather than risk a loop if it genuinely can't push.
+# the agent stop rather than risk a loop if it genuinely can't push. (Claude
+# Code also force-overrides a Stop hook after 8 consecutive blocks.)
 active="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String((JSON.parse(s)||{}).stop_hook_active||""))}catch{}})')"
 [ "$active" = "true" ] && exit 0
 
@@ -22,6 +28,18 @@ branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 # Nothing to land on a detached HEAD or directly on main.
 [ "$branch" = "HEAD" ] && exit 0
 [ "$branch" = "main" ] && exit 0
+
+# Uncommitted or untracked work? `git status` respects .gitignore, so generated
+# files (routeTree.gen.ts, coverage/, node_modules) don't count — only real,
+# unsaved work does. Catches "did some work but never added/committed it".
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  {
+    echo "⚠ Uncommitted work on \`${branch}\`:"
+    git status --short
+    echo "Commit it (the commit-gate runs \`npm run check\`), then push and open a PR before finishing. (landing-gate)"
+  } >&2
+  exit 2
+fi
 
 # Is there committed work on this branch beyond main? If not, nothing to land.
 git rev-parse --verify --quiet origin/main >/dev/null || exit 0

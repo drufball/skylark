@@ -9,6 +9,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Local-dev guardrail only. In CI (GitHub Actions) the agentic reviews and
+# weekly agents run with their own gates — never gate their commits here.
+[ "${GITHUB_ACTIONS:-}" = "true" ] && exit 0
+
 # Pull the Bash command out of the hook payload (empty if this isn't a Bash call).
 command="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write((JSON.parse(s).tool_input||{}).command||"")}catch{}})')"
 
