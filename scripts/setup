@@ -18,9 +18,9 @@ fi
 echo "→ generating routes"
 npm run generate-routes >/dev/null
 
-if [ ! -f .env ]; then
-  cp .env.example .env
-  echo "→ wrote .env from .env.example"
-fi
+# No .env is written here: the db client defaults to the local Postgres URL when
+# DATABASE_URL is unset (src/hull/db/client.ts), so a fresh clone or cloud
+# session just works. Real overrides live in your own .env — copied into local
+# worktrees by .worktreeinclude, or set as env vars in cloud.
 
 echo "✓ setup complete — \`npm run dev\` to sail (\`./scripts/hoist\` brings up Postgres too)."

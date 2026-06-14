@@ -61,6 +61,11 @@ PGlite — no external database (example: `src/hull/health/service.test.ts`). Wo
 
 - Start dev servers in the background so they don't block the session; check UI
   with the Playwright CLI.
+- `npm run dev` serves on port 3000, or the next free port if 3000 is taken (so
+  parallel worktrees coexist) — it prints the URL on boot. Use the printed port.
+- The SessionStart hook (`.claude/settings.json` → `scripts/setup`) prepares
+  every session, local and cloud; the agent starts `npm run dev` when it needs
+  the UI.
 - The app degrades to "database: down" when Postgres is asleep rather than
   crashing.
 

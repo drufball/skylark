@@ -1,0 +1,5 @@
+# Gitignored files copied into every new worktree (.gitignore syntax).
+# Local worktrees inherit your real .env (secrets and all), so they share the
+# one Postgres from `npm run db:up`. (Cloud sessions ignore this file; with no
+# .env they fall back to the default DB URL in src/hull/db/client.ts.)
+.env
