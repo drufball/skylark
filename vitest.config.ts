@@ -28,10 +28,12 @@ export default defineConfig({
         'src/router.tsx', // framework wiring
         'src/routes/**', // route definitions — thin TanStack glue
         'src/**/server.ts', // createServerFn doors; logic belongs in service.ts
+        'src/**/cli.ts', // CLI doors; logic belongs in service.ts/runtime.ts
+        'src/**/test-db.ts', // test-only DB harness, not shipped logic
         'src/hull/db/client.ts', // live Postgres connection wiring
         'src/rigging/components/ui/**', // vendored shadcn primitives
         'src/rigging/lib/utils.ts', // vendored shadcn cn() helper
-        'src/schema.ts', // drizzle table declarations — data, not logic
+        'src/**/schema.ts', // drizzle table declarations — data, not logic
         'src/**/*.config.{ts,js}',
         'src/.claude/**',
       ],
