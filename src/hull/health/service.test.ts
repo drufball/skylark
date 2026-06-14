@@ -26,4 +26,17 @@ describe('shipHealth', () => {
       expect(result.error).toContain('asleep')
     }
   })
+
+  it('stringifies a non-Error rejection', async () => {
+    // Drivers don't always reject with an Error — make sure a bare value still
+    // surfaces as a readable message rather than "[object Object]" or a crash.
+    const result = await shipHealth({
+      // Rejecting with a bare string is the whole point of this test, so the
+      // "reject with an Error" lint rule doesn't apply here.
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      execute: () => Promise.reject('kraken'),
+    })
+
+    expect(result).toEqual({ db: 'down', error: 'kraken' })
+  })
 })

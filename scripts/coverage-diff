@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Diff coverage gate: of the lines you changed versus main, how many are tested?
+#
+# This is the PR-review half of coverage — it answers "is your NEW code tested",
+# not "is the whole project tested" (that's the global threshold in
+# vitest.config.ts). It reads the lcov report produced by `npm run coverage`,
+# intersects it with `git diff`, and fails if too few changed lines are covered.
+#
+# Tool: diff-cover (https://github.com/Bachmann1234/diff_cover) — the de-facto
+# diff-coverage CLI. Run via `uvx`, so there is nothing to install and no Python
+# environment to manage: uv fetches it into an ephemeral, cached env each run.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+LCOV="coverage/lcov.info"
+COMPARE_BRANCH="${COMPARE_BRANCH:-origin/main}"
+FAIL_UNDER="${DIFF_COVERAGE_MIN:-90}"
+
+if ! command -v uvx >/dev/null 2>&1; then
+  echo "✗ uvx not found. Install uv once — it's a single self-contained binary:" >&2
+  echo "    brew install uv      # or: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+  exit 1
+fi
+
+if [ ! -f "$LCOV" ]; then
+  echo "✗ $LCOV not found — run \`npm run coverage\` first (coverage:check does this for you)." >&2
+  exit 1
+fi
+
+# diff-cover needs the comparison branch present locally. Fetch it quietly if we
+# have an origin; harmless when offline or already up to date.
+if git remote | grep -q '^origin$'; then
+  git fetch --quiet origin main 2>/dev/null || true
+fi
+
+echo "→ diff coverage vs ${COMPARE_BRANCH} (fail under ${FAIL_UNDER}%)"
+exec uvx diff-cover "$LCOV" \
+  --compare-branch="$COMPARE_BRANCH" \
+  --fail-under="$FAIL_UNDER"
