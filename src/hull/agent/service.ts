@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gte, ne } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
+import { firstLine, truncate } from '@hull/lib/text'
 
 import {
   agentMessages,
@@ -21,8 +22,7 @@ export type SessionStatus = AgentSessionRow['status']
 
 /** What `title` is derived from: the first user message, trimmed to one line. */
 export function titleFromMessage(text: string, max = 80): string {
-  const firstLine = text.trim().split('\n')[0].trim()
-  return firstLine.length > max ? `${firstLine.slice(0, max - 1)}…` : firstLine
+  return truncate(firstLine(text), max)
 }
 
 export async function createSession(

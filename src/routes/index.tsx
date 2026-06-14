@@ -48,14 +48,20 @@ function AgentRoute() {
     baseCount: number
   } | null>(null)
 
+  // Poll only while something is actually in flight — a turn running or a
+  // just-sent message not yet persisted. An idle front door or a finished
+  // conversation re-fetches nothing; the loader already gave us the truth.
+  const running = chat?.session.status === 'running'
+  const live = running || pending !== null
   useEffect(() => {
+    if (!live) return
     const timer = setInterval(() => {
       void router.invalidate()
     }, 1500)
     return () => {
       clearInterval(timer)
     }
-  }, [router])
+  }, [router, live])
 
   async function send(text: string) {
     setBusy(true)
@@ -100,7 +106,7 @@ function AgentRoute() {
       sessions={summaries}
       activeId={activeId}
       items={shown}
-      running={chat?.session.status === 'running'}
+      running={running}
       busy={busy}
       error={chat?.session.error ?? null}
       onSend={(text) => {

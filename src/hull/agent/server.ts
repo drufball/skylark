@@ -33,7 +33,11 @@ function runtime(): AgentRuntime {
   return runtimeSingleton
 }
 
-/** Run a turn in the background, recording failures on the session row. */
+/**
+ * Run a turn in the background, logging failures. The session row's error
+ * status is recorded by runTurn itself (see runtime.ts); here we only keep the
+ * floating promise from going unhandled.
+ */
 function fireTurn(sessionId: string, text: string): void {
   void runtime()
     .runTurn(sessionId, text)

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Anchor, Loader2, Plus, Send, Square } from 'lucide-react'
 
 import type { ChatItem } from '@hull/agent/transcript'
+import { truncate } from '@hull/lib/text'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
@@ -255,8 +256,4 @@ function Composer({
       </div>
     </div>
   )
-}
-
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
