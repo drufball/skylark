@@ -15,6 +15,8 @@
     "coverage": "vitest run --coverage",
     "coverage:diff": "./scripts/coverage-diff",
     "coverage:check": "npm run coverage && npm run coverage:diff",
+    "mutate": "stryker run",
+    "mutate:diff": "./scripts/mutate-diff",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -50,6 +52,8 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.2",
     "@eslint/js": "^10.0.1",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@tailwindcss/typography": "^0.5.20",
     "@tanstack/devtools-vite": "^0.7.0",
     "@tanstack/router-cli": "^1.167.17",

@@ -40,6 +40,8 @@ npm run typecheck        tsc --noEmit
 npm run db:up            start local Postgres (Docker)
 npm run db:generate      drizzle-kit: migration from src/schema.ts  (· db:migrate to apply)
 npm run generate-routes  regenerate src/routeTree.gen.ts (gitignored)
+npm run mutate           Stryker mutation test, whole project (periodic sweep)
+npm run mutate:diff      mutation-test only the files this branch changed vs main
 ```
 
 Ollama and pi.dev run **natively** (Docker can't reach the Mac GPU); only
@@ -80,6 +82,17 @@ A weekly GitHub Action (`.github/workflows/coverage-boost.yml`) has an agent
 read the report, write tests for the biggest gaps, and open a PR — which then
 faces the same two gates. It needs a `CLAUDE_CODE_OAUTH_TOKEN` repo secret (or
 swap in `ANTHROPIC_API_KEY`).
+
+### Mutation testing
+
+**Mutation testing** (Stryker) measures whether those tests actually pin down
+behaviour. Run `npm run mutate:diff` to check your own work before pushing — it
+mutates only the files you changed. Every PR also gets a one-time **agentic**
+mutation review in CI (`.github/workflows/mutation-review.yml`): it's advisory,
+not a gate — it leaves comments and you decide. Comment `@mutation-review` on a
+PR to run it again. A weekly scan (`mutation-scan.yml`) sweeps the whole project
+and opens a PR strengthening the weakest tests. Scope and rationale live in
+`stryker.config.mjs`.
 
 ## Working notes
 
