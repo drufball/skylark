@@ -2,6 +2,8 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import {
   type AgentSessionEvent,
   createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
   SessionManager,
 } from '@earendil-works/pi-coding-agent'
 import { getModels } from '@earendil-works/pi-ai'
@@ -9,6 +11,7 @@ import { getModels } from '@earendil-works/pi-ai'
 import type { Database } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
 
+import { readContextFiles, skillDirs } from './config'
 import { appendMessage, getMessages, getSession, setStatus } from './service'
 
 /** Default model when a session doesn't pin one. Anthropic only, for now. */
@@ -53,12 +56,30 @@ function resolveModel(modelId: string) {
  * durable log. The trade-off — a single boot can't exceed the context window —
  * is fine while sessions are short-lived and rebuilt from full history each
  * boot; context-window management that preserves the full log is future work.
+ *
+ * The agent shares the ship's config: CLAUDE.md and the same skills the human's
+ * Claude Code session uses, fed in through pi.dev's resource loader (see
+ * config.ts). Hooks are not shared — those are Claude Code harness shell-hooks
+ * about the human's git flow; pi.dev's equivalent is TS extensions, which the
+ * loader can take via additionalExtensionPaths when we want them.
  */
 export const createPiSession: SessionFactory = async (model) => {
+  const cwd = process.cwd()
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir: getAgentDir(),
+    additionalSkillPaths: skillDirs(cwd),
+    agentsFilesOverride: (base) => ({
+      agentsFiles: [...base.agentsFiles, ...readContextFiles(cwd)],
+    }),
+  })
+  await resourceLoader.reload()
+
   const { session } = await createAgentSession({
     model: resolveModel(model),
     sessionManager: SessionManager.inMemory(),
-    cwd: process.cwd(),
+    cwd,
+    resourceLoader,
   })
   session.setAutoCompactionEnabled(false)
   return session
