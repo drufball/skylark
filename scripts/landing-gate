@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# scripts/landing-gate — Stop hook. When the agent finishes, make sure any work
+# it committed on this branch is pushed AND has a PR. If not, block the stop and
+# tell it to land the work. Registered in .claude/settings.json.
+#
+# Input:  the Stop JSON on stdin — we read stop_hook_active so one firm nudge
+#         can't become an infinite loop.
+# Output: exit 0 lets the agent stop; exit 2 blocks and feeds stderr back so it
+#         keeps working. Anything we can't verify (no remote, gh missing) fails
+#         OPEN — we never trap the agent over tooling we don't control.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+block() { echo "$1" >&2; exit 2; }
+
+# Already continuing from a prior landing-gate block? One nudge is enough — let
+# the agent stop rather than risk a loop if it genuinely can't push.
+active="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String((JSON.parse(s)||{}).stop_hook_active||""))}catch{}})')"
+[ "$active" = "true" ] && exit 0
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+# Nothing to land on a detached HEAD or directly on main.
+[ "$branch" = "HEAD" ] && exit 0
+[ "$branch" = "main" ] && exit 0
+
+# Is there committed work on this branch beyond main? If not, nothing to land.
+git rev-parse --verify --quiet origin/main >/dev/null || exit 0
+ahead="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)"
+[ "$ahead" -gt 0 ] || exit 0
+
+# Pushed? The branch's remote tip must exist and match HEAD.
+remote_tip="$(git rev-parse --verify --quiet "origin/$branch" || true)"
+if [ "$remote_tip" != "$(git rev-parse HEAD)" ]; then
+  block "⚠ ${ahead} commit(s) on \`${branch}\` aren't pushed. Push and open a PR before finishing: \`git push -u origin ${branch}\` then \`gh pr create --fill\`. See the ship-feature skill. (landing-gate)"
+fi
+
+# PR created? Only enforce when gh is here and authenticated — otherwise fail open.
+command -v gh >/dev/null 2>&1 || exit 0
+gh auth status >/dev/null 2>&1 || exit 0
+prs="$(gh pr list --head "$branch" --state all --json number --jq 'length' 2>/dev/null || echo "?")"
+[ "$prs" = "?" ] && exit 0 # gh hiccup — don't trap the agent
+if [ "$prs" = "0" ]; then
+  block "⚠ \`${branch}\` is pushed but has no PR. Open one before finishing: \`gh pr create --fill\`, then shepherd it to green and merge. See the ship-feature skill. (landing-gate)"
+fi
+
+exit 0
