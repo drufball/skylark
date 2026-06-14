@@ -1,0 +1,75 @@
+name: architecture review (weekly)
+
+# Weekly whole-ship architecture review. Unlike the per-PR review, this one acts:
+# an agent surveys the entire codebase, lands the structural fixes it's confident
+# in, and opens a PR with the work. That PR then flows through the normal
+# per-PR architecture review like any other.
+#
+# The review itself is the `architecture-review` skill
+# (.claude/skills/architecture-review/SKILL.md).
+
+on:
+  schedule:
+    - cron: '0 8 * * 1' # Mondays, 08:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write # the action mints its GitHub + Anthropic auth via OIDC
+
+concurrency:
+  group: architecture-review-weekly
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # Same bootstrap the whole crew uses, so the review can run `npm run check`
+      # to prove its fixes are green before opening the PR.
+      - run: ./scripts/setup
+
+      - name: Configure git identity
+        run: |
+          git config user.name "architecture-review"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Architecture review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_args: |
+            --model opus
+            --max-turns 60
+            --allowedTools Bash,Read,Grep,Glob,Edit,Write
+          prompt: |
+            Weekly whole-ship architecture review of ${{ github.repository }}:
+            survey the codebase, land the fixes worth landing, open one PR. One
+            pass.
+
+            Run `/architecture-review` across the whole codebase.
+
+            1. Land the highest-leverage, lowest-risk fixes as focused commits —
+               prefer a tight, reviewable change over a sweeping rewrite. Don't
+               touch generated files (e.g. src/routeTree.gen.ts) or anything
+               under .claude/worktrees/.
+            2. Verify with `npm run check` — it must pass before you open the PR.
+            3. Branch `architecture-review/$(date +%F)`, commit, push, and open a
+               PR with `gh pr create` titled "Architecture review: <date>". The
+               body: what you changed and why (file:line), plus a checklist of the
+               findings you did NOT fix, for the crew to pick up.
+
+            If nothing's worth acting on, don't open a noise PR — just stop.
