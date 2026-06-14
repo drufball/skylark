@@ -6,7 +6,8 @@ _hull zine — issue #1_
 
 The hull is the load-bearing foundation — the planks every ship shares. Things
 here are depended on widely and aren't meant to be customized. Today the hull
-holds the database connection and the health service.
+holds the database connection, the health service, and the agent — the ship's
+first resident.
 
 ## Components
 
@@ -14,9 +15,17 @@ holds the database connection and the health service.
   `db/client.ts`. Every service in every deck uses it.
 - **health service** (`health/`) — the ship's pulse: reports whether the
   database answers.
+- **agent service** (`agent/`) — the ship's first resident: durable
+  conversations with Claude over the pi.dev SDK, with Postgres as the source of
+  truth. See [`agent/zine.md`](agent/zine.md).
+- **errors util** (`lib/errors.ts`) — `errorMessage()`, the one place that
+  renders an unknown thrown value as a string. Importable downward by every
+  deck.
 - **crew primitive** — the access invariant "every row knows its crew": crew
   columns plus a query helper that won't compile without a crew filter. _(Not
-  yet implemented — it lands with the first service that has tables.)_
+  yet implemented. The agent service is the first to ship tables, and it does so
+  single-tenant — a knowingly temporary debt, tracked in its zine — so the crew
+  primitive now lands as its own piece of work rather than riding in for free.)_
 
 ## Structure
 
@@ -38,5 +47,8 @@ finds tables on its own by globbing every `src/**/schema.ts`.)
 
 ## Changelog
 
+- **#2** — the agent service ([`agent/zine.md`](agent/zine.md)) and a shared
+  `errors` util. The agent is the first hull component with its own tables; it
+  ships single-tenant, ahead of the crew primitive.
 - **#1** — db connection and the health service. The crew primitive is designed
   but not yet built.
