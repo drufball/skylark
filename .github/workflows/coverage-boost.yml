@@ -1,0 +1,66 @@
+name: weekly coverage boost
+
+# Once a week, an agent reads the coverage report, writes real tests for the
+# biggest gaps, and opens a PR if it found anything worth improving. It never
+# merges — the PR goes through normal review and the same coverage gates as any
+# other change (.github/workflows/ci.yml).
+on:
+  schedule:
+    - cron: '0 9 * * MON' # 09:00 UTC every Monday
+  workflow_dispatch: {} # ...or run it on demand from the Actions tab
+
+# Least privilege for a job that pushes a branch and opens a PR.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  boost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: astral-sh/setup-uv@v8
+      - run: ./scripts/setup
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          # So the agent's `gh pr create` / `git push` are authenticated.
+          GH_TOKEN: ${{ github.token }}
+        with:
+          # The token the `/install-github-app` flow creates. If this repo
+          # instead uses a raw API key, swap this for:
+          #   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --model claude-sonnet-4-6
+            --max-turns 40
+            --allowedTools Bash,Edit,Read,Write,Glob,Grep
+          prompt: |
+            You are improving test coverage for the Skylark repo. Work autonomously.
+
+            1. Run `npm run coverage` and read the per-file table. The global gate
+               and the ignore list live in vitest.config.ts — respect them.
+            2. Pick the files with the most uncovered LOGIC (services, views,
+               libs). Ignore anything already excluded in vitest.config.ts.
+            3. Write REAL tests that exercise behavior, following the repo's
+               conventions: red-green TDD, and in-memory PGlite for database
+               tests. Study src/hull/health/service.test.ts as the model, and
+               read CLAUDE.md + src/zine.md for the rules of the codebase.
+            4. Hard rules: do NOT edit the exclude list, lower any threshold, or
+               weaken assertions to make numbers go up. Tests must be meaningful.
+               Don't change application code except to fix a genuine bug a new
+               test exposes (call that out clearly if so).
+            5. Run `npm run check` and `npm run coverage` — everything must pass.
+            6. If you made a meaningful improvement, create a branch
+               `coverage/weekly-<short-date>`, commit, and open a PR with `gh`.
+               Title it "Weekly coverage boost", and in the body report coverage
+               before → after and list the files you added tests for. If there
+               was nothing worth improving, make NO commit and NO PR — say so and
+               stop. Never open an empty or trivial PR.

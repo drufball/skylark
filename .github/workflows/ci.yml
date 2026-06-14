@@ -19,3 +19,28 @@ jobs:
       # format:check + lint + typecheck + test. Tests run on in-memory PGlite,
       # so CI needs no Postgres.
       - run: npm run check
+
+  # Two coverage gates sharing one test run: a global threshold (vitest.config.ts)
+  # and, on PRs, diff coverage of the changed lines vs main (scripts/coverage-diff).
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # diff-cover compares this branch against origin/main — needs full history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # Provides uvx so scripts/coverage-diff can run diff-cover — nothing to install.
+      - uses: astral-sh/setup-uv@v8
+      - run: ./scripts/setup
+      # Global gate: fails if overall coverage drops below the threshold.
+      - name: Global coverage gate
+        run: npm run coverage
+      # Diff gate: fails if too few of the lines you changed are tested.
+      # PR-only — there is no diff to measure on a push to main.
+      - name: Diff coverage gate (changed lines vs main)
+        if: github.event_name == 'pull_request'
+        run: npm run coverage:diff
