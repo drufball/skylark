@@ -34,11 +34,13 @@ version too. Boring, straightforward code beats clever code. Every finding gets
 6. **Weak seams.** Modules should depend on small, explicit contracts, not reach
    into each other's guts. Prefer downward, tree-like dependencies: they must
    form an acyclic DAG and follow Skylark's one-way rule
-   (`home → rigging → hull`; only `src/` crosses decks). Anything depending
-   upward or cutting sideways across the codebase should be extracted into a
-   shared utility below both, not left as a long-range edge. Cut cycles by
-   introducing an interface, moving a type down a deck, or routing through the
-   ship's log (events) instead of a direct call.
+   (`home → rigging → hull`; only `src/` crosses decks). A dependency that runs
+   upward or cuts sideways usually means several modules want the same thing at
+   once — so it rarely has a natural shared child to sink into. Hoist it to a
+   shared top-level utility at the top of the deck (e.g. `rigging/lib`) that the
+   modules depend on _downward_, rather than leaving a long-range edge. Cut
+   cycles by introducing an interface, moving a type down a deck, or routing
+   through the ship's log (events) instead of a direct call.
 7. **Fewer lines, same power.** Refactors that do the same work in significantly
    less code — a first-class goal. But never trade lines for rigidity: the win
    is less code that's _also_ easier to change (delete duplication, drop

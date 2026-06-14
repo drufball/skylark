@@ -49,12 +49,18 @@ Postgres is containerized.
 
 ## Skills
 
+- **ship-feature** — the build loop: red-green TDD → `npm run check` → commit →
+  push → shepherd the PR through CI and reviews → merge. **Follow it whenever
+  you build or change a feature.**
+- **architecture-review** — review structure & boundaries of a diff, module, or
+  the whole ship (also run per-PR and weekly in CI).
 - **create-service** — adding a service: folder shape, which deck, wiring,
   tests.
 - **author-zine** — writing or updating a zine: sections + principles.
 
-They live under `src/.claude/skills/` and surface when you work in the source
-tree.
+`ship-feature` and `architecture-review` live in `.claude/skills/`; the
+service-tree skills live under `src/.claude/skills/` and surface when you work
+in the source tree.
 
 ## Testing
 
@@ -62,37 +68,11 @@ Vitest. Service logic is database-agnostic, so DB tests run against in-memory
 PGlite — no external database (example: `src/hull/health/service.test.ts`). Work
 **red-green TDD**: write a failing test first then make it pass.
 
-### Coverage
-
-Two gates, both runnable locally and enforced in CI:
-
-- **Global** — `npm run coverage`. A project-wide threshold (`vitest.config.ts`
-  → `test.coverage`). Kept ambitious by an **ignore list** that excludes code
-  that isn't ours to test or carries no logic: vendored shadcn (`components/ui`,
-  `lib/utils`), framework doors (`server.ts`, `router.tsx`, `routes/`), the live
-  DB wiring (`db/client.ts`), and drizzle declarations (`schema.ts`). Logic
-  lives in `service.ts` files and views — keep those covered. To exempt a new
-  file, add it to `coverage.exclude` rather than lowering the threshold.
-- **Diff** — `npm run coverage:diff`. Uses `diff-cover` (run via `uvx`, nothing
-  to install) to check that the lines you **changed** versus `main` are tested —
-  this is the PR-review question ("is your new code covered"), independent of
-  the global number. `npm run coverage:check` runs both.
-
-A weekly GitHub Action (`.github/workflows/coverage-boost.yml`) has an agent
-read the report, write tests for the biggest gaps, and open a PR — which then
-faces the same two gates. It needs a `CLAUDE_CODE_OAUTH_TOKEN` repo secret (or
-swap in `ANTHROPIC_API_KEY`).
-
-### Mutation testing
-
-**Mutation testing** (Stryker) measures whether those tests actually pin down
-behaviour. Run `npm run mutate:diff` to check your own work before pushing — it
-mutates only the files you changed. Every PR also gets a one-time **agentic**
-mutation review in CI (`.github/workflows/mutation-review.yml`): it's advisory,
-not a gate — it leaves comments and you decide. Comment `@mutation-review` on a
-PR to run it again. A weekly scan (`mutation-scan.yml`) sweeps the whole project
-and opens a PR strengthening the weakest tests. Scope and rationale live in
-`stryker.config.mjs`.
+Two coverage gates (`npm run coverage`, `npm run coverage:diff`) and mutation
+testing (`npm run mutate:diff`) run both locally and in CI — scope and rationale
+live in `vitest.config.ts` and `stryker.config.mjs`. Every PR also draws
+advisory **agentic reviews** (architecture + mutation); the weekly sweeps and
+their secrets are documented in `.github/workflows/`.
 
 ## Working notes
 
@@ -102,7 +82,10 @@ and opens a PR strengthening the weakest tests. Scope and rationale live in
   parallel worktrees coexist) — it prints the URL on boot. Use the printed port.
 - The SessionStart hook (`.claude/settings.json` → `scripts/setup`) prepares
   every session, local and cloud; the agent starts `npm run dev` when it needs
-  the UI.
+  the UI. Two more hooks guard the build loop: the **commit-gate** runs
+  `npm run check` before any `git add`/`git commit` (blocks on failure), and the
+  **landing-gate** won't let you finish with committed work that isn't pushed
+  and PR'd.
 - The app degrades to "database: down" when Postgres is asleep rather than
   crashing.
 
