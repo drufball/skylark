@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# scripts/mutate-diff — mutation-test only what this branch changed.
+#
+# The full project scan (`npm run mutate`) is for periodic sweeps; this one is
+# for "did the tests I just wrote actually pin down the behaviour I just wrote".
+# It diffs against main, collects the changed source files, and mutates each one
+# WHOLE — not just the changed lines — so that new code regressing OLD behaviour
+# in the same file still gets caught.
+#
+# Base ref: origin/main if present (CI), else main (local). Override with
+# MUTATE_BASE=<ref>.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+BASE="${MUTATE_BASE:-origin/main}"
+git rev-parse --verify --quiet "$BASE" >/dev/null || BASE=main
+git rev-parse --verify --quiet "$BASE" >/dev/null || {
+  echo "⚠ no base ref to diff against (tried origin/main and main) — skipping" >&2
+  exit 0
+}
+
+MERGE_BASE="$(git merge-base "$BASE" HEAD)"
+
+# Changed (added/modified, never deleted) source files Stryker can mutate —
+# kept in lockstep with the `mutate` globs in stryker.config.mjs. (A while-read
+# loop, not `mapfile`, so this runs on macOS's stock bash 3.2 too.)
+FILES=()
+while IFS= read -r f; do
+  [ -n "$f" ] && FILES+=("$f")
+done < <(
+  git diff --name-only --diff-filter=d "$MERGE_BASE" -- 'src/' \
+    | grep -E '\.(ts|tsx)$' \
+    | grep -Ev '\.test\.(ts|tsx)$|/server\.ts$|/schema\.ts$|^src/hull/db/client\.ts$|^src/router\.tsx$|^src/routes/|^src/routeTree\.gen\.ts$|^src/rigging/components/ui/' \
+    || true
+)
+
+if [ "${#FILES[@]}" -eq 0 ]; then
+  echo "→ no mutatable source changed vs ${BASE} — nothing to do"
+  exit 0
+fi
+
+echo "→ mutation-testing ${#FILES[@]} changed file(s) vs ${BASE}:"
+printf '   %s\n' "${FILES[@]}"
+
+# Comma-separated list → Stryker mutates each named file in full.
+MUTATE="$(IFS=,; echo "${FILES[*]}")"
+exec npx stryker run --mutate "$MUTATE"

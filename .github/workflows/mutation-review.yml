@@ -1,0 +1,115 @@
+name: mutation review
+
+# Agentic, advisory mutation-testing review of a PR's test quality. NOT a gate:
+# it runs the diff scan, an agent triages the surviving mutants, and it leaves
+# comments. The PR author (human or agent) decides what to act on.
+#
+# It runs ONE automatic pass per PR — on open / ready-for-review, skipping
+# drafts — and never on subsequent pushes, so it can't spiral. To ask for
+# another pass deliberately, comment `@mutation-review` on the PR.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write # the action mints its GitHub + Anthropic auth via OIDC
+
+concurrency:
+  group:
+    mutation-review-${{ github.event.pull_request.number ||
+    github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # The single automatic pass (non-draft PRs only), or an explicit re-run
+    # requested by an `@mutation-review` comment on the PR.
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft ==
+      false) || (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@mutation-review'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history so mutate:diff can merge-base against main
+
+      - name: Check out the PR's head
+        run: gh pr checkout "$PR"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: ./scripts/setup
+
+      # Mutate only the files this PR changed. Survivors are signal, not failure,
+      # so a non-zero exit never sinks the job.
+      - name: Mutation-test the diff
+        run: npm run mutate:diff
+        continue-on-error: true
+
+      - name: Review the surviving mutants
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_args: |
+            --model opus
+            --max-turns 25
+            --allowedTools Bash,Read,Grep,Glob
+          prompt: |
+            You are giving an advisory, one-time review of this pull request's
+            TEST QUALITY using mutation testing. You are not a gate.
+
+            Mutation testing has ALREADY run on the files this PR changed. The
+            Stryker JSON report is at `reports/mutation/mutation.json`. If that
+            file does not exist, the PR changed no mutatable source — do nothing,
+            post no comment, and stop.
+
+            Read the report. Inspect mutants with status "Survived" (a test ran
+            but did not catch the change) and "NoCoverage" (no test exercises
+            that code). Each is a behaviour the tests don't pin down.
+
+            This is judgment, not a checklist:
+            - IGNORE equivalent mutants (no observable behaviour change),
+              cosmetic mutants, and any where a test would add noise not safety.
+            - KEEP survivors that represent a real, plausible bug that could ship
+              untested.
+
+            Then leave feedback — useful, not noisy:
+
+            1. Post exactly ONE top-level PR comment, starting with the literal
+               marker `<!-- mutation-review -->`. Include: the diff mutation
+               score, a short markdown table of the survivors worth attention
+               (columns: location `file:line`, the mutation, why it matters / the
+               assertion that would kill it), and a closing line: "Advisory only
+               — not a merge gate. The author decides what's worth a test.
+               Comment `@mutation-review` to run this again." If every mutant was
+               killed, instead post a one-line comment with the marker, the
+               score, and a nod that the tests held.
+            2. For survivors that fall on lines THIS PR actually changed (check
+               with `git diff --merge-base origin/main`), also post an inline
+               review comment at that exact file:line — up to 5, highest value
+               first — naming the case or assertion that would kill the mutant.
+               Survivors on unchanged lines go in the top-level table only
+               (GitHub rejects inline comments outside the diff).
+
+            Use the `gh` CLI for everything. Repo is ${{ github.repository }},
+            PR number is in $PR, the head commit is `git rev-parse HEAD`:
+            - top-level:  `gh pr comment "$PR" --body-file <file>`
+            - inline:     `gh api repos/${{ github.repository }}/pulls/$PR/comments
+                           -f body=... -f commit_id=<sha> -f path=<file>
+                           -F line=<n> -f side=RIGHT`
+
+            Do exactly one pass. Do not edit code. Do not re-run mutation testing.
