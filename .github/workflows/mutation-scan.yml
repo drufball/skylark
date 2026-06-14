@@ -14,6 +14,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  id-token: write # the action mints its GitHub + Anthropic auth via OIDC
 
 concurrency:
   group: mutation-scan
@@ -52,7 +53,6 @@ jobs:
       - name: Strengthen tests and open a PR
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --model opus
             --max-turns 60

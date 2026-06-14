@@ -18,6 +18,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  id-token: write # the action mints its GitHub + Anthropic auth via OIDC
 
 concurrency:
   group:
@@ -63,7 +64,6 @@ jobs:
       - name: Review the surviving mutants
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --model opus
             --max-turns 25
