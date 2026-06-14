@@ -89,6 +89,11 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **#2** — The web door: a chat UX (the ship's front door at `/`). Server
+  functions kick off a turn fire-and-forget; the client polls the transcript and
+  status, since Postgres already holds the truth. A pure normalizer
+  (`transcript.ts`) flattens stored messages into view items so the rigging view
+  stays SDK-agnostic.
 - **#1** — Durable sessions over the pi.dev SDK, with the CLI as the first door:
   create, send (queued mid-turn, booted from history when idle), list, cancel.
   Full coding tools (read/bash/edit/write) on the repo. Single-tenant until the
