@@ -84,27 +84,30 @@ export async function setStatus(
 }
 
 /**
- * Append one message and bump the session's activity clock, atomically enough
- * for our single-writer-per-turn model. `message` is stored verbatim — it's a
- * pi.dev AgentMessage, an opaque JSON blob to this layer.
+ * Append one message and bump the session's activity clock in a single
+ * transaction, so the clock never desyncs from the durable message. `message`
+ * is stored verbatim — it's a pi.dev AgentMessage, an opaque JSON blob to this
+ * layer.
  */
 export async function appendMessage(
   db: Database,
   input: { sessionId: string; role: string; message: unknown },
 ): Promise<AgentMessageRow> {
-  const [row] = await db
-    .insert(agentMessages)
-    .values({
-      sessionId: input.sessionId,
-      role: input.role,
-      message: input.message,
-    })
-    .returning()
-  await db
-    .update(agentSessions)
-    .set({ lastMessageAt: new Date() })
-    .where(eq(agentSessions.id, input.sessionId))
-  return row
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(agentMessages)
+      .values({
+        sessionId: input.sessionId,
+        role: input.role,
+        message: input.message,
+      })
+      .returning()
+    await tx
+      .update(agentSessions)
+      .set({ lastMessageAt: new Date() })
+      .where(eq(agentSessions.id, input.sessionId))
+    return row
+  })
 }
 
 /** Every stored message for a session, in turn order. */

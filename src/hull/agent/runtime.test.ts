@@ -3,6 +3,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
+import { defined, freshDb } from '@hull/db/test-db'
 
 import { createAgentRuntime, type PiSession } from './runtime'
 import {
@@ -12,7 +13,6 @@ import {
   getSession,
   setStatus,
 } from './service'
-import { defined, freshDb } from './test-db'
 
 function deferred() {
   let resolve!: () => void

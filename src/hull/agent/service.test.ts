@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
+import { defined, freshDb } from '@hull/db/test-db'
 
 import {
   appendMessage,
@@ -12,7 +13,6 @@ import {
   setStatus,
   titleFromMessage,
 } from './service'
-import { defined, freshDb } from './test-db'
 
 describe('agent service persistence', () => {
   let db: Database

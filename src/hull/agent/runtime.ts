@@ -7,6 +7,7 @@ import {
 import { getModels } from '@earendil-works/pi-ai'
 
 import type { Database } from '@hull/db/client'
+import { errorMessage } from '@hull/lib/errors'
 
 import { appendMessage, getMessages, getSession, setStatus } from './service'
 
@@ -44,6 +45,14 @@ function resolveModel(modelId: string) {
  * full coding toolset (read/bash/edit/write) operating on the ship's repo. No
  * file persistence — pi's own SessionManager is in-memory because Postgres is
  * our source of truth.
+ *
+ * Auto-compaction is disabled deliberately. Compaction rewrites the in-memory
+ * transcript (summarizing earlier messages in place), which would break our
+ * index-based, append-only persistence (see `flush`). Keeping it off means the
+ * live transcript only ever grows by appends, so it stays in lockstep with the
+ * durable log. The trade-off — a single boot can't exceed the context window —
+ * is fine while sessions are short-lived and rebuilt from full history each
+ * boot; context-window management that preserves the full log is future work.
  */
 export const createPiSession: SessionFactory = async (model) => {
   const { session } = await createAgentSession({
@@ -51,6 +60,7 @@ export const createPiSession: SessionFactory = async (model) => {
     sessionManager: SessionManager.inMemory(),
     cwd: process.cwd(),
   })
+  session.setAutoCompactionEnabled(false)
   return session
 }
 /* v8 ignore stop */
@@ -61,10 +71,6 @@ interface Entry {
   persistedCount: number
   /** Serializes DB writes so turn-boundary flushes never race. */
   persistChain: Promise<void>
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }
 
 /**
@@ -83,7 +89,12 @@ export function createAgentRuntime(deps: {
   const { db, factory } = deps
   const registry = new Map<string, Entry>()
 
-  /** Append every message past persistedCount to Postgres, in order. */
+  /**
+   * Append every message past persistedCount to Postgres, in order. This is
+   * append-only by index, which is correct only because the live transcript
+   * never rewrites earlier entries — auto-compaction is disabled in
+   * `createPiSession` precisely to uphold that.
+   */
   async function flush(sessionId: string, entry: Entry): Promise<void> {
     const all = entry.session.messages
     for (let i = entry.persistedCount; i < all.length; i++) {

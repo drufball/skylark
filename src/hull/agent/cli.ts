@@ -2,6 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import { db } from '@hull/db/client'
+import { errorMessage } from '@hull/lib/errors'
 
 import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
 import {
@@ -158,8 +159,6 @@ async function main(): Promise<void> {
 main()
   .then(() => process.exit(process.exitCode ?? 0))
   .catch((err: unknown) => {
-    process.stderr.write(
-      `\n${err instanceof Error ? err.message : String(err)}\n`,
-    )
+    process.stderr.write(`\n${errorMessage(err)}\n`)
     process.exit(1)
   })

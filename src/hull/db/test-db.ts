@@ -7,7 +7,7 @@ import type { Database } from '@hull/db/client'
 /**
  * A fresh in-memory Postgres (PGlite) with every migration applied — the same
  * SQL the live ship runs, so tests exercise the real schema. Returns the db and
- * a close() to tear it down. Test-only helper (not shipped in any door).
+ * a close() to tear it down. Shared test-only harness for any service's tests.
  */
 export async function freshDb(): Promise<{
   db: Database
