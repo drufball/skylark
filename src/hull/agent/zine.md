@@ -37,6 +37,9 @@ logic.
   tests without a network.
 - **Doors** — `cli.ts` (the default door) and `server.ts` (the web door, added
   with the chat UI).
+- **Shared config** (`config.ts`) — resolves the ship's CLAUDE.md and skill
+  directories so the runtime can feed them to the agent: one source of config
+  for both the human and the agent.
 - **Status** — `idle` | `running` | `error`. More than display: it's the
   cross-process signal for "a turn is in flight." A row stuck on `running` after
   a crash is stale, and cancelling forces it back to idle.
@@ -86,9 +89,20 @@ idle session, because the truth is in the database, not the registry.
   get crew filters. Tracked here so the deferral is honest, not silent.
 - **Anthropic models only, for now.** Default `claude-sonnet-4-5`, pinned per
   session and overridable. The SDK speaks other providers; we don't yet.
+- **The agent shares the ship's config; hooks are the exception.** CLAUDE.md and
+  the same skills the human's Claude Code session uses are fed to the agent
+  through pi.dev's resource loader (`config.ts`), so config lives in one place.
+  Hooks are deliberately _not_ shared: Skylark's hooks are Claude Code harness
+  shell-commands about the human's git flow (commit-gate, landing-gate), which
+  don't map onto the agent's runtime. pi.dev's equivalent is TS extensions —
+  available via the loader's `additionalExtensionPaths` if a real need appears,
+  but not auto-translated from `settings.json`.
 
 ## Changelog
 
+- **#3** — Config sharing: the agent reads the ship's CLAUDE.md and skills via
+  pi.dev's resource loader, so there's one source of config for human and agent.
+  Hooks stay Claude-Code-only by design.
 - **#2** — The web door: a chat UX (the ship's front door at `/`). Server
   functions kick off a turn fire-and-forget; the client polls the transcript and
   status, since Postgres already holds the truth. A pure normalizer
