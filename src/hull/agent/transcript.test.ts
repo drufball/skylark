@@ -91,4 +91,104 @@ describe('toChatItems', () => {
       toChatItems([{ role: 'assistant', content: [{ type: 'toolCall' }] }]),
     ).toEqual([{ kind: 'toolCall', id: '', name: 'tool', args: '' }])
   })
+
+  it('never dereferences a non-object entry', () => {
+    // Top-level guard: primitives and null arrive from Postgres as opaque JSON
+    // and must be skipped, never read for a `.role`.
+    expect(() => toChatItems([null, 'str', 42, true])).not.toThrow()
+    expect(toChatItems([null, 'str', 42, true])).toEqual([])
+  })
+
+  it('renders string tool args verbatim and null args as empty', () => {
+    // A string is passed through untouched (not re-JSON-encoded with quotes),
+    // and null/undefined collapse to an empty string rather than the literal
+    // "null"/"undefined" that JSON.stringify would produce.
+    expect(
+      toChatItems([
+        {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', name: 'a', arguments: 'raw string' },
+            { type: 'toolCall', name: 'b', arguments: null },
+          ],
+        },
+      ]),
+    ).toEqual([
+      { kind: 'toolCall', id: '', name: 'a', args: 'raw string' },
+      { kind: 'toolCall', id: '', name: 'b', args: '' },
+    ])
+  })
+
+  it('reads text only from well-formed text blocks, never leaking other fields', () => {
+    // Untrusted content from Postgres: a non-object block, a wrong-typed block
+    // that happens to carry a `text` field, and a text block whose `text` isn't
+    // a string must all be ignored — only the real text block contributes.
+    expect(
+      toChatItems([
+        {
+          role: 'user',
+          content: [
+            null,
+            { type: 'image', text: 'should-be-ignored' },
+            { type: 'text', text: 42 },
+            { type: 'text', text: 'real' },
+          ],
+        },
+      ]),
+    ).toEqual([{ kind: 'user', text: 'real' }])
+  })
+
+  it('skips a message whose content is neither a string nor an array', () => {
+    // contentText must defend against a non-array, non-string content value
+    // (it would otherwise call .map on it and throw).
+    expect(toChatItems([{ role: 'user', content: 42 }])).toEqual([])
+  })
+
+  it('does not treat array content on a non-assistant role as assistant blocks', () => {
+    // Only role === 'assistant' may walk the block array; a stray role with an
+    // array payload must not be mined for assistant text.
+    expect(
+      toChatItems([
+        { role: 'system', content: [{ type: 'text', text: 'sys' }] },
+      ]),
+    ).toEqual([])
+  })
+
+  it('skips an assistant message whose content is not iterable, without throwing', () => {
+    expect(toChatItems([{ role: 'assistant', content: 7 }])).toEqual([])
+  })
+
+  it('narrows assistant blocks: ignores malformed, wrong-typed, and empty ones', () => {
+    expect(
+      toChatItems([
+        {
+          role: 'assistant',
+          content: [
+            null, // not an object — skipped, not crashed on
+            { type: 'note', text: 'leak-text' }, // wrong type carrying text
+            { type: 'text', text: 99 }, // text block, text not a string
+            { type: 'text', text: '' }, // empty text is dropped
+            { type: 'note', thinking: 'leak-think' }, // wrong type carrying thinking
+            { type: 'thinking', thinking: 7 }, // thinking block, thinking not a string
+            { type: 'text', text: 'kept' }, // the one real item
+          ],
+        },
+      ]),
+    ).toEqual([{ kind: 'assistant', text: 'kept' }])
+  })
+
+  it('falls back to a default tool name and a false error flag on a tool result', () => {
+    // toolName missing → 'tool'; isError anything-but-true → false.
+    expect(
+      toChatItems([
+        {
+          role: 'toolResult',
+          isError: 'nope',
+          content: [{ type: 'text', text: 'output' }],
+        },
+      ]),
+    ).toEqual([
+      { kind: 'toolResult', name: 'tool', isError: false, text: 'output' },
+    ])
+  })
 })

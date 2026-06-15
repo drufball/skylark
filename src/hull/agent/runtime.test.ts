@@ -561,4 +561,31 @@ describe('agent runtime', () => {
       (produced[2] as { content: { text: string }[] }).content[0].text,
     ).toBe('after')
   })
+
+  it('persists the new tail on a turn_end even when no agent_end follows', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    fake.onPrompt = () => {
+      fake.append(msg('user', 'hi'))
+      fake.append(msg('assistant', 'ok'))
+      // Only a turn_end — no agent_end. Persistence must still flush here, or a
+      // multi-turn session would silently lose every turn but its last.
+      fake.emit({
+        type: 'turn_end',
+        message: msg('assistant', 'ok'),
+        toolResults: [],
+      })
+    }
+
+    await runtime.runTurn('s1', 'hi')
+
+    const stored = await getMessages(db, 's1')
+    expect(stored.map((m) => m.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('disposing an unknown session is a harmless no-op', () => {
+    // No entry in the registry → must return early, not dereference undefined.
+    expect(() => {
+      runtime.dispose('never-existed')
+    }).not.toThrow()
+  })
 })
