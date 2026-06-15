@@ -36,7 +36,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Render tool-call arguments to a compact string for display. */
-function stringifyArgs(args: unknown): string {
+export function stringifyArgs(args: unknown): string {
   if (args === undefined || args === null) return ''
   if (typeof args === 'string') return args
   try {

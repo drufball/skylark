@@ -3,14 +3,21 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import { db } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
+import { truncate } from '@hull/lib/text'
 
-import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
+import {
+  type AgentRuntime,
+  createAgentRuntime,
+  createPiSession,
+  DEFAULT_MODEL,
+} from './runtime'
 import {
   createSession,
   getSession,
   listSessions,
   titleFromMessage,
 } from './service'
+import { stringifyArgs } from './transcript'
 
 // The default door onto the agent service: create a session, send a message to
 // one (queued if it's mid-turn, booted from history if it's idle), list
@@ -53,9 +60,25 @@ function renderEvent(event: AgentSessionEvent): void {
   }
 }
 
+/** One-line preview of a tool call's args — the same stringify the transcript
+ * uses (unserializable-safe), trimmed to a terminal-friendly width. */
 function summarize(args: unknown): string {
-  const text = typeof args === 'string' ? args : JSON.stringify(args)
-  return text.length > 120 ? `${text.slice(0, 119)}…` : text
+  return truncate(stringifyArgs(args), 120)
+}
+
+/** A runtime wired to the live database and a real pi.dev session. */
+function liveRuntime(): AgentRuntime {
+  return createAgentRuntime({ db, factory: createPiSession })
+}
+
+/** Boot a one-shot runtime, stream a single turn to the terminal, dispose. */
+async function runOneTurn(id: string, message: string): Promise<void> {
+  const runtime = liveRuntime()
+  try {
+    await runtime.runTurn(id, message, renderEvent)
+  } finally {
+    runtime.disposeAll()
+  }
 }
 
 /** Pull `--flag value` out of args, returning the value and the remaining args. */
@@ -78,9 +101,7 @@ async function cmdNew(args: string[]): Promise<void> {
   await createSession(db, { id, model, title: titleFromMessage(message) })
   process.stdout.write(`${DIM}session ${id} · ${model}${RESET}\n`)
 
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
-  await runtime.runTurn(id, message, renderEvent)
-  runtime.disposeAll()
+  await runOneTurn(id, message)
 }
 
 async function cmdSend(args: string[]): Promise<void> {
@@ -92,9 +113,7 @@ async function cmdSend(args: string[]): Promise<void> {
   const session = await getSession(db, id)
   if (!session) throw new Error(`No such session: ${id}`)
 
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
-  await runtime.runTurn(id, message, renderEvent)
-  runtime.disposeAll()
+  await runOneTurn(id, message)
 }
 
 async function cmdList(args: string[]): Promise<void> {
@@ -128,7 +147,7 @@ async function cmdCancel(args: string[]): Promise<void> {
   // A fresh CLI process doesn't host the live turn (the web server does), so
   // this resets the stored status to idle. When the hosting process runs this
   // it also aborts the in-flight turn.
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
+  const runtime = liveRuntime()
   await runtime.cancel(id)
   process.stdout.write(`Cancelled ${id}.\n`)
 }
