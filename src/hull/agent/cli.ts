@@ -10,6 +10,7 @@ import {
   registerExtension,
   seedAndWireProfiles,
 } from './profiles'
+import { toolExecutionDetail, truncate } from './progress'
 import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
 import {
   createSession,
@@ -41,11 +42,15 @@ function renderEvent(event: AgentSessionEvent): void {
       else if (e.type === 'text_delta') process.stdout.write(e.delta)
       break
     }
-    case 'tool_execution_start':
-      process.stdout.write(
-        `\n${CYAN}🔧 ${event.toolName}${RESET} ${summarize(event.args)}\n`,
-      )
+    case 'tool_execution_start': {
+      const detail = toolExecutionDetail(event)
+      if (detail) {
+        process.stdout.write(
+          `\n${CYAN}🔧 ${detail.name}${RESET} ${truncate(detail.detail)}\n`,
+        )
+      }
       break
+    }
     case 'tool_execution_end':
       process.stdout.write(
         `${DIM}   → ${event.isError ? 'error' : 'ok'}${RESET}\n`,
@@ -57,11 +62,6 @@ function renderEvent(event: AgentSessionEvent): void {
     default:
       break
   }
-}
-
-function summarize(args: unknown): string {
-  const text = typeof args === 'string' ? args : JSON.stringify(args)
-  return text.length > 120 ? `${text.slice(0, 119)}…` : text
 }
 
 /** Pull `--flag value` out of args, returning the value and the remaining args. */
