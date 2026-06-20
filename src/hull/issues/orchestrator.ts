@@ -3,6 +3,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import type { Database } from '@hull/db/client'
 import { getProfileByName } from '@hull/agent/profiles'
+import type { RunsTurns } from '@hull/agent/runtime'
 import { createSession } from '@hull/agent/service'
 import { getEventById } from '@hull/events/service'
 import { handleOf } from '@hull/users/service'
@@ -177,12 +178,7 @@ export interface GitOps {
 }
 
 /** The slice of the agent runtime the orchestrator drives (a fake stands in). */
-export interface OrchestratorRuntime {
-  runTurn(
-    sessionId: string,
-    text: string,
-    onEvent?: (event: AgentSessionEvent) => void,
-  ): Promise<void>
+export interface OrchestratorRuntime extends RunsTurns {
   cancel(sessionId: string): Promise<void>
   dispose(sessionId: string): void
 }

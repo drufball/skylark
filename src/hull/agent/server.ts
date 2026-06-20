@@ -15,6 +15,7 @@ import {
   getProfileByName,
   listExtensions,
   listProfiles,
+  normalizeProfileInput,
   type ProfileInput,
   upsertProfile,
 } from './profiles'
@@ -130,15 +131,5 @@ export const listAgentExtensions = createServerFn({ method: 'GET' }).handler(
  * it). The validator narrows the untrusted client input to a `ProfileInput`.
  */
 export const saveAgentProfile = createServerFn({ method: 'POST' })
-  .validator(
-    (input: ProfileInput): ProfileInput => ({
-      name: input.name.trim(),
-      systemPrompt: input.systemPrompt?.trim() ? input.systemPrompt : null,
-      tools: input.tools && input.tools.length > 0 ? input.tools : null,
-      readContextFiles: input.readContextFiles,
-      useRepoSkills: input.useRepoSkills,
-      extensionIds: input.extensionIds,
-      model: input.model?.trim() ? input.model : null,
-    }),
-  )
+  .validator((input: ProfileInput) => normalizeProfileInput(input))
   .handler(({ data }) => upsertProfile(db, data))

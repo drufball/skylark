@@ -14,6 +14,7 @@ import {
   getExtensionsByIds,
   listProfiles,
   listExtensions,
+  normalizeProfileInput,
   registerExtension,
   upsertProfile,
   resolveProfileExtensionPaths,
@@ -23,6 +24,43 @@ import {
   BUILDER_PROFILE,
   BUILD_GATES_EXTENSION,
 } from './profiles'
+
+describe('normalizeProfileInput', () => {
+  it('trims the name and folds blank text / empty tools to null', () => {
+    expect(
+      normalizeProfileInput({
+        name: '  researcher  ',
+        systemPrompt: '   ',
+        tools: [],
+        readContextFiles: false,
+        useRepoSkills: true,
+        extensionIds: [],
+        model: '',
+      }),
+    ).toEqual({
+      name: 'researcher',
+      systemPrompt: null,
+      tools: null,
+      readContextFiles: false,
+      useRepoSkills: true,
+      extensionIds: [],
+      model: null,
+    })
+  })
+
+  it('keeps real values', () => {
+    const input = {
+      name: 'builder',
+      systemPrompt: 'build it',
+      tools: ['read', 'bash'],
+      readContextFiles: true,
+      useRepoSkills: true,
+      extensionIds: ['e1'],
+      model: 'claude-opus-4-5',
+    }
+    expect(normalizeProfileInput(input)).toEqual(input)
+  })
+})
 
 describe('agent profiles + extensions service', () => {
   let db: Database

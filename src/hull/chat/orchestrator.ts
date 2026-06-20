@@ -4,7 +4,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
 import { createSession, getMessages } from '@hull/agent/service'
-import { DEFAULT_MODEL } from '@hull/agent/runtime'
+import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
 
 import {
@@ -36,13 +36,7 @@ import {
  */
 
 /** The slice of the agent runtime the chat orchestrator drives. */
-export interface ChatAgentRuntime {
-  runTurn(
-    sessionId: string,
-    text: string,
-    onEvent?: (event: AgentSessionEvent) => void,
-  ): Promise<void>
-}
+export type ChatAgentRuntime = RunsTurns
 
 /**
  * A short progress line from a live agent event, or null if nothing worth
