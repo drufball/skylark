@@ -52,8 +52,7 @@ describe('assistantTextFrom', () => {
 
 /**
  * A fake runtime that, on a turn, optionally streams one progress event and then
- * appends an assistant message to the durable session — exactly what the
- * orchestrator reads back to post the reply. No network, no real pi session.
+ * returns the assistant messages it produced. No network, no real pi session.
  */
 function fakeRuntime(db: Database, replyText: string): ChatAgentRuntime {
   return {
@@ -62,14 +61,16 @@ function fakeRuntime(db: Database, replyText: string): ChatAgentRuntime {
         type: 'tool_execution_start',
         toolName: 'read',
       } as unknown as AgentSessionEvent)
+      const message = {
+        role: 'assistant',
+        content: [{ type: 'text', text: replyText }],
+      }
       await appendMessage(db, {
         sessionId,
         role: 'assistant',
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: replyText }],
-        },
+        message,
       })
+      return [message as never]
     },
   }
 }
@@ -166,12 +167,14 @@ describe('chat orchestrator', () => {
 
     // A runtime whose turn appends only a tool result — no assistant text.
     const silent: ChatAgentRuntime = {
-      async runTurn(sessionId) {
+      runTurn: async (sessionId) => {
+        const message = { role: 'toolResult', toolName: 'read', content: 'x' }
         await appendMessage(db, {
           sessionId,
           role: 'toolResult',
-          message: { role: 'toolResult', toolName: 'read', content: 'x' },
+          message,
         })
+        return [message as never]
       },
     }
     const orch = createChatOrchestrator({ db, runtime: silent })
@@ -216,5 +219,34 @@ describe('chat orchestrator', () => {
     await orch.respond({ chatId, authorId: dru, body: 'hi all' })
 
     expect(await listMessages(db, chatId)).toHaveLength(1) // only the human's
+  })
+
+  it('uses the messages returned by runTurn instead of rereading them', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: dru,
+      body: 'hi',
+    })
+
+    // A runtime that returns messages directly, demonstrating the orchestrator
+    // uses the return value instead of slicing the durable log.
+    const directReturn: ChatAgentRuntime = {
+      runTurn: () =>
+        Promise.resolve([
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'from return value' }],
+          },
+        ] as never[]),
+    }
+
+    const orch = createChatOrchestrator({ db, runtime: directReturn })
+    await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+    const messages = await listMessages(db, chatId)
+    expect(messages[1].body).toBe('from return value')
   })
 })
