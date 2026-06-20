@@ -7,8 +7,6 @@ import { cn } from '@rigging/lib/utils'
 // surfaces — Chat (the front door), Issues (the board), and Agents (profiles +
 // the session monitor). Presentational and router-agnostic: the link element is
 // injected so the dock is testable without a router and reusable across routes.
-// Items can still be marked `disabled` (rendered dimmed and non-navigating) when
-// a future surface is reserved but not yet built.
 
 export type DockSection = 'chat' | 'issues' | 'agents'
 
@@ -24,8 +22,6 @@ interface DockItem {
   to: string
   label: string
   Icon: typeof Anchor
-  /** Not yet built — rendered as a dimmed, non-navigating placeholder. */
-  disabled?: boolean
 }
 
 const ITEMS: DockItem[] = [
@@ -76,19 +72,6 @@ function DockButton({
   const { Icon, label } = item
   const base =
     'flex w-14 flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium'
-
-  if (item.disabled) {
-    return (
-      <span
-        className={cn(base, 'cursor-not-allowed text-muted-foreground/40')}
-        aria-disabled="true"
-        title={`${label} — coming soon`}
-      >
-        <Icon className="size-5" />
-        {label}
-      </span>
-    )
-  }
 
   return (
     <Link

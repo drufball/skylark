@@ -110,6 +110,69 @@ describe('AgentProfiles', () => {
     expect(onSave).not.toHaveBeenCalled()
   })
 
+  it('clears via New and saves a fully-specified profile', () => {
+    const onSave = vi.fn()
+    render(
+      <AgentProfiles
+        profiles={PROFILES}
+        extensions={EXTENSIONS}
+        saving={false}
+        onSave={onSave}
+      />,
+    )
+    // Select an existing profile, then New must reset the form to blank.
+    fireEvent.click(screen.getByText('chat'))
+    fireEvent.click(screen.getByRole('button', { name: /new profile/i }))
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. researcher'), {
+      target: { value: 'deep' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('You pilot a Skylark ship…'), {
+      target: { value: 'do research' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('claude-sonnet-4-5'), {
+      target: { value: 'claude-opus-4-5' },
+    })
+    const checkboxes = screen.getAllByRole('checkbox')
+    fireEvent.click(checkboxes[0]) // Read CLAUDE.md
+    fireEvent.click(checkboxes[1]) // Load repo skills
+    fireEvent.click(screen.getByText('Save profile'))
+
+    expect(onSave).toHaveBeenCalledWith({
+      name: 'deep',
+      systemPrompt: 'do research',
+      tools: null,
+      readContextFiles: true,
+      useRepoSkills: true,
+      extensionIds: [],
+      model: 'claude-opus-4-5',
+    })
+  })
+
+  it('shows a placeholder when no extensions are registered', () => {
+    render(
+      <AgentProfiles
+        profiles={[]}
+        extensions={[]}
+        saving={false}
+        onSave={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('None registered yet.')).toBeTruthy()
+  })
+
+  it('disables the form while a save is in flight', () => {
+    render(
+      <AgentProfiles
+        profiles={[]}
+        extensions={[]}
+        saving={true}
+        onSave={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Saving…')).toBeTruthy()
+  })
+
   it('loads an existing profile into the form when selected', () => {
     render(
       <AgentProfiles

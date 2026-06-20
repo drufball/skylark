@@ -61,18 +61,29 @@ describe('AgentChatView', () => {
     expect(container.textContent).toContain('here you go')
   })
 
-  it('lists sessions and marks a running one with a spinner', () => {
+  it('lists sessions, falls back to (untitled), and marks a running one', () => {
     const { container, onSelect } = renderView({
       sessions: [
         { id: 'a', title: 'first', status: 'idle' },
         { id: 'b', title: 'second', status: 'running' },
+        { id: 'c', title: null, status: 'idle' },
       ],
       activeId: 'a',
     })
 
     expect(container.querySelector('.animate-spin')).not.toBeNull()
+    expect(screen.getByText('(untitled)')).toBeDefined()
     fireEvent.click(screen.getByText('second'))
     expect(onSelect).toHaveBeenCalledWith('b')
+  })
+
+  it('marks an errored tool result distinctly', () => {
+    const items: ChatItem[] = [
+      { kind: 'toolResult', name: 'bash', isError: true, text: 'boom' },
+    ]
+    const { container } = renderView({ activeId: 's1', items })
+    expect(container.querySelector('.text-destructive')).not.toBeNull()
+    expect(container.textContent).toContain('boom')
   })
 
   it('marks an errored session in the sidebar', () => {
@@ -128,5 +139,26 @@ describe('AgentChatView', () => {
   it('surfaces an error message', () => {
     renderView({ activeId: 's1', error: 'overloaded' })
     expect(screen.getByText('overloaded')).toBeDefined()
+  })
+
+  // The monitor variant (the Agents surface) reuses the view without onNew and
+  // with its own empty-state copy.
+  it('hides the New button and uses custom empty copy when onNew is omitted', () => {
+    render(
+      <AgentChatView
+        sessions={[]}
+        items={[]}
+        running={false}
+        busy={false}
+        emptyTitle="Session monitor"
+        emptyHint="Pick a session to watch."
+        onSend={vi.fn()}
+        onCancel={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /new chat/i })).toBeNull()
+    expect(screen.getByText('Session monitor')).toBeDefined()
+    expect(screen.getByText('Pick a session to watch.')).toBeDefined()
   })
 })
