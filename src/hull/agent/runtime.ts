@@ -9,10 +9,36 @@ import {
 import { getModels } from '@earendil-works/pi-ai'
 
 import type { Database } from '@hull/db/client'
+import { emitEvent } from '@hull/events/bus'
+import type { AppendEventInput } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 
 import { readContextFiles, skillDirs } from './config'
-import { appendMessage, getMessages, getSession, setStatus } from './service'
+import {
+  appendMessage,
+  getMessages,
+  getSession,
+  setStatus,
+  type SessionStatus,
+} from './service'
+
+// `setStatus` is wrapped by `announceStatus` below (which also emits to the
+// ship's log); the runtime never sets status without announcing it.
+
+/**
+ * How the runtime announces what's happening to the ship's log. It's the events
+ * service's own `AppendEventInput` — one contract, no near-duplicate — so it
+ * already carries `actorId` for when turns thread the acting user through.
+ * Decoupled behind this type so a failed emit never breaks a turn (see
+ * `safeEmit`) and so tests can observe emits without a database NOTIFY. The
+ * default wires the real events service, so CLI and web both get live updates.
+ */
+export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
+
+/** The scope every event for a session is published under. */
+export function sessionScope(sessionId: string): string {
+  return `session:${sessionId}`
+}
 
 /** Default model when a session doesn't pin one. Anthropic only, for now. */
 export const DEFAULT_MODEL = 'claude-sonnet-4-5'
@@ -106,21 +132,57 @@ interface Entry {
 export function createAgentRuntime(deps: {
   db: Database
   factory: SessionFactory
+  /** How turns announce themselves to the ship's log. Defaults to the real bus. */
+  emit?: AgentEmitter
 }) {
   const { db, factory } = deps
+  const emit: AgentEmitter = deps.emit ?? ((event) => emitEvent(db, event))
   const registry = new Map<string, Entry>()
+
+  /**
+   * Announce something on the ship's log, scoped to the session. Emission is
+   * fire-and-forget and swallows its own errors: a turn's durability lives in
+   * Postgres (the append already happened), so a broken ship's log must never
+   * fail or stall a turn.
+   */
+  function safeEmit(sessionId: string, type: string, payload: unknown): void {
+    void Promise.resolve()
+      .then(() =>
+        emit({
+          type,
+          source: 'agent',
+          scope: sessionScope(sessionId),
+          payload,
+        }),
+      )
+      .catch((err: unknown) => {
+        console.error(`agent emit ${type} failed: ${errorMessage(err)}`)
+      })
+  }
+
+  /** Set the stored status and announce the change on the ship's log. */
+  async function announceStatus(
+    sessionId: string,
+    status: SessionStatus,
+    error?: string,
+  ): Promise<void> {
+    await setStatus(db, sessionId, status, error)
+    safeEmit(sessionId, 'agent.status', { status, error: error ?? null })
+  }
 
   /**
    * Append every message past persistedCount to Postgres, in order. This is
    * append-only by index, which is correct only because the live transcript
    * never rewrites earlier entries — auto-compaction is disabled in
-   * `createPiSession` precisely to uphold that.
+   * `createPiSession` precisely to uphold that. Each durable message is then
+   * announced on the ship's log so subscribers (the web chat) update live.
    */
   async function flush(sessionId: string, entry: Entry): Promise<void> {
     const all = entry.session.messages
     for (let i = entry.persistedCount; i < all.length; i++) {
       const message = all[i]
       await appendMessage(db, { sessionId, role: message.role, message })
+      safeEmit(sessionId, 'agent.message', { role: message.role })
     }
     entry.persistedCount = all.length
   }
@@ -178,14 +240,14 @@ export function createAgentRuntime(deps: {
         await entry.session.followUp(text)
         return
       }
-      await setStatus(db, sessionId, 'running')
+      await announceStatus(sessionId, 'running')
       try {
         await entry.session.prompt(text)
         await entry.persistChain
-        await setStatus(db, sessionId, 'idle')
+        await announceStatus(sessionId, 'idle')
       } catch (err) {
         await entry.persistChain
-        await setStatus(db, sessionId, 'error', errorMessage(err))
+        await announceStatus(sessionId, 'error', errorMessage(err))
         throw err
       }
     } finally {
@@ -204,7 +266,7 @@ export function createAgentRuntime(deps: {
       await entry.session.abort()
       await entry.persistChain
     }
-    await setStatus(db, sessionId, 'idle')
+    await announceStatus(sessionId, 'idle')
   }
 
   /** Drop a live session, releasing it from the registry. */
