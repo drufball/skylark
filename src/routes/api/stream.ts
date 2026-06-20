@@ -6,8 +6,10 @@ import {
   getEventById,
   isScopeVisible,
   listEventsSince,
+  REPLAY_PAGE_SIZE,
 } from '@hull/events/service'
 import { parseTopics, sseFrame } from '@hull/events/sse'
+import { currentActor } from '@hull/users/actor'
 
 // The ship's log, streamed. A GET here is a Server-Sent-Events connection: the
 // browser's EventSource opens it, the server keeps it open, and every event the
@@ -15,21 +17,28 @@ import { parseTopics, sseFrame } from '@hull/events/sse'
 // hook is useShipLog (rigging).
 //
 // Flow:
-//   1. parse the requested topics (scopes) from ?topics=
-//   2. on (re)connect, replay any events newer than Last-Event-ID for those
-//      scopes, straight from the durable table — so a dropped connection loses
-//      nothing.
-//   3. subscribe to the in-process bus (fed by the one LISTEN connection) and
-//      forward every notification whose scope is visible, reading the full row
-//      by id.
+//   1. resolve the actor — the tunnel asks "who are you?" before replaying any
+//      transcript. (Scope-level entitlement — "may THIS actor see session X?" —
+//      waits on the crew-filter primitive; see hull/events/zine.md.)
+//   2. parse the requested topics (scopes) from ?topics=
+//   3. subscribe to the in-process bus FIRST, buffering, so no event slips
+//      through the gap between the replay query and going live.
+//   4. replay everything newer than Last-Event-ID for those scopes, draining
+//      past the per-page cap so a long absence loses nothing.
+//   5. flush the buffer (deduped by id) and stream live from then on.
 //
-// This is thin impure wiring (a route); the wire format and scope rules are pure
-// and tested in hull/events (sse.ts, service.ts).
+// This is thin impure wiring (a route); the wire format, scope rule, and replay
+// are pure and tested in hull/events (sse.ts, service.ts).
 
 export const Route = createFileRoute('/api/stream')({
   server: {
     handlers: {
-      GET: ({ request }) => {
+      GET: async ({ request }) => {
+        // Who are you? Refuse before replaying anyone's transcript. Throws if
+        // no actor resolves (e.g. crew unseeded) — a 500 is the right answer:
+        // an unauthenticated caller gets no stream.
+        await currentActor()
+
         ensureShipLogListener()
 
         const url = new URL(request.url)
@@ -44,31 +53,12 @@ export const Route = createFileRoute('/api/stream')({
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {
             let open = true
-            const send = (text: string) => {
-              if (open) controller.enqueue(encoder.encode(text))
-            }
-
-            // Replay what was missed since the cursor, in order.
-            const missed = await listEventsSince(db, {
-              scopes,
-              sinceId: lastEventId,
-            })
-            for (const row of missed) send(sseFrame(row))
-
-            // A comment line keeps the connection warm and confirms it's open.
-            send(': connected\n\n')
-
-            const unsubscribe = shipLogBus.subscribe((note) => {
-              if (!isScopeVisible(note.scope, scopes)) return
-              // The notify is tiny ({id,type,scope}); read the full row by id.
-              void getEventById(db, note.id).then((row) => {
-                if (row) send(sseFrame(row))
-              })
-            })
+            let heartbeat: ReturnType<typeof setInterval> | undefined
 
             const close = () => {
               if (!open) return
               open = false
+              if (heartbeat) clearInterval(heartbeat)
               unsubscribe()
               try {
                 controller.close()
@@ -76,7 +66,66 @@ export const Route = createFileRoute('/api/stream')({
                 // already closed
               }
             }
-            request.signal.addEventListener('abort', close)
+
+            // Enqueue, and tear the stream down if the socket has gone away
+            // (a throwing enqueue on a dead/slow client that never fired abort).
+            const send = (text: string) => {
+              if (!open) return
+              try {
+                controller.enqueue(encoder.encode(text))
+              } catch {
+                close()
+              }
+            }
+
+            // Subscribe BEFORE replay so nothing lands in the gap. Until replay
+            // finishes we buffer; the highest id we replay becomes the cutoff
+            // that dedupes the buffer against the replayed page.
+            let replayed = false
+            let lastReplayedId = lastEventId
+            const buffer: { id: string; scope: string }[] = []
+            const deliver = (id: string, scope: string) => {
+              if (!isScopeVisible(scope, scopes)) return
+              if (lastReplayedId && id <= lastReplayedId) return
+              void getEventById(db, id).then((row) => {
+                if (row) send(sseFrame(row))
+              })
+            }
+            const unsubscribe = shipLogBus.subscribe((note) => {
+              if (replayed) deliver(note.id, note.scope)
+              else buffer.push({ id: note.id, scope: note.scope })
+            })
+
+            try {
+              // Drain the durable replay in pages so a long absence (more than
+              // one page of missed events) still loses nothing.
+              for (;;) {
+                const page = await listEventsSince(db, {
+                  scopes,
+                  sinceId: lastReplayedId,
+                })
+                for (const row of page) {
+                  send(sseFrame(row))
+                  lastReplayedId = row.id
+                }
+                if (page.length < REPLAY_PAGE_SIZE) break
+              }
+              replayed = true
+              for (const note of buffer) deliver(note.id, note.scope)
+
+              // A comment line confirms the stream is open, and a recurring
+              // heartbeat keeps it warm — and, if the connection has silently
+              // died, eventually trips the browser's EventSource auto-reconnect
+              // (which re-runs replay from Last-Event-ID and re-arms a listener).
+              send(': connected\n\n')
+              heartbeat = setInterval(() => {
+                send(': ping\n\n')
+              }, HEARTBEAT_MS)
+
+              request.signal.addEventListener('abort', close)
+            } catch {
+              close()
+            }
           },
         })
 
@@ -91,3 +140,6 @@ export const Route = createFileRoute('/api/stream')({
     },
   },
 })
+
+/** How often to send a heartbeat comment on an otherwise-idle stream. */
+const HEARTBEAT_MS = 25_000

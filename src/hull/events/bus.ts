@@ -88,6 +88,14 @@ let listening = false
  * publish every ship_log notification onto the in-process bus. Called lazily by
  * the SSE route the first time a client connects, so a process that never
  * streams never opens the connection.
+ *
+ * Recovery is layered. postgres-js owns the socket: if Postgres blinks it
+ * reconnects and re-issues LISTEN on its own (the `onlisten` callback re-fires).
+ * If the *initial* listen rejects we reset the flag so the next SSE connection
+ * re-arms. And if a blackout drops notifications entirely, the SSE route's
+ * heartbeat trips the browser's EventSource auto-reconnect, which replays from
+ * Last-Event-ID off the durable table — so a missed doorbell is caught up from
+ * the source of truth, not lost.
  */
 export function ensureShipLogListener(): void {
   if (listening) return
@@ -99,13 +107,19 @@ export function ensureShipLogListener(): void {
   const sql = postgres(connectionString, { max: 1 })
 
   void sql
-    .listen(SHIP_LOG_CHANNEL, (raw) => {
-      try {
-        shipLogBus.publish(JSON.parse(raw) as NotifyPayload)
-      } catch (err) {
-        console.error(`ship_log: bad notify payload: ${errorMessage(err)}`)
-      }
-    })
+    .listen(
+      SHIP_LOG_CHANNEL,
+      (raw) => {
+        try {
+          shipLogBus.publish(JSON.parse(raw) as NotifyPayload)
+        } catch (err) {
+          console.error(`ship_log: bad notify payload: ${errorMessage(err)}`)
+        }
+      },
+      () => {
+        console.info('ship_log: LISTEN connection (re)established')
+      },
+    )
     .catch((err: unknown) => {
       listening = false
       console.error(`ship_log: LISTEN failed: ${errorMessage(err)}`)

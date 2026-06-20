@@ -16,8 +16,12 @@ import { events, type EventRow } from './schema'
 /** The scope everyone can see. */
 export const PUBLIC_SCOPE = 'public'
 
-/** How many events a single replay returns at most — a reconnect catch-up, not a full history dump. */
-const DEFAULT_LIMIT = 500
+/**
+ * How many events a single replay page returns at most. A reconnect catch-up
+ * pages through this — the SSE route loops until a short page comes back — so a
+ * long absence still loses nothing; this only bounds one round-trip.
+ */
+export const REPLAY_PAGE_SIZE = 500
 
 export interface AppendEventInput {
   type: string
@@ -78,7 +82,7 @@ export async function listEventsSince(
     .from(events)
     .where(and(...conditions))
     .orderBy(asc(events.id))
-    .limit(opts.limit ?? DEFAULT_LIMIT)
+    .limit(opts.limit ?? REPLAY_PAGE_SIZE)
 }
 
 /**

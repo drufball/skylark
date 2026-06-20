@@ -12,6 +12,14 @@ cd "$(dirname "$0")/.."
 # Bring up Postgres. (Assumes Docker is running — making hoist start Docker
 # itself is a later issue.) If it can't, sail anyway: the app degrades to
 # "database: down" rather than refusing to start.
-npm run db:up || echo "⚠ couldn't start Postgres — is Docker running? continuing anyway"
+if npm run db:up; then
+  # Migrate and seed the crew so a fresh ship boots with a resolvable actor —
+  # currentActor() needs at least the operator aboard. Both are idempotent, and
+  # best-effort: a hiccup here never blocks `npm run dev`.
+  npm run db:migrate || echo "⚠ couldn't apply migrations — continuing anyway"
+  npm run users seed || echo "⚠ couldn't seed the crew — continuing anyway"
+else
+  echo "⚠ couldn't start Postgres — is Docker running? continuing anyway"
+fi
 
 exec npm run dev

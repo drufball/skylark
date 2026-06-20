@@ -1,19 +1,19 @@
 import { useEffect, useRef } from 'react'
 
+import type { StreamEvent } from '@hull/events/sse'
+
 // The client half of the ship's log: subscribe to live events over SSE and run
 // a callback when one arrives. This REPLACES polling — a view re-renders only
 // when the server says something actually changed, not on a timer. The durable
 // log behind the stream (hull/events) means a dropped connection replays what it
 // missed via Last-Event-ID — the browser's EventSource sends that header for us.
 
-/** One event as it comes off the wire (the `data:` JSON from the SSE route). */
-export interface ShipLogEvent {
-  id: string
-  type: string
-  source: string
-  scope: string
-  payload: unknown
-}
+/**
+ * One event as it comes off the wire (the `data:` JSON from the SSE route). It's
+ * the server's own `StreamEvent` — one contract, defined once in hull/events and
+ * imported downward — so the wire shape can't drift between the two sides.
+ */
+export type ShipLogEvent = StreamEvent
 
 /** Open an SSE connection to the ship's log. Pulled out so tests can inject a fake. */
 export type EventSourceFactory = (url: string) => EventSourceLike

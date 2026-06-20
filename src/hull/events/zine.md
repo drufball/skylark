@@ -58,8 +58,13 @@ its browser → the browser's `EventSource` fires, the `useShipLog` callback run
 **Reconnect loses nothing.** The id is the cursor. On reconnect the browser
 sends `Last-Event-ID` (the last id it saw); the route replays `events` with
 `id > lastSeen` for the subscribed scopes straight from the table, then resumes
-the live feed. Missed events come back in order; nothing is dropped, nothing is
-doubled.
+the live feed. To make "loses nothing" literally true the route does two things:
+it **subscribes to the live bus before running the replay** (buffering, then
+flushing deduped by id) so an event landing in the gap between query and go-live
+isn't dropped; and it **pages the replay** — `listEventsSince` caps each call at
+`REPLAY_PAGE_SIZE`, so the route loops, advancing the cursor, until a short page
+comes back. A long absence drains fully; the cap only bounds one round-trip,
+never the catch-up.
 
 **Pure core, thin impure shell.** The wire format (`sse.ts`), the scope rule,
 and the persistence (`service.ts`) are pure and unit-tested on PGlite — even
@@ -81,11 +86,21 @@ agent runtime's Claude wiring.
   connection holding a `LISTEN` is occupied by the subscription and can't also
   serve queries, so the bus opens its own. Sending a NOTIFY needs no dedicated
   socket — it's a plain statement on `db`.
-- **A subscriber sees only the scopes it asks for.** Visibility is set
-  membership today; the route decides which scopes an actor may subscribe to.
-  Crew-aware widening (which scopes a given user is entitled to) attaches here
-  when the crew-filter primitive lands — see
-  [`../users/zine.md`](../users/zine.md).
+- **A subscriber sees exactly the scopes it asks for — and per-scope
+  authorization is a known, loud debt.** The SSE route requires an authenticated
+  actor before opening a stream (it calls `currentActor()` first), but it does
+  **not** yet check that the actor is _entitled_ to a given `session:<id>` scope
+  — it grants whatever `topics` are requested. While the ship is single-tenant
+  (one crew) that's contained, but it's a real leak surface the moment a second
+  human is aboard: any authenticated caller could replay another session's
+  transcript by naming its scope. The entitlement check lands with the
+  crew-filter primitive — see [`../users/zine.md`](../users/zine.md). Stated
+  here so the deferral is as honest as the crew-filter's own.
+- **Agent events are unattributed for now (`actorId` is null).** The runtime
+  emits without an actor because a turn is fired server-side without yet
+  threading who initiated it. The column and FK exist so attribution can land
+  without a migration; wiring the acting user through is crew-integration work,
+  deferred deliberately rather than done half-way.
 - **Emit can fail without breaking the work that emitted.** The durable state is
   already committed before the notify; callers (the agent runtime) treat
   emission as fire-and-forget so a sleepy log never stalls a turn.

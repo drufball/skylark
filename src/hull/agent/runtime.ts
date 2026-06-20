@@ -10,6 +10,7 @@ import { getModels } from '@earendil-works/pi-ai'
 
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
+import type { AppendEventInput } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 
 import { readContextFiles, skillDirs } from './config'
@@ -25,17 +26,14 @@ import {
 // ship's log); the runtime never sets status without announcing it.
 
 /**
- * How the runtime announces what's happening to the ship's log. Decoupled
- * behind this type so a failed emit never breaks a turn (see `safeEmit`) and so
- * tests can observe emits without a database NOTIFY. The default wires the real
- * events service, giving both the CLI and the web live chat updates for free.
+ * How the runtime announces what's happening to the ship's log. It's the events
+ * service's own `AppendEventInput` — one contract, no near-duplicate — so it
+ * already carries `actorId` for when turns thread the acting user through.
+ * Decoupled behind this type so a failed emit never breaks a turn (see
+ * `safeEmit`) and so tests can observe emits without a database NOTIFY. The
+ * default wires the real events service, so CLI and web both get live updates.
  */
-export type AgentEmitter = (event: {
-  type: string
-  source: string
-  scope: string
-  payload: unknown
-}) => Promise<unknown>
+export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
 
 /** The scope every event for a session is published under. */
 export function sessionScope(sessionId: string): string {

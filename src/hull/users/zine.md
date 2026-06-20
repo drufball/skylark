@@ -14,9 +14,9 @@ This is the crew primitive landing **partially**. We build the data model and
 **actor resolution** — given a request or a CLI process, who is acting? — but
 **not** the compile-time crew-filter helper (the "every row knows its crew, by
 construction" enforcement promised in [`../zine.md`](../zine.md)). That
-enforcement is the load-bearing security
-invariant and is deliberately still ahead of us; this issue makes "who" a real,
-queryable thing so the rest of the ship can start attributing actions to people.
+enforcement is the load-bearing security invariant and is deliberately still
+ahead of us; this issue makes "who" a real, queryable thing so the rest of the
+ship can start attributing actions to people.
 
 ## Components
 
