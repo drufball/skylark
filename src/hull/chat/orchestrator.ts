@@ -83,7 +83,8 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     void emitEvent(db, {
       type: 'chat.agent_progress',
       source: 'chat',
-      scope: chatScope(chatId),
+      topic: chatScope(chatId),
+      audience: 'members',
       actorId: agentUserId,
       payload: { chatId, agentUserId, line },
     }).catch(() => undefined)

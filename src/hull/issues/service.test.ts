@@ -209,7 +209,8 @@ describe('listIssues + comments', () => {
     expect(comments.map((c) => c.body)).toEqual(['first', 'second'])
 
     const events = await listEventsSince(db, {
-      scopes: [`issue:${issue.id}`],
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
     })
     const commented = events.filter((e) => e.type === 'issue.commented')
     expect(commented).toHaveLength(2)
@@ -217,7 +218,7 @@ describe('listIssues + comments', () => {
 })
 
 describe('transitionIssue', () => {
-  it('moves the status and emits issue.status_changed', async () => {
+  it('moves the status and emits issue.status_changed once with topic and audience', async () => {
     const issue = await createIssue(db, { title: 'build me', authorId })
     const moved = await transitionIssue(db, {
       issueId: issue.id,
@@ -226,7 +227,10 @@ describe('transitionIssue', () => {
     })
     expect(moved.status).toBe('building')
 
-    const events = await listEventsSince(db, { scopes: [`issue:${issue.id}`] })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
     const changed = events.filter((e) => e.type === 'issue.status_changed')
     expect(changed).toHaveLength(1)
     expect(changed[0].payload).toMatchObject({
@@ -234,17 +238,23 @@ describe('transitionIssue', () => {
       to: 'building',
     })
     expect(changed[0].actorId).toBe(authorId)
+    expect(changed[0].topic).toBe(`issue:${issue.id}`)
+    expect(changed[0].audience).toBe('public')
   })
 
-  it('also emits on the public scope so the board updates live', async () => {
+  it('board can subscribe via issue:* pattern with public audience', async () => {
     const issue = await createIssue(db, { title: 'x', authorId })
     await transitionIssue(db, {
       issueId: issue.id,
       to: 'building',
       actorId: authorId,
     })
-    const publicEvents = await listEventsSince(db, { scopes: ['public'] })
-    expect(publicEvents.some((e) => e.type === 'issue.status_changed')).toBe(
+    // Board subscribes to "issue:*" pattern, filtering by public audience
+    const boardEvents = await listEventsSince(db, {
+      topicPatterns: ['issue:*'],
+      audience: 'public',
+    })
+    expect(boardEvents.some((e) => e.type === 'issue.status_changed')).toBe(
       true,
     )
   })
@@ -256,7 +266,10 @@ describe('transitionIssue', () => {
     ).rejects.toThrow()
     const after = defined(await getIssue(db, issue.id))
     expect(after.status).toBe('open')
-    const events = await listEventsSince(db, { scopes: [`issue:${issue.id}`] })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
     expect(
       events.filter((e) => e.type === 'issue.status_changed'),
     ).toHaveLength(0)

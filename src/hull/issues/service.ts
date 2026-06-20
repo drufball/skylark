@@ -39,25 +39,24 @@ export const ISSUE_STATUS_CHANGED = 'issue.status_changed'
 export const ISSUE_COMMENTED = 'issue.commented'
 
 /**
- * Announce an issue event on BOTH the issue's own scope (the thread view) and
- * `public` (the board view + the orchestrator). Issues is the only service that
- * fans one event onto two scopes today, so the helper stays issues-local rather
- * than moving into `events/`. One call, one place that knows "thread *and*
- * board hear this."
+ * Announce an issue event ONCE with topic (issue:<id>) and audience (public).
+ * The topic lets the thread view subscribe ("issue:123"); the audience lets the
+ * board view subscribe ("issue:*" with audience=public). Subscribers express
+ * interest via topic patterns; access is enforced via audience. This retires the
+ * dual-emit pattern — one durable row per logical event, not two.
  */
 async function announce(
   db: Database,
   input: { type: string; issueId: string; actorId: string; payload: unknown },
 ): Promise<void> {
-  for (const scope of [issueScope(input.issueId), PUBLIC_SCOPE]) {
-    await emitEvent(db, {
-      type: input.type,
-      source: 'issues',
-      scope,
-      actorId: input.actorId,
-      payload: input.payload,
-    })
-  }
+  await emitEvent(db, {
+    type: input.type,
+    source: 'issues',
+    topic: issueScope(input.issueId),
+    audience: PUBLIC_SCOPE,
+    actorId: input.actorId,
+    payload: input.payload,
+  })
 }
 
 /** The alphabet for a nano id: lowercase alnum, so it's url- and git-ref-safe. */

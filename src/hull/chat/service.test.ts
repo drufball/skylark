@@ -149,11 +149,17 @@ describe('chat persistence', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0].authorHandle).toBe('dru')
 
-    const events = await listEventsSince(db, { scopes: [chatScope(id)] })
+    const events = await listEventsSince(db, {
+      topicPatterns: [chatScope(id)],
+      audience: 'members',
+    })
     expect(events.map((e) => e.type)).toContain('chat.message_posted')
-    // Private: nothing leaks to the public scope.
-    const pub = await listEventsSince(db, { scopes: ['public'] })
-    expect(pub).toHaveLength(0)
+    // Private: nothing leaks to the public audience.
+    const pub = await listEventsSince(db, {
+      topicPatterns: ['*'],
+      audience: 'public',
+    })
+    expect(pub.filter((e) => e.topic === chatScope(id))).toHaveLength(0)
   })
 
   it('orders the sidebar by most recent activity', async () => {

@@ -237,7 +237,8 @@ export function createAgentRuntime(deps: {
         emit({
           type,
           source: 'agent',
-          scope: sessionScope(sessionId),
+          topic: sessionScope(sessionId),
+          audience: 'members',
           payload,
         }),
       )

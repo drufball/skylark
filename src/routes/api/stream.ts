@@ -83,17 +83,18 @@ export const Route = createFileRoute('/api/stream')({
             // that dedupes the buffer against the replayed page.
             let replayed = false
             let lastReplayedId = lastEventId
-            const buffer: { id: string; scope: string }[] = []
-            const deliver = (id: string, scope: string) => {
-              if (!isScopeVisible(scope, scopes)) return
+            const buffer: { id: string; scope?: string }[] = []
+            const deliver = (id: string, scope?: string) => {
+              if (scope && !isScopeVisible(scope, scopes)) return
               if (lastReplayedId && id <= lastReplayedId) return
               void getEventById(db, id).then((row) => {
                 if (row) send(sseFrame(row))
               })
             }
             const unsubscribe = shipLogBus.subscribe((note) => {
-              if (replayed) deliver(note.id, note.scope)
-              else buffer.push({ id: note.id, scope: note.scope })
+              const eventScope = note.scope ?? note.topic
+              if (replayed) deliver(note.id, eventScope)
+              else buffer.push({ id: note.id, scope: eventScope })
             })
 
             try {

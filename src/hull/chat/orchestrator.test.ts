@@ -115,8 +115,11 @@ describe('chat orchestrator', () => {
     const members = await listMembers(db, chatId)
     expect(members.find((m) => m.userId === tilde)?.sessionId).not.toBeNull()
 
-    // Live progress rode the chat scope.
-    const events = await listEventsSince(db, { scopes: [chatScope(chatId)] })
+    // Live progress rode the chat topic with members audience.
+    const events = await listEventsSince(db, {
+      topicPatterns: [chatScope(chatId)],
+      audience: 'members',
+    })
     expect(events.map((e) => e.type)).toContain('chat.agent_progress')
   })
 
