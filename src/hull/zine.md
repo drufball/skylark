@@ -7,8 +7,9 @@ _hull zine — issue #2_
 The hull is the load-bearing foundation — the planks every ship shares. Things
 here are depended on widely and aren't meant to be customized. Today the hull
 holds the database connection, the health service, the agent (the ship's first
-resident), the ship's log (a durable event bus), and the crew (the users every
-action is attributed to).
+resident), the ship's log (a durable event bus), the crew (the users every
+action is attributed to), the issues board (and its building agents), and chat
+(the ship's front door).
 
 ## Components
 
@@ -29,6 +30,10 @@ action is attributed to).
   issue lifecycle (open→building→done/closed) plus the event-driven orchestrator
   that turns a transition into a worktree + builder session and drives it to a
   merged PR. See [`issues/zine.md`](issues/zine.md).
+- **chat service** (`chat/`) — the ship's front door: conversations between crew
+  (humans and agents), where membership is visibility and an agent member's
+  replies are driven through its backing session. See
+  [`chat/zine.md`](chat/zine.md).
 - **errors util** (`lib/errors.ts`) — `errorMessage()`, the one place that
   renders an unknown thrown value as a string. Importable downward by every
   deck.
@@ -59,6 +64,11 @@ finds tables on its own by globbing every `src/**/schema.ts`.)
 
 ## Changelog
 
+- **#5** — the chat service ([`chat/zine.md`](chat/zine.md)): the ship's front
+  door becomes chat with the crew. Membership is visibility; an agent member
+  replies through a backing session the orchestrator drives, and only its text
+  crosses into the clean transcript. The old agent session monitor moved to the
+  Agents view.
 - **#4** — the issues service ([`issues/zine.md`](issues/zine.md)): the ship's
   message board and the building agents. Its orchestrator is the first hull
   component that _reacts_ to the ship's log across processes — an agent's CLI
