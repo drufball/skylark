@@ -44,11 +44,17 @@ export interface ChatAgentRuntime {
   ): Promise<void>
 }
 
-/** A short progress line from a live agent event, or null if nothing to show. */
+/**
+ * A short progress line from a live agent event, or null if nothing worth
+ * showing. Returns a line only on a *few* events (tool use) — never per delta —
+ * so a turn emits a handful of progress events, not one per streamed token. The
+ * initial "thinking…" is emitted once by `reply` before the turn; here we only
+ * surface tool steps. (The issues orchestrator's `statusLineFromEvent` makes the
+ * same choice; keeping both quiet keeps the durable log from filling with ticks.)
+ */
 export function progressLine(event: AgentSessionEvent): string | null {
   if (event.type === 'tool_execution_start') return `using ${event.toolName}…`
-  if (event.type === 'turn_end' || event.type === 'agent_end') return null
-  return 'thinking…'
+  return null
 }
 
 /** Lift the assistant's text out of the messages a turn produced. */
@@ -87,6 +93,21 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     return id
   }
 
+  /** Emit one live progress line for the chat's "working…" placeholder. */
+  function emitProgress(
+    chatId: string,
+    agentUserId: string,
+    line: string,
+  ): void {
+    void emitEvent(db, {
+      type: 'chat.agent_progress',
+      source: 'chat',
+      scope: chatScope(chatId),
+      actorId: agentUserId,
+      payload: { chatId, agentUserId, line },
+    }).catch(() => undefined)
+  }
+
   /** Run one agent's reply: feed unseen messages, take a turn, post the text. */
   async function reply(chatId: string, agentUserId: string): Promise<void> {
     const members = await listMembers(db, chatId)
@@ -100,17 +121,16 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       unseen.map((m) => ({ handle: m.authorHandle, body: m.body })),
     )
 
+    // One "thinking…" up front, then a line per meaningful step — deduped, so a
+    // turn writes a handful of durable progress events, never one per delta.
+    let lastLine = 'thinking…'
+    emitProgress(chatId, agentUserId, lastLine)
     const before = (await getMessages(db, sessionId)).length
     await runtime.runTurn(sessionId, prompt, (event) => {
       const line = progressLine(event)
-      if (line) {
-        void emitEvent(db, {
-          type: 'chat.agent_progress',
-          source: 'chat',
-          scope: chatScope(chatId),
-          actorId: agentUserId,
-          payload: { chatId, agentUserId, line },
-        }).catch(() => undefined)
+      if (line && line !== lastLine) {
+        lastLine = line
+        emitProgress(chatId, agentUserId, line)
       }
     })
 

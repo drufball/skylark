@@ -23,19 +23,20 @@ import {
 } from './service'
 
 describe('progressLine', () => {
-  it('summarizes tool use and thinking, and goes quiet at turn end', () => {
+  it('surfaces tool steps only — never a line per delta', () => {
     expect(
       progressLine({
         type: 'tool_execution_start',
         toolName: 'read',
       } as unknown as AgentSessionEvent),
     ).toBe('using read…')
+    // Everything else is quiet, so a turn's stream of deltas can't flood the log.
+    expect(
+      progressLine({ type: 'message_update' } as unknown as AgentSessionEvent),
+    ).toBeNull()
     expect(
       progressLine({ type: 'turn_end' } as unknown as AgentSessionEvent),
     ).toBeNull()
-    expect(
-      progressLine({ type: 'message_update' } as unknown as AgentSessionEvent),
-    ).toBe('thinking…')
   })
 })
 
