@@ -4,10 +4,11 @@ import { Anchor, Bot, Hammer, MessageSquare } from 'lucide-react'
 import { cn } from '@rigging/lib/utils'
 
 // The dock: the ship's persistent app-shell nav. It switches between the ship's
-// surfaces — Chat (the front door), Issues (the board), and a slot for Agents
-// (M4 fills it; a disabled placeholder for now). Presentational and
-// router-agnostic: the link element is injected so the dock is testable without
-// a router and reusable across routes.
+// surfaces — Chat (the front door), Issues (the board), and Agents (profiles +
+// the session monitor). Presentational and router-agnostic: the link element is
+// injected so the dock is testable without a router and reusable across routes.
+// Items can still be marked `disabled` (rendered dimmed and non-navigating) when
+// a future surface is reserved but not yet built.
 
 export type DockSection = 'chat' | 'issues' | 'agents'
 
@@ -30,13 +31,7 @@ interface DockItem {
 const ITEMS: DockItem[] = [
   { section: 'chat', to: '/', label: 'Chat', Icon: MessageSquare },
   { section: 'issues', to: '/issues', label: 'Issues', Icon: Hammer },
-  {
-    section: 'agents',
-    to: '/agents',
-    label: 'Agents',
-    Icon: Bot,
-    disabled: true,
-  },
+  { section: 'agents', to: '/agents', label: 'Agents', Icon: Bot },
 ]
 
 export interface DockProps {

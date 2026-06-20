@@ -10,7 +10,14 @@ import {
   createPiSession,
   DEFAULT_MODEL,
 } from './runtime'
-import { CHAT_PROFILE, getProfileByName } from './profiles'
+import {
+  CHAT_PROFILE,
+  getProfileByName,
+  listExtensions,
+  listProfiles,
+  type ProfileInput,
+  upsertProfile,
+} from './profiles'
 import {
   createSession,
   getMessages,
@@ -104,3 +111,34 @@ export const cancelAgentChat = createServerFn({ method: 'POST' })
       .cancel(sessionId)
       .then(() => ({ ok: true })),
   )
+
+// --- Agent management (the Agents surface) ---------------------------------
+
+/** Every profile, oldest first — the profiles list. */
+export const listAgentProfiles = createServerFn({ method: 'GET' }).handler(() =>
+  listProfiles(db),
+)
+
+/** Every registered extension — the options a profile picks from. */
+export const listAgentExtensions = createServerFn({ method: 'GET' }).handler(
+  () => listExtensions(db),
+)
+
+/**
+ * Create a profile or update the one with the same name (idempotent by name, so
+ * editing the chat/builder profile keeps its id and every session pointing at
+ * it). The validator narrows the untrusted client input to a `ProfileInput`.
+ */
+export const saveAgentProfile = createServerFn({ method: 'POST' })
+  .validator(
+    (input: ProfileInput): ProfileInput => ({
+      name: input.name.trim(),
+      systemPrompt: input.systemPrompt?.trim() ? input.systemPrompt : null,
+      tools: input.tools && input.tools.length > 0 ? input.tools : null,
+      readContextFiles: input.readContextFiles,
+      useRepoSkills: input.useRepoSkills,
+      extensionIds: input.extensionIds,
+      model: input.model?.trim() ? input.model : null,
+    }),
+  )
+  .handler(({ data }) => upsertProfile(db, data))

@@ -30,7 +30,12 @@ export interface AgentChatViewProps {
   onSend: (text: string) => void
   onCancel: () => void
   onSelect: (id: string) => void
-  onNew: () => void
+  /** Start a new conversation. Omitted in the agent-monitor, where sessions are
+   *  created by chat/issues, not here — the "New" button then disappears. */
+  onNew?: () => void
+  /** Override the empty-state copy (the monitor isn't a "first mate" front door). */
+  emptyTitle?: string
+  emptyHint?: string
 }
 
 export function AgentChatView({
@@ -44,9 +49,11 @@ export function AgentChatView({
   onCancel,
   onSelect,
   onNew,
+  emptyTitle,
+  emptyHint,
 }: AgentChatViewProps) {
   return (
-    <main className="flex h-screen bg-background text-foreground">
+    <main className="flex h-full bg-background text-foreground">
       <SessionList
         sessions={sessions}
         activeId={activeId}
@@ -54,7 +61,13 @@ export function AgentChatView({
         onNew={onNew}
       />
       <section className="flex min-w-0 flex-1 flex-col">
-        <Transcript items={items} activeId={activeId} running={running} />
+        <Transcript
+          items={items}
+          activeId={activeId}
+          running={running}
+          emptyTitle={emptyTitle}
+          emptyHint={emptyHint}
+        />
         {error && (
           <p className="border-t border-destructive/30 bg-destructive/10 px-6 py-2 text-sm text-destructive">
             {error}
@@ -82,16 +95,18 @@ function SessionList({
       <div className="flex items-center gap-2 p-3">
         <Anchor className="size-5 text-muted-foreground" />
         <span className="font-semibold">Skylark</span>
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto"
-          onClick={onNew}
-          aria-label="New chat"
-        >
-          <Plus className="size-4" />
-          New
-        </Button>
+        {onNew && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto"
+            onClick={onNew}
+            aria-label="New chat"
+          >
+            <Plus className="size-4" />
+            New
+          </Button>
+        )}
       </div>
       <ScrollArea className="flex-1">
         <nav className="flex flex-col gap-1 p-2">
@@ -132,7 +147,12 @@ function Transcript({
   items,
   activeId,
   running,
-}: Pick<AgentChatViewProps, 'items' | 'activeId' | 'running'>) {
+  emptyTitle,
+  emptyHint,
+}: Pick<
+  AgentChatViewProps,
+  'items' | 'activeId' | 'running' | 'emptyTitle' | 'emptyHint'
+>) {
   const bottomRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -143,10 +163,12 @@ function Transcript({
       <div className="flex flex-1 items-center justify-center p-8 text-center">
         <div className="max-w-sm">
           <Anchor className="mx-auto mb-3 size-8 text-muted-foreground" />
-          <p className="text-lg font-medium">Your first mate is aboard</p>
+          <p className="text-lg font-medium">
+            {emptyTitle ?? 'Your first mate is aboard'}
+          </p>
           <p className="text-sm text-muted-foreground">
-            Ask for anything — read the code, run a command, build a thing. Send
-            a message to begin.
+            {emptyHint ??
+              'Ask for anything — read the code, run a command, build a thing. Send a message to begin.'}
           </p>
         </div>
       </div>
