@@ -1,5 +1,5 @@
 import { db } from '@hull/db/client'
-import { errorMessage } from '@hull/lib/errors'
+import { isMain, runCli } from '@hull/lib/cli'
 import { cliActor } from '@hull/users/actor'
 import { getUserById } from '@hull/users/service'
 
@@ -175,12 +175,4 @@ async function main(): Promise<void> {
   }
 }
 
-// Only run main if this file is being executed directly (not imported for tests)
-if (import.meta.url.endsWith(process.argv[1] ?? '')) {
-  main()
-    .then(() => process.exit(process.exitCode ?? 0))
-    .catch((err: unknown) => {
-      process.stderr.write(`\n${errorMessage(err)}\n`)
-      process.exit(1)
-    })
-}
+if (isMain(import.meta.url)) runCli(main)

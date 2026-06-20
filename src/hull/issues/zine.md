@@ -55,11 +55,12 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   falls back to slugifying the title), and `ensureOrchestrator` (boots it into
   the server process, subscribes it to `shipLogBus`, runs reconciliation). All
   `v8 ignore`d — the live builder is exercised manually, not in CI.
-- **Doors** — `cli.ts` (`npm run issue`: `new`, `list`, `show`, `comment`,
-  `status`, and the verb shorthands `building`/`open`/`done`/`close`) and
-  `server.ts` (the web doors). The CLI attributes every action to `cliActor()`,
-  so the orchestrator's `SKYLARK_ACTOR=<builder id>` command prefix makes a
-  builder's comments and transitions show as the builder.
+- **Doors** — `cli.ts` (`npm run issue`: `new <title> [--body <text>]`, `list`,
+  `show`, `comment`, `status`, and the verb shorthands
+  `building`/`open`/`done`/`close`) and `server.ts` (the web doors). The CLI
+  attributes every action to `cliActor()`, so the orchestrator's
+  `SKYLARK_ACTOR=<builder id>` command prefix makes a builder's comments and
+  transitions show as the builder.
 - **The views** (rigging) — the **board** (issues grouped by status, author +
   comment count + the live status line for building issues), the **thread**
   (body, the merged comment/status-change timeline, a composer, status

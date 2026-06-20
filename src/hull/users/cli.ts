@@ -1,5 +1,5 @@
 import { db } from '@hull/db/client'
-import { errorMessage } from '@hull/lib/errors'
+import { isMain, runCli } from '@hull/lib/cli'
 
 import { cliActor } from './actor'
 import { listUsers, seedCrew } from './service'
@@ -64,9 +64,4 @@ async function main(): Promise<void> {
   }
 }
 
-main()
-  .then(() => process.exit(process.exitCode ?? 0))
-  .catch((err: unknown) => {
-    process.stderr.write(`\n${errorMessage(err)}\n`)
-    process.exit(1)
-  })
+if (isMain(import.meta.url)) runCli(main)
