@@ -8,6 +8,7 @@ import { createUser } from '@hull/users/service'
 
 import {
   addComment,
+  assembleThread,
   createIssue,
   generateNano,
   getIssue,
@@ -18,9 +19,11 @@ import {
   resolveStatusWord,
   setBuildContext,
   setStatusLine,
+  toBoardCard,
   transitionIssue,
   type IssueTransitionError,
 } from './service'
+import type { IssueRow } from './schema'
 
 let db: Database
 let close: () => Promise<void>
@@ -153,6 +156,17 @@ describe('createIssue', () => {
     })
     expect(issue.nano).toBe('bbbb')
   })
+
+  it('gives up loudly if it cannot find a free nano', async () => {
+    await createIssue(db, { title: 'holder', authorId, nano: 'dupe' })
+    await expect(
+      createIssue(db, {
+        title: 'doomed',
+        authorId,
+        generateNano: () => 'dupe', // always collides
+      }),
+    ).rejects.toThrow(/unique issue nano/i)
+  })
 })
 
 describe('listIssues + comments', () => {
@@ -238,6 +252,76 @@ describe('transitionIssue', () => {
     }
     expect(err?.from).toBe('open')
     expect(err?.to).toBe('done')
+  })
+})
+
+describe('view-data shaping (pure)', () => {
+  // A minimal IssueRow for the pure shapers — they only read these fields.
+  function row(over: Partial<IssueRow> = {}): IssueRow {
+    return {
+      id: 'i1',
+      nano: 'aa11',
+      title: 'Add a widget',
+      body: 'sparkle',
+      status: 'building',
+      authorId: 'u1',
+      visibility: 'public',
+      branchName: 'add-widget-aa11',
+      worktreePath: '/wt/add-widget-aa11',
+      sessionId: 's1',
+      statusLine: 'on it',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...over,
+    }
+  }
+
+  it('toBoardCard carries author handle, comment count, and status line', () => {
+    const card = toBoardCard(row(), 'drufball', 3)
+    expect(card).toMatchObject({
+      nano: 'aa11',
+      authorHandle: 'drufball',
+      commentCount: 3,
+      statusLine: 'on it',
+      status: 'building',
+    })
+  })
+
+  it('assembleThread merges comments + status changes in id (chronological) order', () => {
+    // Ids chosen so the correct chronological order interleaves the two kinds.
+    const thread = assembleThread({
+      issue: row(),
+      authorHandle: 'drufball',
+      comments: [
+        { id: 'b', authorHandle: 'drufball', body: 'second', at: '' },
+        { id: 'd', authorHandle: 'builder', body: 'fourth', at: '' },
+      ],
+      statusChanges: [
+        {
+          id: 'a',
+          authorHandle: 'drufball',
+          from: 'open',
+          to: 'building',
+          at: '',
+        },
+        {
+          id: 'c',
+          authorHandle: 'builder',
+          from: 'building',
+          to: 'open',
+          at: '',
+        },
+      ],
+    })
+    // UUIDv7 ids are time-ordered, so a lexical id sort is chronological.
+    expect(thread.entries.map((e) => e.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(thread.entries.map((e) => e.kind)).toEqual([
+      'status',
+      'comment',
+      'status',
+      'comment',
+    ])
+    expect(thread.branchName).toBe('add-widget-aa11')
   })
 })
 

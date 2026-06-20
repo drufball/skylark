@@ -85,11 +85,17 @@ row + a notify; the in-process call that started the build is long gone. The
 orchestrator hears the agent because it subscribes to the log, the same way it
 hears the browser. This is the bus earning its keep.
 
-**Idempotent side-effects.** A worktree or session may already exist — a
-duplicate event, a resume from `open`, a reconcile after restart. `ensureBuild`
-checks-then-acts: it generates the branch only when `branchName` is unset,
-creates the worktree only when it's absent, and reuses the existing session.
-`teardown` removes only what's there.
+**Idempotent side-effects, serialized per issue.** A worktree or session may
+already exist — a duplicate event, a resume from `open`, a reconcile racing a
+live bus note. `ensureBuild` checks-then-acts: it generates the branch only when
+`branchName` is unset, creates the worktree only when absent, and reuses the
+existing session. But check-then-act is a race if two events for the same issue
+run concurrently, so `onStatusChanged` is **serialized per issue id** (a
+per-issue promise chain); different issues still run in parallel. The branch +
+worktree are persisted the moment the worktree exists on disk — _before_ the
+session is created — so a DB failure mid-build can't strand a worktree with no
+branch recorded (which would re-slug and leak a second one). `teardown` removes
+only what's there.
 
 **`.worktreeinclude`.** `git worktree add` does **not** carry gitignored files,
 so a fresh worktree has no `.env` and can't reach Postgres. The orchestrator
@@ -119,18 +125,26 @@ id) through their public functions, not their tables.
 - **The done-refresh is a known sharp edge, kept defensive.** On `→ done` the
   orchestrator pulls `main` into the **running server's own checkout**
   (`git pull --ff-only`) and runs migrations, so the merged work goes live (Vite
-  HMR reloads on the pulled files — no explicit restart). A process updating its
-  own code is dangerous, so it is deliberately defensive: ff-only, every failure
-  logged, and **never thrown** — a failed self-update must not sink the server,
-  and the merged work is safe in `main` regardless. Teardown still runs even if
-  the pull fails.
+  HMR reloads on the pulled files — no explicit restart for _code_; an in-flight
+  turn in a _sibling_ worktree is dropped and recovered by reconcile, not
+  carried across the reload). A process updating its own code is dangerous, so
+  it is deliberately defensive: ff-only, every failure logged, and **never
+  thrown** — a failed self-update must not sink the server, and the merged work
+  is safe in `main` regardless. **Teardown is guarded by a merge check**: the
+  prompt asks the agent to set `done` only after a real merge, but a prompt
+  isn't a contract, so before removing the worktree the orchestrator confirms
+  the branch is an ancestor of `main` (`branchMerged`). If it can't confirm, it
+  leaves the worktree standing rather than orphan an in-flight PR.
 - **The builder's identity is a command prefix, not a process env.** The
   orchestrator seeds the prompt with
   `SKYLARK_ACTOR=<builder id> npm run issue …`. A command-level prefix sets the
   env for exactly that child process, so several builders running in one server
   process never race on a shared `process.env` — which a per-process env
   injection would. This is why the builder's comments attribute to the builder,
-  not the operator.
+  not the operator. `SKYLARK_ACTOR` is **unauthenticated by design** — the CLI
+  trusts whatever id it's handed — and is safe only because shell access to the
+  host _is_ host access on a single-laptop ship; it gets a real entitlement
+  check when the crew-filter primitive lands.
 - **Build context is recorded, not derived.** `branchName`/`worktreePath`/
   `sessionId` are columns set on first build and reused thereafter. The branch
   is generated **once** (the slug LLM call is not repeated on resume), so a

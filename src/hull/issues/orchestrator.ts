@@ -5,6 +5,7 @@ import type { Database } from '@hull/db/client'
 import { getProfileByName } from '@hull/agent/profiles'
 import { createSession } from '@hull/agent/service'
 import { getEventById } from '@hull/events/service'
+import { handleOf } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
 
 import {
@@ -139,6 +140,16 @@ export function buildPrompt(
   )
 }
 
+/** Is this value one of the four issue statuses? Guards untrusted event payloads. */
+function isStatus(value: unknown): value is IssueStatus {
+  return (
+    value === 'open' ||
+    value === 'building' ||
+    value === 'done' ||
+    value === 'closed'
+  )
+}
+
 // --- The injected boundaries -----------------------------------------------
 
 /** Everything the orchestrator does to git, the filesystem, and the checkout. */
@@ -159,6 +170,10 @@ export interface GitOps {
   pullMain(): Promise<void>
   /** `npm run db:migrate` in the server's checkout (merged work may add migrations). */
   runMigrations(): Promise<void>
+  /** Read + parse the repo's `.worktreeinclude` (the gitignored files to copy in). */
+  readWorktreeIncludes(): Promise<string[]>
+  /** Is `branch` an ancestor of `main` — i.e. has its work actually merged? */
+  branchMerged(branch: string): Promise<boolean>
 }
 
 /** The slice of the agent runtime the orchestrator drives (a fake stands in). */
@@ -194,6 +209,33 @@ export interface BusNote {
 export function createOrchestrator(deps: OrchestratorDeps) {
   const { db, git, runtime, builderUserId, worktreeRoot } = deps
 
+  // Serialize all work for a single issue. Events for the same issue can arrive
+  // concurrently — a reconcile-on-boot racing a live bus note, a rapid
+  // open→building→open→building — and ensureBuild's check-then-act
+  // (worktreeExists → addWorktree) would otherwise let two passes both miss the
+  // worktree and create it (and a second session) twice. A per-issue promise
+  // chain makes each issue's transitions run one at a time; different issues
+  // still run in parallel.
+  // The stored chain is "settle-only": it never rejects (a thrown `work` is
+  // caught into the tail), so the next link runs after the prior one regardless
+  // of outcome and a failure never leaves an unhandled rejection on the chain.
+  // The caller gets a separate promise that DOES reflect `work`'s result.
+  const chains = new Map<string, Promise<void>>()
+  function serialize(
+    issueId: string,
+    work: () => Promise<void>,
+  ): Promise<void> {
+    const prior = chains.get(issueId) ?? Promise.resolve()
+    const result = prior.then(work)
+    const tail = result.catch(() => undefined)
+    chains.set(issueId, tail)
+    // Keep the map bounded: once this link is the tail, drop it.
+    void tail.then(() => {
+      if (chains.get(issueId) === tail) chains.delete(issueId)
+    })
+    return result
+  }
+
   /**
    * Fire a turn in the background, streaming the agent's progress into the
    * issue's status line. Fire-and-forget: a turn is long-lived and the
@@ -205,9 +247,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       .runTurn(sessionId, text, (event) => {
         const line = statusLineFromEvent(event)
         if (line)
-          void setStatusLine(db, issueId, line).catch((err: unknown) => {
-            console.error(`issue status line failed: ${errorMessage(err)}`)
-          })
+          void setStatusLine(db, issueId, line).catch(
+            /* v8 ignore next 2 -- defensive: a status-line write failing must never break a build */
+            (err: unknown) => {
+              console.error(`issue status line failed: ${errorMessage(err)}`)
+            },
+          )
       })
       .catch((err: unknown) => {
         console.error(`builder turn ${sessionId} failed: ${errorMessage(err)}`)
@@ -219,13 +264,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     issueId: string,
   ): Promise<{ authorHandle: string; body: string }[]> {
     const comments = await listComments(db, issueId)
-    const { getUserById } = await import('@hull/users/service')
-    const out: { authorHandle: string; body: string }[] = []
-    for (const c of comments) {
-      const who = await getUserById(db, c.authorId)
-      out.push({ authorHandle: who?.handle ?? '?', body: c.body })
-    }
-    return out
+    return Promise.all(
+      comments.map(async (c) => ({
+        authorHandle: await handleOf(db, c.authorId),
+        body: c.body,
+      })),
+    )
   }
 
   /**
@@ -251,8 +295,14 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     // mirror Claude Code and copy the .worktreeinclude set in afterward.
     if (!(await git.worktreeExists(worktreePath))) {
       await git.addWorktree(worktreePath, branchName)
-      const patterns = await readWorktreeIncludes()
+      const patterns = await git.readWorktreeIncludes()
       await git.copyWorktreeIncludes(process.cwd(), worktreePath, patterns)
+      // Persist the branch + worktree the moment they exist on disk — BEFORE
+      // creating the session — so a DB failure on createSession can't strand a
+      // worktree with no branchName recorded (which would re-generate a fresh
+      // slug + a second worktree on the next event). A resume returns here,
+      // finds the worktree present, and skips straight past.
+      await setBuildContext(db, issue.id, { branchName, worktreePath })
     }
 
     // Reuse the existing builder session if the issue already has one.
@@ -285,10 +335,19 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   /**
    * React to a status transition. The single decision point for the build
    * lifecycle — every door (web, CLI, another process) lands here through the
-   * ship's log. Re-reads the issue row so the decision is on durable state, not
-   * the event payload.
+   * ship's log. Serialized per issue so concurrent events for the same issue
+   * can't double-create a worktree/session; re-reads the issue row so the
+   * decision is on durable state, not the event payload.
    */
-  async function onStatusChanged(
+  function onStatusChanged(
+    issueId: string,
+    from: IssueStatus,
+    to: IssueStatus,
+  ): Promise<void> {
+    return serialize(issueId, () => applyTransition(issueId, from, to))
+  }
+
+  async function applyTransition(
     issueId: string,
     _from: IssueStatus,
     to: IssueStatus,
@@ -312,13 +371,28 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         // Agent paused: it commented and set open, then ended its turn. Leave
         // the session idle on its worktree — a resume reuses both. No teardown.
         break
-      case 'done':
-        // Agent merged. Refresh the server's own checkout from main (defensive:
-        // ff-only, log failures, never crash), apply any new migrations, then
-        // tear the build down. Vite HMR reloads the server on the pulled files.
+      case 'done': {
+        // Agent says merged. Refresh the server's own checkout from main
+        // (defensive: ff-only, log failures, never crash), apply any new
+        // migrations — then tear the build down. Vite HMR reloads the server on
+        // the pulled files.
         await refreshFromMain()
-        await teardown(issue)
+        // The prompt asks the agent to set `done` only after a real merge, but a
+        // prompt isn't a contract. Don't tear down a worktree whose branch isn't
+        // actually in main yet — that would orphan an in-flight PR with no
+        // worktree to amend from. If we can't confirm the merge, leave the build
+        // standing (a human can close it). A missing branchName is treated as
+        // "nothing to protect" and torn down.
+        const merged = issue.branchName
+          ? await git.branchMerged(issue.branchName).catch(() => false)
+          : true
+        if (merged) await teardown(issue)
+        else
+          console.warn(
+            `issue ${issue.nano} set done but ${issue.branchName ?? '?'} is not in main; leaving the worktree standing`,
+          )
         break
+      }
       case 'closed':
         // Human cancelled: stop the in-flight turn, dispose, remove the worktree.
         if (issue.sessionId) await runtime.cancel(issue.sessionId)
@@ -353,10 +427,15 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const event = await getEventById(db, note.id)
     if (!event) return
     const payload = event.payload as {
-      issueId: string
-      from: IssueStatus
-      to: IssueStatus
+      issueId?: unknown
+      from?: unknown
+      to?: unknown
     }
+    // Validate the shape rather than trust it: today only transitionIssue emits
+    // this, but a replayed or another ship's event must not sail unchecked into
+    // the lifecycle. A bad payload is dropped quietly.
+    if (typeof payload.issueId !== 'string') return
+    if (!isStatus(payload.from) || !isStatus(payload.to)) return
     await onStatusChanged(payload.issueId, payload.from, payload.to)
   }
 
@@ -370,19 +449,15 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const all = await listIssues(db)
     for (const issue of all) {
       if (issue.status !== 'building') continue
-      try {
-        const { sessionId } = await ensureBuild(issue)
-        const thread = await threadFor(issue.id)
-        fireBuilderTurn(
-          issue.id,
-          sessionId,
-          buildPrompt(issue, thread, builderUserId),
-        )
-      } catch (err) {
-        console.error(
-          `reconcile ${issue.nano} failed (continuing): ${errorMessage(err)}`,
-        )
-      }
+      // Route through the same serialized building path so a reconcile racing a
+      // live bus note for the same issue can't double-create its worktree.
+      await onStatusChanged(issue.id, 'building', 'building').catch(
+        (err: unknown) => {
+          console.error(
+            `reconcile ${issue.nano} failed (continuing): ${errorMessage(err)}`,
+          )
+        },
+      )
     }
   }
 
@@ -390,19 +465,3 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 }
 
 export type Orchestrator = ReturnType<typeof createOrchestrator>
-
-/* v8 ignore start -- live filesystem read of the repo's .worktreeinclude */
-/**
- * Read and parse the repo's `.worktreeinclude` (falls back to just `.env` if the
- * file is missing). Impure file read, kept out of the pure parser above.
- */
-async function readWorktreeIncludes(): Promise<string[]> {
-  const { readFile } = await import('node:fs/promises')
-  try {
-    const text = await readFile('.worktreeinclude', 'utf8')
-    return parseWorktreeInclude(text)
-  } catch {
-    return ['.env']
-  }
-}
-/* v8 ignore stop */

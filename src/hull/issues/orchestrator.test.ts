@@ -36,6 +36,8 @@ class FakeGit implements GitOps {
   copied: { from: string; to: string; patterns: string[] }[] = []
   /** Pretend these worktree paths already exist on disk (idempotency tests). */
   existing = new Set<string>()
+  /** What branchMerged returns — true by default (the happy merged case). */
+  merged = true
 
   worktreeExists(path: string): Promise<boolean> {
     return Promise.resolve(this.existing.has(path) || this.worktrees.has(path))
@@ -65,6 +67,12 @@ class FakeGit implements GitOps {
   runMigrations(): Promise<void> {
     this.migrations++
     return Promise.resolve()
+  }
+  readWorktreeIncludes(): Promise<string[]> {
+    return Promise.resolve(['.env'])
+  }
+  branchMerged(): Promise<boolean> {
+    return Promise.resolve(this.merged)
   }
 }
 
@@ -281,6 +289,24 @@ describe('orchestrator → building (from open)', () => {
     expect(runtime.turns[0].text).toContain('@drufball')
   })
 
+  it('serializes concurrent → building events: one worktree, one session', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'cc99' })
+
+    // Two events for the same issue land at once (e.g. reconcile racing a live
+    // bus note). Without per-issue serialization both would miss the worktree
+    // and create it (and a session) twice.
+    await Promise.all([
+      orch.onStatusChanged(issue.id, 'open', 'building'),
+      orch.onStatusChanged(issue.id, 'open', 'building'),
+    ])
+
+    expect(git.added).toHaveLength(1)
+    const sessions = await listSessions(db)
+    expect(sessions).toHaveLength(1)
+  })
+
   it('does not regenerate the slug once a branch exists (resume keeps the branch)', async () => {
     const generateSlug = vi.fn(() => Promise.resolve('first-slug'))
     const { deps } = makeDeps({ generateSlug })
@@ -324,6 +350,33 @@ describe('orchestrator → done (agent merged)', () => {
     expect(git.migrations).toBe(1)
     expect(git.removed).toEqual([defined(built.worktreePath)])
     expect(runtime.disposed).toContain(defined(built.sessionId))
+  })
+
+  it('leaves the worktree standing if the branch is not actually merged', async () => {
+    const { deps, git, runtime } = makeDeps()
+    git.merged = false
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'nm66' })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+    const built = defined(await getIssue(db, issue.id))
+
+    await orch.onStatusChanged(issue.id, 'building', 'done')
+
+    // No teardown — the PR isn't in main, so don't orphan it.
+    expect(git.removed).toEqual([])
+    expect(runtime.disposed).not.toContain(defined(built.sessionId))
+  })
+
+  it('treats an erroring merge check as not-merged and keeps the worktree', async () => {
+    const { deps, git } = makeDeps()
+    git.branchMerged = () => Promise.reject(new Error('git blew up'))
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'mg77' })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+
+    await orch.onStatusChanged(issue.id, 'building', 'done')
+
+    expect(git.removed).toEqual([])
   })
 
   it('never crashes if the self-pull fails — logs and continues', async () => {
@@ -417,6 +470,65 @@ describe('orchestrator event subscription', () => {
     })
 
     expect(git.added).toHaveLength(1)
+  })
+
+  it('ignores notes that are not status changes', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    await orch.handleBusNote({
+      id: 'x',
+      type: 'issue.commented',
+      scope: 'public',
+    })
+    expect(git.added).toEqual([])
+  })
+
+  it('drops a note whose event is gone', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    await orch.handleBusNote({
+      id: 'no-such-event',
+      type: ISSUE_STATUS_CHANGED,
+      scope: 'public',
+    })
+    expect(git.added).toEqual([])
+  })
+
+  it('drops a status-change event with a malformed payload', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: ISSUE_STATUS_CHANGED,
+      source: 'issues',
+      scope: 'public',
+      payload: { issueId: 42, from: 'nope', to: 'nope' },
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_STATUS_CHANGED,
+      scope: 'public',
+    })
+    expect(git.added).toEqual([])
+  })
+})
+
+describe('orchestrator → done with no build context', () => {
+  it('tears down nothing and never calls the merge check', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'nd00' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    // Straight to done with no branch/worktree recorded — the no-branchName arm
+    // treats it as "nothing to protect" and teardown is a no-op.
+    await expect(
+      orch.onStatusChanged(issue.id, 'building', 'done'),
+    ).resolves.toBeUndefined()
+    expect(git.removed).toEqual([])
   })
 })
 

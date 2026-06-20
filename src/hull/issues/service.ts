@@ -38,6 +38,28 @@ export function issueScope(issueId: string): string {
 export const ISSUE_STATUS_CHANGED = 'issue.status_changed'
 export const ISSUE_COMMENTED = 'issue.commented'
 
+/**
+ * Announce an issue event on BOTH the issue's own scope (the thread view) and
+ * `public` (the board view + the orchestrator). Issues is the only service that
+ * fans one event onto two scopes today, so the helper stays issues-local rather
+ * than moving into `events/`. One call, one place that knows "thread *and*
+ * board hear this."
+ */
+async function announce(
+  db: Database,
+  input: { type: string; issueId: string; actorId: string; payload: unknown },
+): Promise<void> {
+  for (const scope of [issueScope(input.issueId), PUBLIC_SCOPE]) {
+    await emitEvent(db, {
+      type: input.type,
+      source: 'issues',
+      scope,
+      actorId: input.actorId,
+      payload: input.payload,
+    })
+  }
+}
+
 /** The alphabet for a nano id: lowercase alnum, so it's url- and git-ref-safe. */
 const NANO_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const NANO_LENGTH = 4
@@ -219,17 +241,9 @@ export async function addComment(
       body: input.body,
     })
     .returning()
-  await emitEvent(db, {
+  await announce(db, {
     type: ISSUE_COMMENTED,
-    source: 'issues',
-    scope: issueScope(input.issueId),
-    actorId: input.authorId,
-    payload: { issueId: input.issueId, commentId: row.id },
-  })
-  await emitEvent(db, {
-    type: ISSUE_COMMENTED,
-    source: 'issues',
-    scope: PUBLIC_SCOPE,
+    issueId: input.issueId,
     actorId: input.authorId,
     payload: { issueId: input.issueId, commentId: row.id },
   })
@@ -256,20 +270,11 @@ export async function transitionIssue(
     .where(eq(issues.id, input.issueId))
     .returning()
 
-  const payload = { issueId: input.issueId, from: current.status, to }
-  await emitEvent(db, {
+  await announce(db, {
     type: ISSUE_STATUS_CHANGED,
-    source: 'issues',
-    scope: issueScope(input.issueId),
+    issueId: input.issueId,
     actorId: input.actorId,
-    payload,
-  })
-  await emitEvent(db, {
-    type: ISSUE_STATUS_CHANGED,
-    source: 'issues',
-    scope: PUBLIC_SCOPE,
-    actorId: input.actorId,
-    payload,
+    payload: { issueId: input.issueId, from: current.status, to },
   })
   return row
 }
@@ -301,4 +306,122 @@ export async function setStatusLine(
   statusLine: string,
 ): Promise<void> {
   await db.update(issues).set({ statusLine }).where(eq(issues.id, issueId))
+}
+
+// --- View-data shaping (pure, so it's PGlite-testable, not welded to the doors) ---
+
+/** A board card: an issue plus its author handle and comment count. */
+export interface BoardIssue {
+  id: string
+  nano: string
+  title: string
+  status: IssueStatus
+  authorHandle: string
+  commentCount: number
+  statusLine: string | null
+  updatedAt: string
+}
+
+/** One thread item: a comment or a status-change entry, in time order. */
+export type ThreadEntry =
+  | {
+      kind: 'comment'
+      id: string
+      authorHandle: string
+      body: string
+      at: string
+    }
+  | {
+      kind: 'status'
+      id: string
+      authorHandle: string
+      from: IssueStatus
+      to: IssueStatus
+      at: string
+    }
+
+export interface IssueThread {
+  id: string
+  nano: string
+  title: string
+  body: string
+  status: IssueStatus
+  authorHandle: string
+  branchName: string | null
+  statusLine: string | null
+  entries: ThreadEntry[]
+}
+
+/** A status-change record as the thread assembler needs it (from the log). */
+export interface StatusChange {
+  id: string
+  authorHandle: string
+  from: IssueStatus
+  to: IssueStatus
+  at: string
+}
+
+/** Shape one issue + its author handle + comment count into a board card. */
+export function toBoardCard(
+  issue: IssueRow,
+  authorHandle: string,
+  commentCount: number,
+): BoardIssue {
+  return {
+    id: issue.id,
+    nano: issue.nano,
+    title: issue.title,
+    status: issue.status,
+    authorHandle,
+    commentCount,
+    statusLine: issue.statusLine,
+    updatedAt: issue.updatedAt.toISOString(),
+  }
+}
+
+/**
+ * Merge an issue's comments and its status changes into one timeline, sorted by
+ * id. Both ids are UUIDv7, so a lexical id sort IS a chronological sort — the
+ * load-bearing assumption this function exists to make testable. Pure: hand it
+ * already-fetched rows (with resolved author handles) and it does the shaping.
+ */
+export function assembleThread(input: {
+  issue: IssueRow
+  authorHandle: string
+  comments: { id: string; authorHandle: string; body: string; at: string }[]
+  statusChanges: StatusChange[]
+}): IssueThread {
+  const entries: ThreadEntry[] = [
+    ...input.comments.map(
+      (c): ThreadEntry => ({
+        kind: 'comment',
+        id: c.id,
+        authorHandle: c.authorHandle,
+        body: c.body,
+        at: c.at,
+      }),
+    ),
+    ...input.statusChanges.map(
+      (s): ThreadEntry => ({
+        kind: 'status',
+        id: s.id,
+        authorHandle: s.authorHandle,
+        from: s.from,
+        to: s.to,
+        at: s.at,
+      }),
+    ),
+  ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  return {
+    id: input.issue.id,
+    nano: input.issue.nano,
+    title: input.issue.title,
+    body: input.issue.body,
+    status: input.issue.status,
+    authorHandle: input.authorHandle,
+    branchName: input.issue.branchName,
+    statusLine: input.issue.statusLine,
+    entries,
+  }
 }

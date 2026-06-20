@@ -3,11 +3,12 @@ import { createServerFn } from '@tanstack/react-start'
 import { db } from '@hull/db/client'
 import { listEventsSince } from '@hull/events/service'
 import { currentActor } from '@hull/users/actor'
-import { getUserById } from '@hull/users/service'
+import { handleOf } from '@hull/users/service'
 
 import { ensureOrchestrator } from './orchestrator-live'
 import {
   addComment,
+  assembleThread,
   createIssue,
   getIssue,
   ISSUE_STATUS_CHANGED,
@@ -15,92 +16,53 @@ import {
   listComments,
   listIssues,
   resolveStatusWord,
+  toBoardCard,
   transitionIssue,
+  type IssueThread,
+  type StatusChange,
 } from './service'
 import type { IssueStatus } from './schema'
 
 // The web doors onto the issues service — the message board. Issues are created
 // by currentActor() (the operator) and comments by the current actor, so the UI
-// never has to ask "who are you". A transition fires the orchestrator inline AND
-// rides the ship's log; the orchestrator is also subscribed to the log so an
-// agent's CLI transition in another process is heard too.
+// never has to ask "who are you". The pure shaping (board cards, the merged
+// thread timeline) lives in service.ts and is PGlite-tested; these doors only
+// gather rows and call it.
+//
+// A transition does NOT drive the orchestrator inline — it emits on the ship's
+// log, and the orchestrator (subscribed via ensureOrchestrator) reacts off the
+// bus. That's deliberate: the same path serves an agent's CLI transition from a
+// separate process. These doors only ensure the subscription is live.
 
-/** Boot the orchestrator into this server process on first issues use. */
+export type { BoardIssue, IssueThread, ThreadEntry } from './service'
+
+/** Ensure the orchestrator is booted + subscribed in this server process. */
 function bootOrchestrator(): void {
   void ensureOrchestrator().catch((err: unknown) => {
     console.error(`orchestrator boot failed: ${String(err)}`)
   })
 }
 
-/** A board card: an issue plus its author handle and comment count. */
-export interface BoardIssue {
-  id: string
-  nano: string
-  title: string
-  status: IssueStatus
-  authorHandle: string
-  commentCount: number
-  statusLine: string | null
-  updatedAt: string
-}
-
 /** All issues as board cards, newest first. The board groups by status itself. */
 export const listBoard = createServerFn({ method: 'GET' }).handler(async () => {
   bootOrchestrator()
   const issues = await listIssues(db)
-  const cards: BoardIssue[] = []
-  for (const issue of issues) {
-    const author = await getUserById(db, issue.authorId)
-    const comments = await listComments(db, issue.id)
-    cards.push({
-      id: issue.id,
-      nano: issue.nano,
-      title: issue.title,
-      status: issue.status,
-      authorHandle: author?.handle ?? '?',
-      commentCount: comments.length,
-      statusLine: issue.statusLine,
-      updatedAt: issue.updatedAt.toISOString(),
-    })
-  }
-  return cards
+  return Promise.all(
+    issues.map(async (issue) =>
+      toBoardCard(
+        issue,
+        await handleOf(db, issue.authorId),
+        (await listComments(db, issue.id)).length,
+      ),
+    ),
+  )
 })
-
-/** One thread item: a comment or a status-change entry, in time order. */
-export type ThreadEntry =
-  | {
-      kind: 'comment'
-      id: string
-      authorHandle: string
-      body: string
-      at: string
-    }
-  | {
-      kind: 'status'
-      id: string
-      authorHandle: string
-      from: IssueStatus
-      to: IssueStatus
-      at: string
-    }
-
-export interface IssueThread {
-  id: string
-  nano: string
-  title: string
-  body: string
-  status: IssueStatus
-  authorHandle: string
-  branchName: string | null
-  statusLine: string | null
-  entries: ThreadEntry[]
-}
 
 /**
  * An issue with its full thread: comments and status-change entries merged and
- * sorted by time (both carry UUIDv7 ids, so id order is time order). The status
- * entries come from the ship's log on the issue's scope — the durable record of
- * who moved it and when.
+ * sorted by time. The status entries come from the ship's log on the issue's
+ * scope — the durable record of who moved it and when. Shaping is the pure
+ * `assembleThread`; this door just gathers the rows and resolves handles.
  */
 export const getThread = createServerFn({ method: 'GET' })
   .validator((issueId: string) => issueId)
@@ -108,48 +70,38 @@ export const getThread = createServerFn({ method: 'GET' })
     bootOrchestrator()
     const issue = await getIssue(db, issueId)
     if (!issue) return null
-    const author = await getUserById(db, issue.authorId)
-    const comments = await listComments(db, issueId)
-    const events = await listEventsSince(db, { scopes: [issueScope(issueId)] })
 
-    const entries: ThreadEntry[] = []
-    for (const c of comments) {
-      const who = await getUserById(db, c.authorId)
-      entries.push({
-        kind: 'comment',
+    const comments = await Promise.all(
+      (await listComments(db, issueId)).map(async (c) => ({
         id: c.id,
-        authorHandle: who?.handle ?? '?',
+        authorHandle: await handleOf(db, c.authorId),
         body: c.body,
         at: c.createdAt.toISOString(),
-      })
-    }
-    for (const e of events) {
-      if (e.type !== ISSUE_STATUS_CHANGED) continue
-      const who = e.actorId ? await getUserById(db, e.actorId) : undefined
-      const p = e.payload as { from: IssueStatus; to: IssueStatus }
-      entries.push({
-        kind: 'status',
-        id: e.id,
-        authorHandle: who?.handle ?? '?',
-        from: p.from,
-        to: p.to,
-        at: e.createdAt.toISOString(),
-      })
-    }
-    // Both ids are UUIDv7, so a lexical id sort is a chronological sort.
-    entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      })),
+    )
 
-    return {
-      id: issue.id,
-      nano: issue.nano,
-      title: issue.title,
-      body: issue.body,
-      status: issue.status,
-      authorHandle: author?.handle ?? '?',
-      branchName: issue.branchName,
-      statusLine: issue.statusLine,
-      entries,
-    }
+    const events = await listEventsSince(db, { scopes: [issueScope(issueId)] })
+    const statusChanges: StatusChange[] = await Promise.all(
+      events
+        .filter((e) => e.type === ISSUE_STATUS_CHANGED)
+        .map(async (e) => {
+          const p = e.payload as { from: IssueStatus; to: IssueStatus }
+          return {
+            id: e.id,
+            authorHandle: await handleOf(db, e.actorId),
+            from: p.from,
+            to: p.to,
+            at: e.createdAt.toISOString(),
+          }
+        }),
+    )
+
+    return assembleThread({
+      issue,
+      authorHandle: await handleOf(db, issue.authorId),
+      comments,
+      statusChanges,
+    })
   })
 
 /** Open a new issue as the current actor. Returns the new id. */
@@ -179,10 +131,10 @@ export const commentOnIssue = createServerFn({ method: 'POST' })
   })
 
 /**
- * Move an issue's status as the current actor. Boots the orchestrator first so
- * the reaction it subscribes for is guaranteed to be heard in this process; the
- * transition then emits on the ship's log and the orchestrator drives the
- * worktree/builder lifecycle.
+ * Move an issue's status as the current actor. Ensures the orchestrator is
+ * subscribed first (so the reaction is guaranteed to be heard in this process),
+ * then emits on the ship's log; the orchestrator drives the worktree/builder
+ * lifecycle off the bus.
  */
 export const setIssueStatus = createServerFn({ method: 'POST' })
   .validator((input: { issueId: string; status: string }) => input)

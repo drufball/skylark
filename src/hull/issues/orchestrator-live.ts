@@ -80,6 +80,24 @@ export const nodeGitOps: GitOps = {
   async runMigrations() {
     await run('npm run db:migrate')
   },
+  async readWorktreeIncludes() {
+    try {
+      return parseWorktreeInclude(await readFile('.worktreeinclude', 'utf8'))
+    } catch {
+      return ['.env']
+    }
+  },
+  async branchMerged(branch) {
+    // `git merge-base --is-ancestor <branch> main` exits 0 when the branch's tip
+    // is reachable from main — i.e. it's been merged. A non-zero exit (run
+    // rejects) means it isn't, so a thrown error reads as "not merged".
+    try {
+      await run(`git merge-base --is-ancestor ${shq(branch)} main`)
+      return true
+    } catch {
+      return false
+    }
+  },
 }
 
 /**
@@ -114,15 +132,6 @@ export async function generateSlug(issue: IssueRow): Promise<string> {
   } catch (err) {
     console.warn(`slug LLM call failed, using title: ${errorMessage(err)}`)
     return slugify(issue.title)
-  }
-}
-
-/** Read + parse the repo's .worktreeinclude (falls back to .env). */
-export async function readWorktreeIncludes(): Promise<string[]> {
-  try {
-    return parseWorktreeInclude(await readFile('.worktreeinclude', 'utf8'))
-  } catch {
-    return ['.env']
   }
 }
 
