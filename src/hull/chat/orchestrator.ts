@@ -3,7 +3,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
-import { createSession, getMessages } from '@hull/agent/service'
+import { createSession } from '@hull/agent/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
 
@@ -119,8 +119,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     // turn writes a handful of durable progress events, never one per delta.
     let lastLine = 'thinking…'
     emitProgress(chatId, agentUserId, lastLine)
-    const before = (await getMessages(db, sessionId)).length
-    await runtime.runTurn(sessionId, prompt, (event) => {
+    const produced = await runtime.runTurn(sessionId, prompt, (event) => {
       const line = progressLine(event)
       if (line && line !== lastLine) {
         lastLine = line
@@ -128,9 +127,6 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       }
     })
 
-    const produced = (await getMessages(db, sessionId))
-      .slice(before)
-      .map((r) => r.message)
     const text = assistantTextFrom(produced)
     if (text) {
       await addMessage(db, {

@@ -1,4 +1,4 @@
-import { uuidv7 } from '@earendil-works/pi-agent-core'
+import { uuidv7, type AgentMessage } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -93,10 +93,10 @@ class FakeRuntime {
     sessionId: string,
     text: string,
     onEvent?: (e: AgentSessionEvent) => void,
-  ): Promise<void> {
+  ): Promise<AgentMessage[]> {
     this.turns.push({ sessionId, text })
     this.onTurn?.(sessionId, text, onEvent)
-    return Promise.resolve()
+    return Promise.resolve([])
   }
   cancel(sessionId: string): Promise<void> {
     this.cancelled.push(sessionId)

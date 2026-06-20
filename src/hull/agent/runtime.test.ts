@@ -309,7 +309,8 @@ describe('agent runtime', () => {
     })
 
     // The turn completes and persists despite every emit throwing.
-    await expect(runtimeBadEmit.runTurn('s1', 'hi')).resolves.toBeUndefined()
+    const produced = await runtimeBadEmit.runTurn('s1', 'hi')
+    expect(produced).toEqual(expect.any(Array))
     expect(defined(await getSession(db, 's1')).status).toBe('idle')
     expect((await getMessages(db, 's1')).length).toBeGreaterThan(0)
   })
@@ -465,5 +466,90 @@ describe('agent runtime', () => {
     await expect(runtime.runTurn('ghost', 'hi')).rejects.toThrow(
       'No such session',
     )
+  })
+
+  it('returns the agent messages produced during the turn', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    fake.onPrompt = (text) => {
+      fake.append(msg('user', text))
+      fake.append(msg('assistant', 'reply one'))
+      fake.append(msg('assistant', 'reply two'))
+      fake.emit({
+        type: 'turn_end',
+        message: msg('assistant', 'reply two'),
+        toolResults: [],
+      })
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+
+    const produced = await runtime.runTurn('s1', 'hello')
+
+    // Returns all messages flushed this turn (pi echoes the user message too).
+    expect(produced).toHaveLength(3)
+    expect(produced[0]?.role).toBe('user')
+    expect(produced[1]?.role).toBe('assistant')
+    expect(produced[2]?.role).toBe('assistant')
+    expect(
+      (produced[1] as { content: { text: string }[] }).content[0].text,
+    ).toBe('reply one')
+    expect(
+      (produced[2] as { content: { text: string }[] }).content[0].text,
+    ).toBe('reply two')
+  })
+
+  it('returns an empty array when a message is queued (followUp path)', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    const gate = deferred()
+    fake.onPrompt = async () => {
+      await gate.promise
+    }
+
+    const first = runtime.runTurn('s1', 'first')
+    await until(() => fake.isStreaming)
+    const queued = await runtime.runTurn('s1', 'second')
+
+    // The queued message returns [] immediately.
+    expect(queued).toEqual([])
+
+    gate.resolve()
+    await first
+  })
+
+  it('returns messages that survived compaction', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    fake.onPrompt = (text) => {
+      fake.append(msg('user', text))
+      fake.append(msg('assistant', 'before'))
+      fake.compact(0) // compact away everything
+      fake.append(msg('assistant', 'after'))
+      fake.emit({
+        type: 'turn_end',
+        message: msg('assistant', 'after'),
+        toolResults: [],
+      })
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+
+    const produced = await runtime.runTurn('s1', 'go')
+
+    // All messages were durably persisted and returned, despite compaction.
+    expect(produced).toHaveLength(3)
+    expect(
+      (produced[0] as { content: { text: string }[] }).content[0].text,
+    ).toBe('go')
+    expect(
+      (produced[1] as { content: { text: string }[] }).content[0].text,
+    ).toBe('before')
+    expect(
+      (produced[2] as { content: { text: string }[] }).content[0].text,
+    ).toBe('after')
   })
 })

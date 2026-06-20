@@ -70,7 +70,7 @@ export interface RunsTurns {
     sessionId: string,
     text: string,
     onEvent?: (event: AgentSessionEvent) => void,
-  ): Promise<void>
+  ): Promise<AgentMessage[]>
 }
 
 /**
@@ -169,6 +169,11 @@ interface Entry {
   persistedCount: number
   /** Serializes DB writes so turn-boundary flushes never race. */
   persistChain: Promise<void>
+  /**
+   * Accumulates messages flushed during the current turn. Reset at the start
+   * of each turn; returned at the end.
+   */
+  currentTurnMessages: AgentMessage[]
 }
 
 /**
@@ -230,22 +235,27 @@ export function createAgentRuntime(deps: {
    * compaction safe. The durable log is append-only and monotonic: a message is
    * written once, in order, and never rewritten, even though pi.dev's in-memory
    * transcript IS rewritten by compaction (see `onCompactionStart`).
+   *
+   * Returns the messages that were flushed (the new tail).
    */
   async function flushSnapshot(
     sessionId: string,
     entry: Entry,
     snapshot: AgentMessage[],
-  ): Promise<void> {
+  ): Promise<AgentMessage[]> {
+    const flushed: AgentMessage[] = []
     for (let i = entry.persistedCount; i < snapshot.length; i++) {
       const message = snapshot[i]
       await appendMessage(db, { sessionId, role: message.role, message })
       safeEmit(sessionId, 'agent.message', { role: message.role })
+      flushed.push(message)
     }
     entry.persistedCount = snapshot.length
+    return flushed
   }
 
   /** Flush whatever the live transcript currently holds (turn-boundary case). */
-  function flush(sessionId: string, entry: Entry): Promise<void> {
+  function flush(sessionId: string, entry: Entry): Promise<AgentMessage[]> {
     return flushSnapshot(sessionId, entry, entry.session.messages)
   }
 
@@ -295,12 +305,14 @@ export function createAgentRuntime(deps: {
       session,
       persistedCount: history.length,
       persistChain: Promise.resolve(),
+      currentTurnMessages: [],
     }
     session.subscribe((event) => {
       if (event.type === 'turn_end' || event.type === 'agent_end') {
-        entry.persistChain = entry.persistChain.then(() =>
-          flush(sessionId, entry),
-        )
+        entry.persistChain = entry.persistChain.then(async () => {
+          const flushed = await flush(sessionId, entry)
+          entry.currentTurnMessages.push(...flushed)
+        })
       } else if (event.type === 'compaction_start') {
         // Compaction is about to rewrite the in-memory transcript in place
         // (collapsing a prefix into a summary). Snapshot the FULL transcript
@@ -308,9 +320,10 @@ export function createAgentRuntime(deps: {
         // so every pre-compaction message lands in the durable log. We snapshot
         // a shallow copy because the array reference is reused/reassigned.
         const snapshot = [...entry.session.messages]
-        entry.persistChain = entry.persistChain.then(() =>
-          flushSnapshot(sessionId, entry, snapshot),
-        )
+        entry.persistChain = entry.persistChain.then(async () => {
+          const flushed = await flushSnapshot(sessionId, entry, snapshot)
+          entry.currentTurnMessages.push(...flushed)
+        })
       } else if (event.type === 'compaction_end') {
         // The transcript is now [summary, ...recentSuffix] — shorter, and the
         // synthetic summary at the head is NOT history. Rebase persistedCount
@@ -334,33 +347,42 @@ export function createAgentRuntime(deps: {
   }
 
   /**
-   * Send a user message to a session.
+   * Send a user message to a session and return the agent messages it produced.
    * - If a turn is already in flight, the message is queued (followUp) and
-   *   delivered after the current turn — this returns immediately.
+   *   delivered after the current turn — this returns `[]` immediately.
    * - Otherwise the session boots from history (if not already live) and the
-   *   turn runs to completion, persisting at each turn boundary.
+   *   turn runs to completion, persisting at each turn boundary and returning
+   *   the agent messages that were durably appended this turn.
    *
    * `onEvent` streams live events (deltas, tool calls) to the caller — the CLI
    * prints them; the web layer relays them.
+   *
+   * Robust to compaction: the return value is based on what flush actually
+   * appended to Postgres during this turn, not an index slice of the in-memory
+   * array (which gets rewritten by compaction).
    */
   async function runTurn(
     sessionId: string,
     text: string,
     onEvent?: (event: AgentSessionEvent) => void,
-  ): Promise<void> {
+  ): Promise<AgentMessage[]> {
     const entry = await ensureEntry(sessionId)
     const unsub = onEvent ? entry.session.subscribe(onEvent) : undefined
 
     try {
       if (entry.session.isStreaming) {
         await entry.session.followUp(text)
-        return
+        return []
       }
+      // Reset the accumulator for this turn.
+      entry.currentTurnMessages = []
       await announceStatus(sessionId, 'running')
       try {
         await entry.session.prompt(text)
         await entry.persistChain
         await announceStatus(sessionId, 'idle')
+        // Return a copy so callers can't mutate the runtime's internal state.
+        return [...entry.currentTurnMessages]
       } catch (err) {
         // A turn (or a flush on its persistChain) failed. Drop the live entry:
         // its persistChain may now be permanently rejected, and reusing it would
