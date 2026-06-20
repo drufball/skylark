@@ -84,6 +84,16 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **#5** — Chat becomes the ship's front door (`/`): conversations between crew
+  (humans and agents), in the hull's chat service
+  ([`hull/chat/zine.md`](hull/chat/zine.md)), with membership as visibility and
+  agent replies driven through backing sessions. The front door opens your most
+  recent chat. Every door now resolves the acting user with `currentActor()`, so
+  the system knows it's you without being told.
+- **#4** — The **Agents** surface fills the dock's last slot: create/edit agent
+  profiles, and monitor sessions (the old front-door chat ux, which was only
+  ever a session monitor, moved here) — unstick a wedged one with a direct
+  message.
 - **#3** — The message board and building agents land in the hull's issues
   service ([`hull/issues/zine.md`](hull/issues/zine.md)): issues with a
   lifecycle, and an event-driven orchestrator that reacts to the ship's log to
