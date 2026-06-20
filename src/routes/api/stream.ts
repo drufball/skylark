@@ -7,9 +7,10 @@ import {
   type NotifyPayload,
 } from '@hull/events/bus'
 import {
+  canViewAudience,
   getEventById,
-  isScopeVisible,
   listEventsSince,
+  matchesTopic,
   REPLAY_PAGE_SIZE,
 } from '@hull/events/service'
 import { parseTopics, sseFrame, toStreamEvent } from '@hull/events/sse'
@@ -46,7 +47,10 @@ export const Route = createFileRoute('/api/stream')({
         ensureShipLogListener()
 
         const url = new URL(request.url)
-        const scopes = parseTopics(url.searchParams.get('topics'))
+        // Parse topics as patterns (e.g., "issue:*", "chat:123")
+        const topicPatterns = parseTopics(url.searchParams.get('topics'))
+        // For now, all authenticated users see 'members' audience (single-crew)
+        const audience = 'members'
         const lastEventId =
           request.headers.get('Last-Event-ID') ??
           url.searchParams.get('lastEventId') ??
@@ -89,7 +93,17 @@ export const Route = createFileRoute('/api/stream')({
             let lastReplayedId = lastEventId
             const buffer: NotifyPayload[] = []
             const deliver = (note: NotifyPayload) => {
-              if (!isScopeVisible(note.scope, scopes)) return
+              // Check topic pattern match (use topic if available, else scope)
+              const noteTopic = note.topic ?? note.scope
+              const topicMatch =
+                noteTopic &&
+                topicPatterns.some((pattern) =>
+                  matchesTopic(noteTopic, pattern),
+                )
+              if (!topicMatch) return
+              // Check audience access (members can see public + members)
+              if (note.audience && !canViewAudience(note.audience, audience))
+                return
               if (lastReplayedId && note.id <= lastReplayedId) return
               // Ephemeral events carry their full data; durable events fetch from DB.
               if (note.ephemeral) {
@@ -98,6 +112,8 @@ export const Route = createFileRoute('/api/stream')({
                     id: note.id,
                     type: note.type,
                     scope: note.scope,
+                    topic: note.topic,
+                    audience: note.audience,
                     source: note.ephemeral.source,
                     payload: note.ephemeral.payload,
                   }),
@@ -118,7 +134,8 @@ export const Route = createFileRoute('/api/stream')({
               // one page of missed events) still loses nothing.
               for (;;) {
                 const page = await listEventsSince(db, {
-                  scopes,
+                  topicPatterns,
+                  audience,
                   sinceId: lastReplayedId,
                 })
                 for (const row of page) {

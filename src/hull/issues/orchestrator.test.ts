@@ -423,13 +423,13 @@ describe('orchestrator event subscription', () => {
     expect(git.added).toHaveLength(1)
   })
 
-  it('acts once per transition, ignoring the public-scope mirror', async () => {
+  it('acts exactly once per transition (single-emit with topic+audience)', async () => {
     const { deps, git } = makeDeps()
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, {
-      title: 'Dedup',
+      title: 'SingleEmit',
       authorId,
-      nano: 'dd01',
+      nano: 'se01',
     })
     await transitionIssue(db, {
       issueId: issue.id,
@@ -437,32 +437,25 @@ describe('orchestrator event subscription', () => {
       actorId: authorId,
     })
 
-    // One transition emits two notes — issue scope + public. Both reach the
-    // handler; only the issue-scoped one may drive the build.
+    // One transition emits ONE event with topic="issue:<id>" and audience="public".
+    // The dedup workaround is retired; the event arrives exactly once.
     const { listEventsSince } = await import('@hull/events/service')
-    const issueEvents = await listEventsSince(db, {
-      scopes: [issueScope(issue.id)],
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
     })
-    const publicEvents = await listEventsSince(db, { scopes: ['public'] })
-    const issueNote = defined(
-      issueEvents.find((e) => e.type === ISSUE_STATUS_CHANGED),
-    )
-    const publicNote = defined(
-      publicEvents.find((e) => e.type === ISSUE_STATUS_CHANGED),
+    const statusEvent = defined(
+      events.find((e) => e.type === ISSUE_STATUS_CHANGED),
     )
 
     await orch.handleBusNote({
-      id: issueNote.id,
+      id: statusEvent.id,
       type: ISSUE_STATUS_CHANGED,
-      scope: issueScope(issue.id),
-    })
-    await orch.handleBusNote({
-      id: publicNote.id,
-      type: ISSUE_STATUS_CHANGED,
-      scope: 'public',
+      topic: `issue:${issue.id}`,
+      audience: 'public',
     })
 
-    // Acted exactly once — the public mirror was ignored.
+    // Acted exactly once — no duplicate events to filter.
     expect(git.added).toHaveLength(1)
   })
 
@@ -595,7 +588,10 @@ async function findStatusEventId(
   issueId: string,
 ): Promise<{ id: string }> {
   const { listEventsSince } = await import('@hull/events/service')
-  const events = await listEventsSince(database, { scopes: ['public'] })
+  const events = await listEventsSince(database, {
+    topicPatterns: ['issue:*'],
+    audience: 'public',
+  })
   const match = events.find(
     (e) =>
       e.type === ISSUE_STATUS_CHANGED &&

@@ -80,7 +80,10 @@ export const getThread = createServerFn({ method: 'GET' })
       })),
     )
 
-    const events = await listEventsSince(db, { scopes: [issueScope(issueId)] })
+    const events = await listEventsSince(db, {
+      topicPatterns: [issueScope(issueId)],
+      audience: 'public',
+    })
     const statusChanges: StatusChange[] = await Promise.all(
       events
         .filter((e) => e.type === ISSUE_STATUS_CHANGED)

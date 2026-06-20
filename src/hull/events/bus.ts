@@ -30,7 +30,12 @@ export const SHIP_LOG_CHANNEL = 'ship_log'
 export interface NotifyPayload {
   id: string
   type: string
-  scope: string
+  /** DEPRECATED: use topic. For backward compat. */
+  scope?: string
+  /** The entity stream (e.g. "issue:123"). */
+  topic?: string
+  /** Who may see this ("public" | "members"). */
+  audience?: string
   /** For ephemeral (in-process only) events: the full event data. */
   ephemeral?: {
     source: string
@@ -69,16 +74,22 @@ export class InProcessBus {
 /**
  * Emit an event: append the durable row, then announce it on the ship_log
  * channel so other processes (and this one's SSE clients) hear it. The NOTIFY
- * carries only {id,type,scope}; subscribers read the full row by id. This is the
- * one true "emit" services call — the row is the source of truth, the notify is
- * just the doorbell.
+ * carries only {id,type,topic,audience} (or scope for old events); subscribers
+ * read the full row by id. This is the one true "emit" services call — the row
+ * is the source of truth, the notify is just the doorbell.
  */
 export async function emitEvent(
   db: Database,
   input: AppendEventInput,
 ): Promise<EventRow> {
   const row = await appendEvent(db, input)
-  const note: NotifyPayload = { id: row.id, type: row.type, scope: row.scope }
+  const note: NotifyPayload = {
+    id: row.id,
+    type: row.type,
+    scope: row.scope ?? undefined,
+    topic: row.topic ?? undefined,
+    audience: row.audience ?? undefined,
+  }
   // NOTIFY is a plain statement on the shared connection — no dedicated socket
   // needed to *send*, only to LISTEN. pg_notify takes (channel, text payload).
   await db.execute(

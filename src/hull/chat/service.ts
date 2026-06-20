@@ -220,8 +220,8 @@ export async function listMessages(
 
 /**
  * Append a message, bump the chat's activity clock, and announce it on the
- * ship's log (scoped to the chat, since membership is visibility). One
- * transaction so the clock never desyncs from the durable message.
+ * ship's log with topic (chat:<id>) and audience (members). Membership is
+ * visibility: only crew members can see chat events.
  */
 export async function addMessage(
   db: Database,
@@ -238,7 +238,8 @@ export async function addMessage(
   await emitEvent(db, {
     type: 'chat.message_posted',
     source: 'chat',
-    scope: chatScope(input.chatId),
+    topic: chatScope(input.chatId),
+    audience: 'members',
     actorId: input.authorId,
     payload: {
       chatId: input.chatId,

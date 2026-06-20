@@ -15,6 +15,8 @@ const row = (over: Partial<EventRow> = {}): EventRow => ({
   type: 'agent.message',
   source: 'agent',
   scope: 'session:s1',
+  topic: null,
+  audience: null,
   actorId: null,
   payload: { text: 'hi' },
   createdAt: new Date(0),

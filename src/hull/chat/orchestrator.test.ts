@@ -133,7 +133,10 @@ describe('chat orchestrator', () => {
     await orch.respond({ chatId, authorId: dru, body: 'hello tilde' })
 
     // Progress events should NOT be in the durable log.
-    const events = await listEventsSince(db, { scopes: [chatScope(chatId)] })
+    const events = await listEventsSince(db, {
+      topicPatterns: [chatScope(chatId)],
+      audience: 'members',
+    })
     expect(events.map((e) => e.type)).not.toContain('chat.agent_progress')
   })
 

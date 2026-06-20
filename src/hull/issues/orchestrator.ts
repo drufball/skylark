@@ -12,7 +12,6 @@ import { issuesProgressLine } from '@hull/agent/progress'
 import {
   getIssue,
   ISSUE_STATUS_CHANGED,
-  issueScope,
   listComments,
   listIssues,
   setBuildContext,
@@ -176,7 +175,12 @@ export interface OrchestratorDeps {
 export interface BusNote {
   id: string
   type: string
-  scope: string
+  /** DEPRECATED: use topic. For backward compat. */
+  scope?: string
+  /** The entity stream (e.g. "issue:123"). */
+  topic?: string
+  /** Who may see this ("public" | "members"). */
+  audience?: string
 }
 
 export function createOrchestrator(deps: OrchestratorDeps) {
@@ -392,8 +396,10 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 
   /**
    * The ship-log subscription handler: a status_changed note arrived. Read the
-   * full event by id (the note carries only {id,type,scope}), and drive the
-   * transition. Other event types are ignored.
+   * full event by id (the note carries only {id,type,topic,audience}), and drive
+   * the transition. Other event types are ignored. With the single-emit model
+   * (topic + audience), each transition arrives exactly once — the dedup
+   * workaround is retired.
    */
   async function handleBusNote(note: BusNote): Promise<void> {
     if (note.type !== ISSUE_STATUS_CHANGED) return
@@ -408,14 +414,6 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     // this, but a replayed or another ship's event must not sail unchecked into
     // the lifecycle. A bad payload is dropped quietly.
     if (typeof payload.issueId !== 'string') return
-    // status_changed is emitted on TWO scopes — the issue's (for the thread's
-    // SSE) and `public` (for the board's). The in-process bus delivers every
-    // note to this handler, so a single transition arrives twice. Act on the
-    // issue-scoped copy ONLY: a transition must drive the lifecycle exactly
-    // once. (Reacting to both raced two builder turns onto one session, and the
-    // loser threw "Agent is already processing" — which disposed the session
-    // and killed the build.)
-    if (note.scope !== issueScope(payload.issueId)) return
     if (!isStatus(payload.from) || !isStatus(payload.to)) return
     await onStatusChanged(payload.issueId, payload.from, payload.to)
   }

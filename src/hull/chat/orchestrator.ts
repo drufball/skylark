@@ -81,6 +81,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     line: string,
   ): void {
     // Progress is transient UI — notify-only, not durable, not replayed.
+    // Using scope (not topic/audience) since notifyOnly doesn't persist.
     notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',

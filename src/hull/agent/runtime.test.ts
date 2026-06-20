@@ -135,7 +135,12 @@ describe('agent runtime', () => {
   let close: () => Promise<void>
   let fake: FakeSession
   let runtime: ReturnType<typeof createAgentRuntime>
-  let emitted: { type: string; scope: string }[]
+  let emitted: {
+    type: string
+    scope?: string
+    topic?: string
+    audience?: string
+  }[]
   /** What the factory was last called with — to assert profile resolution. */
   let factoryArgs: { profile: ResolvedProfile; cwd: string; model: string }[]
 
@@ -151,7 +156,12 @@ describe('agent runtime', () => {
         return Promise.resolve(fake)
       },
       emit: (e) => {
-        emitted.push({ type: e.type, scope: e.scope })
+        emitted.push({
+          type: e.type,
+          scope: e.scope,
+          topic: e.topic,
+          audience: e.audience,
+        })
         return Promise.resolve()
       },
     })
@@ -287,12 +297,13 @@ describe('agent runtime', () => {
     expect(stored).toEqual(['hi', 'a', 'b', 'c'])
   })
 
-  it('emits ship-log events for messages and status, scoped to the session', async () => {
+  it('emits ship-log events for messages and status with topic and members audience', async () => {
     await createSession(db, { id: 's1', model: 'm' })
     await runtime.runTurn('s1', 'hello')
 
-    // Every emit is scoped to this session.
-    expect(emitted.every((e) => e.scope === 'session:s1')).toBe(true)
+    // Every emit has topic set to this session and audience=members.
+    expect(emitted.every((e) => e.topic === 'session:s1')).toBe(true)
+    expect(emitted.every((e) => e.audience === 'members')).toBe(true)
     // A status event marked it running, and message events fired for the turn.
     expect(emitted.map((e) => e.type)).toContain('agent.status')
     expect(emitted.map((e) => e.type)).toContain('agent.message')

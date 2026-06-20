@@ -10,7 +10,12 @@ export interface StreamEvent {
   id: string
   type: string
   source: string
-  scope: string
+  /** DEPRECATED: use topic. For backward compat. */
+  scope?: string
+  /** The entity stream (e.g. "issue:123"). */
+  topic?: string
+  /** Who may see this ("public" | "members"). */
+  audience?: string
   payload: unknown
 }
 
@@ -22,7 +27,9 @@ export function toStreamEvent(row: EventRow): StreamEvent {
     id: row.id,
     type: row.type,
     source: row.source,
-    scope: row.scope,
+    scope: row.scope ?? undefined,
+    topic: row.topic ?? undefined,
+    audience: row.audience ?? undefined,
     payload: row.payload,
   }
 }
