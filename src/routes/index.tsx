@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import {
   cancelAgentChat,
@@ -9,12 +9,14 @@ import {
   startAgentChat,
 } from '@hull/agent/server'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
+import { useShipLog } from '@rigging/lib/use-ship-log'
 
 // The ship's front door is the agent. This thin route does the data wiring the
 // presentational view refuses to know about. Server data flows through the
-// loader; because Postgres is the source of truth, re-running the loader on a
-// timer is all "live updates" needs. The just-sent message is held optimistically
-// until the turn persists it.
+// loader; live updates ride the ship's log over SSE — when the active session
+// emits a message or status change, we re-run the loader (Postgres is still the
+// source of truth, the event is just the "something changed" signal). The
+// just-sent message is held optimistically until the turn persists it.
 interface ChatSearch {
   session?: string
 }
@@ -48,20 +50,18 @@ function AgentRoute() {
     baseCount: number
   } | null>(null)
 
-  // Poll only while something is actually in flight — a turn running or a
-  // just-sent message not yet persisted. An idle front door or a finished
-  // conversation re-fetches nothing; the loader already gave us the truth.
   const running = chat?.session.status === 'running'
-  const live = running || pending !== null
-  useEffect(() => {
-    if (!live) return
-    const timer = setInterval(() => {
-      void router.invalidate()
-    }, 1500)
-    return () => {
-      clearInterval(timer)
-    }
-  }, [router, live])
+
+  // Live updates over the ship's log: subscribe to the active session's scope
+  // and re-run the loader whenever it emits. No timer, no polling — the server
+  // tells us the instant a message lands or the status flips. With no active
+  // session there's nothing to watch, so the topic set is empty and no
+  // connection opens.
+  const topics = activeId ? [`session:${activeId}`] : []
+  const onShipLogEvent = useCallback(() => {
+    void router.invalidate()
+  }, [router])
+  useShipLog(topics, onShipLogEvent)
 
   async function send(text: string) {
     setBusy(true)

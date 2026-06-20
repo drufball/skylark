@@ -113,11 +113,20 @@ describe('agent runtime', () => {
   let close: () => Promise<void>
   let fake: FakeSession
   let runtime: ReturnType<typeof createAgentRuntime>
+  let emitted: { type: string; scope: string }[]
 
   beforeEach(async () => {
     ;({ db, close } = await freshDb())
     fake = new FakeSession()
-    runtime = createAgentRuntime({ db, factory: () => Promise.resolve(fake) })
+    emitted = []
+    runtime = createAgentRuntime({
+      db,
+      factory: () => Promise.resolve(fake),
+      emit: (e) => {
+        emitted.push({ type: e.type, scope: e.scope })
+        return Promise.resolve()
+      },
+    })
   })
   afterEach(() => close())
 
@@ -137,6 +146,33 @@ describe('agent runtime', () => {
     const stored = await getMessages(db, 's1')
     expect(stored.map((m) => m.role)).toEqual(['user', 'user', 'assistant'])
     expect(defined(await getSession(db, 's1')).status).toBe('idle')
+  })
+
+  it('emits ship-log events for messages and status, scoped to the session', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    await runtime.runTurn('s1', 'hello')
+
+    // Every emit is scoped to this session.
+    expect(emitted.every((e) => e.scope === 'session:s1')).toBe(true)
+    // A status event marked it running, and message events fired for the turn.
+    expect(emitted.map((e) => e.type)).toContain('agent.status')
+    expect(emitted.map((e) => e.type)).toContain('agent.message')
+    // Two messages this turn (user echo + assistant) → two message events.
+    expect(emitted.filter((e) => e.type === 'agent.message')).toHaveLength(2)
+  })
+
+  it('never lets a failing emit break a turn', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    const runtimeBadEmit = createAgentRuntime({
+      db,
+      factory: () => Promise.resolve(fake),
+      emit: () => Promise.reject(new Error('log down')),
+    })
+
+    // The turn completes and persists despite every emit throwing.
+    await expect(runtimeBadEmit.runTurn('s1', 'hi')).resolves.toBeUndefined()
+    expect(defined(await getSession(db, 's1')).status).toBe('idle')
+    expect((await getMessages(db, 's1')).length).toBeGreaterThan(0)
   })
 
   it('streams live events to an onEvent listener and unsubscribes after', async () => {

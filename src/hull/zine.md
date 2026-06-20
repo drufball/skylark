@@ -1,13 +1,14 @@
 # The Hull
 
-_hull zine — issue #1_
+_hull zine — issue #2_
 
 ## tl;dr
 
 The hull is the load-bearing foundation — the planks every ship shares. Things
 here are depended on widely and aren't meant to be customized. Today the hull
-holds the database connection, the health service, and the agent — the ship's
-first resident.
+holds the database connection, the health service, the agent (the ship's first
+resident), the ship's log (a durable event bus), and the crew (the users every
+action is attributed to).
 
 ## Components
 
@@ -18,14 +19,21 @@ first resident.
 - **agent service** (`agent/`) — the ship's first resident: durable
   conversations with Claude over the pi.dev SDK, with Postgres as the source of
   truth. See [`agent/zine.md`](agent/zine.md).
+- **events service** (`events/`) — the ship's log: a durable event bus where
+  every service emits and anything subscribes. Postgres rows are the truth;
+  NOTIFY is the doorbell; SSE delivers to browsers. See
+  [`events/zine.md`](events/zine.md).
+- **users service** (`users/`) — the crew: the people and agents aboard, and the
+  actor resolution that says who's acting. See [`users/zine.md`](users/zine.md).
 - **errors util** (`lib/errors.ts`) — `errorMessage()`, the one place that
   renders an unknown thrown value as a string. Importable downward by every
   deck.
 - **crew primitive** — the access invariant "every row knows its crew": crew
-  columns plus a query helper that won't compile without a crew filter. _(Not
-  yet implemented. The agent service is the first to ship tables, and it does so
-  single-tenant — a knowingly temporary debt, tracked in its zine — so the crew
-  primitive now lands as its own piece of work rather than riding in for free.)_
+  columns plus a query helper that won't compile without a crew filter. _(Lands
+  in two parts. The data model and actor resolution exist now in the users
+  service ([`users/zine.md`](users/zine.md)); the compile-time crew-filter
+  enforcement is still deferred. The agent service ships single-tenant until
+  that enforcement arrives — a knowingly temporary debt, tracked in its zine.)_
 
 ## Structure
 
@@ -47,6 +55,11 @@ finds tables on its own by globbing every `src/**/schema.ts`.)
 
 ## Changelog
 
+- **#3** — the ship's log ([`events/zine.md`](events/zine.md)) and the crew,
+  partially ([`users/zine.md`](users/zine.md)). The events service makes
+  "everything is an event" real and durable; the users service makes "who is
+  acting" real. The crew-filter enforcement half of the crew primitive is still
+  deferred.
 - **#2** — the agent service ([`agent/zine.md`](agent/zine.md)) and a shared
   `errors` util. The agent is the first hull component with its own tables; it
   ships single-tenant, ahead of the crew primitive.

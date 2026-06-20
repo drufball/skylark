@@ -34,10 +34,12 @@ with Tailwind and shadcn.
   needs. Thin: the view itself contains no routing.
 - **Schema** — each service's own `schema.ts` holds its tables; drizzle-kit
   auto-discovers every `src/**/schema.ts`, so there's nothing to wire by hand.
-- **Crew** — the people aboard; the identity the whole system is scoped to.
-  _(Not yet implemented.)_
-- **The ship's log** — the event channel services emit to and subscribe on.
-  _(Not yet implemented.)_
+- **Crew** — the people and agents aboard; the identity the whole system is
+  scoped to. The data model and actor resolution live in the hull's users
+  service; the compile-time crew-filter enforcement is still deferred (see
+  [`hull/zine.md`](hull/zine.md)).
+- **The ship's log** — the durable event bus services emit to and subscribe on,
+  in the hull's events service (see [`hull/zine.md`](hull/zine.md)).
 - **Zine** — a short, readable spec like this one.
 
 ## Structure
@@ -82,6 +84,10 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **#2** — Two named-but-unbuilt components become real, in the hull: the ship's
+  log (a durable event bus, so "everything is an event" works across processes
+  and reconnects) and the crew (users + actor resolution; the crew-filter
+  enforcement stays deferred). See [`hull/zine.md`](hull/zine.md).
 - **#1** — The keel: TanStack Start app, `src/` serving layer over hull/rigging/
   home, Drizzle + Postgres (PGlite in tests), Tailwind + shadcn. A hello-world
   slice (route → server function → Drizzle → Postgres) proves the wiring.

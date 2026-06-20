@@ -8,6 +8,13 @@
       "when": 1781450876519,
       "tag": "0000_living_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781958528148,
+      "tag": "0001_heavy_micromax",
+      "breakpoints": true
     }
   ]
 }
