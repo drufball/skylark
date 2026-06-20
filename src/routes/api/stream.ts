@@ -3,9 +3,10 @@ import { createFileRoute } from '@tanstack/react-router'
 import { db } from '@hull/db/client'
 import { ensureShipLogListener, shipLogBus } from '@hull/events/bus'
 import {
+  canViewAudience,
   getEventById,
-  isScopeVisible,
   listEventsSince,
+  matchesTopic,
   REPLAY_PAGE_SIZE,
 } from '@hull/events/service'
 import { parseTopics, sseFrame } from '@hull/events/sse'
@@ -42,7 +43,10 @@ export const Route = createFileRoute('/api/stream')({
         ensureShipLogListener()
 
         const url = new URL(request.url)
-        const scopes = parseTopics(url.searchParams.get('topics'))
+        // Parse topics as patterns (e.g., "issue:*", "chat:123")
+        const topicPatterns = parseTopics(url.searchParams.get('topics'))
+        // For now, all authenticated users see 'members' audience (single-crew)
+        const audience = 'members'
         const lastEventId =
           request.headers.get('Last-Event-ID') ??
           url.searchParams.get('lastEventId') ??
@@ -83,18 +87,35 @@ export const Route = createFileRoute('/api/stream')({
             // that dedupes the buffer against the replayed page.
             let replayed = false
             let lastReplayedId = lastEventId
-            const buffer: { id: string; scope?: string }[] = []
-            const deliver = (id: string, scope?: string) => {
-              if (scope && !isScopeVisible(scope, scopes)) return
+            const buffer: { id: string; topic?: string; audience?: string }[] =
+              []
+            const deliver = (
+              id: string,
+              topic?: string,
+              eventAudience?: string,
+            ) => {
+              // Check topic pattern match
+              const topicMatch =
+                topic &&
+                topicPatterns.some((pattern) => matchesTopic(topic, pattern))
+              if (!topicMatch) return
+              // Check audience access (members can see public + members)
+              if (eventAudience && !canViewAudience(eventAudience, audience))
+                return
               if (lastReplayedId && id <= lastReplayedId) return
               void getEventById(db, id).then((row) => {
                 if (row) send(sseFrame(row))
               })
             }
             const unsubscribe = shipLogBus.subscribe((note) => {
-              const eventScope = note.scope ?? note.topic
-              if (replayed) deliver(note.id, eventScope)
-              else buffer.push({ id: note.id, scope: eventScope })
+              const eventTopic = note.topic ?? note.scope
+              if (replayed) deliver(note.id, eventTopic, note.audience)
+              else
+                buffer.push({
+                  id: note.id,
+                  topic: eventTopic,
+                  audience: note.audience,
+                })
             })
 
             try {
@@ -102,7 +123,8 @@ export const Route = createFileRoute('/api/stream')({
               // one page of missed events) still loses nothing.
               for (;;) {
                 const page = await listEventsSince(db, {
-                  scopes,
+                  topicPatterns,
+                  audience,
                   sinceId: lastReplayedId,
                 })
                 for (const row of page) {
@@ -112,7 +134,8 @@ export const Route = createFileRoute('/api/stream')({
                 if (page.length < REPLAY_PAGE_SIZE) break
               }
               replayed = true
-              for (const note of buffer) deliver(note.id, note.scope)
+              for (const note of buffer)
+                deliver(note.id, note.topic, note.audience)
 
               // A comment line confirms the stream is open, and a recurring
               // heartbeat keeps it warm — and, if the connection has silently

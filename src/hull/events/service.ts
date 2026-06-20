@@ -6,7 +6,7 @@ import type { Database } from '@hull/db/client'
 import { events, type EventRow } from './schema'
 
 /**
- * Pure persistence logic for the events service — the ship's log. Like every
+ * Pure persistence logic for the events service - the ship's log. Like every
  * service it's database-agnostic and touches only its own `events` table.
  * Appending a row is the durable half of an emit; the impure half (pg_notify +
  * fan-out to live SSE clients) is the bus shell in bus.ts. Reading back by
@@ -18,7 +18,7 @@ export const PUBLIC_SCOPE = 'public'
 
 /**
  * How many events a single replay page returns at most. A reconnect catch-up
- * pages through this — the SSE route loops until a short page comes back — so a
+ * pages through this - the SSE route loops until a short page comes back - so a
  * long absence still loses nothing; this only bounds one round-trip.
  */
 export const REPLAY_PAGE_SIZE = 500
@@ -32,14 +32,14 @@ export interface AppendEventInput {
   topic?: string
   /** Who may see this ("public" | "members"). */
   audience?: string
-  /** Who caused it — a users.id. Null/omitted for system-originated events. */
+  /** Who caused it - a users.id. Null/omitted for system-originated events. */
   actorId?: string | null
   payload: unknown
 }
 
 /**
  * Append one event to the log. The id is a fresh UUIDv7, so it's both the
- * primary key and the stream cursor — later events sort after earlier ones by
+ * primary key and the stream cursor - later events sort after earlier ones by
  * id alone. Supports both old (scope) and new (topic + audience) schemas during
  * migration. If topic/audience are provided, they take precedence.
  */
@@ -63,7 +63,7 @@ export async function appendEvent(
   return row
 }
 
-/** One event by id — the SSE shell reads the full row after a tiny NOTIFY. */
+/** One event by id - the SSE shell reads the full row after a tiny NOTIFY. */
 export async function getEventById(
   db: Database,
   id: string,
@@ -73,7 +73,7 @@ export async function getEventById(
 }
 
 /**
- * Events matching topic patterns and audience access, oldest first — the reconnect
+ * Events matching topic patterns and audience access, oldest first - the reconnect
  * replay. `sinceId` is a Last-Event-ID cursor: only events with a strictly greater
  * id come back (UUIDv7 ids are monotonic, so "greater" means "later").
  *
@@ -107,34 +107,37 @@ export async function listEventsSince(
   const patterns = opts.topicPatterns ?? []
   if (patterns.length === 0) return []
 
-  // For now, fetch all events and filter in-memory for pattern matching.
-  // In production, we'd optimize with better indexing or pattern-specific queries.
+  // Fetch events and filter. Topic patterns need in-memory matching (for now),
+  // but we can at least ensure we get enough after filtering by fetching more.
   const conditions = []
   if (opts.sinceId) conditions.push(gt(events.id, opts.sinceId))
 
+  // Fetch more than the limit to account for filtering
+  const fetchLimit = (opts.limit ?? REPLAY_PAGE_SIZE) * 3
   const allEvents = await db
     .select()
     .from(events)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .orderBy(asc(events.id))
-    .limit(opts.limit ?? REPLAY_PAGE_SIZE)
+    .limit(fetchLimit)
 
-  // Filter by topic pattern and audience
-  return allEvents.filter((event) => {
+  // Filter by topic pattern and audience, then apply limit
+  const filtered = allEvents.filter((event) => {
     // Check topic pattern match
     const topicMatch = patterns.some((pattern) =>
       matchesTopic(event.topic ?? event.scope ?? '', pattern),
     )
     if (!topicMatch) return false
 
-    // Check audience match: if an audience filter is specified, only return
-    // events with that exact audience
+    // Check audience access: viewerAccess 'members' can see public + members
     if (opts.audience && event.audience) {
-      if (event.audience !== opts.audience) return false
-      return canViewAudience(event.audience, opts.viewerId ?? '')
+      return canViewAudience(event.audience, opts.audience)
     }
     return true
   })
+
+  // Apply the actual limit after filtering
+  return filtered.slice(0, opts.limit ?? REPLAY_PAGE_SIZE)
 }
 
 /**
@@ -191,19 +194,21 @@ export const PUBLIC_AUDIENCE = 'public'
 export const MEMBERS_AUDIENCE = 'members'
 
 /**
- * May a viewer see an event with this audience? Access control for events.
- * - public: everyone can see
- * - members: only authenticated crew members (for now, anyone authenticated)
+ * May a viewer with given access level see an event with this audience?
+ * Access hierarchy: members ⊇ public (members can see both public and members-only).
+ *
+ * @param eventAudience - The event's audience requirement ('public' | 'members')
+ * @param viewerAccess - The viewer's access level ('public' | 'members')
  */
 export function canViewAudience(
-  audience: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _viewerId?: string,
+  eventAudience: string,
+  viewerAccess: string,
 ): boolean {
-  // For now, treat all authenticated users as members (single-crew).
-  // This will be enhanced with the crew-filter primitive.
-  // _viewerId will be used when the crew-filter enforcement lands.
-  if (audience === PUBLIC_AUDIENCE) return true
-  if (audience === MEMBERS_AUDIENCE) return true
+  // Public events: everyone can see
+  if (eventAudience === PUBLIC_AUDIENCE) return true
+  // Members-only events: only members can see
+  if (eventAudience === MEMBERS_AUDIENCE) {
+    return viewerAccess === MEMBERS_AUDIENCE
+  }
   return false
 }

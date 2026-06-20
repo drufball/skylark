@@ -179,14 +179,7 @@ describe('events service', () => {
     expect(oneIssue.map((e) => (e.payload as { n: number }).n)).toEqual([1])
   })
 
-  it('filters events by audience access', async () => {
-    const user = await createUser(db, {
-      id: 'u1',
-      handle: 'test',
-      displayName: 'Test',
-      type: 'human',
-    })
-
+  it('filters events by audience access (members see public + members)', async () => {
     await appendEvent(db, {
       type: 'chat.message',
       source: 'chat',
@@ -202,13 +195,21 @@ describe('events service', () => {
       payload: { n: 2 },
     })
 
-    // User can see members-only events (single-crew for now)
-    const membersEvents = await listEventsSince(db, {
+    // Members see both public and members events
+    const membersView = await listEventsSince(db, {
       topicPatterns: ['*'],
       audience: 'members',
-      viewerId: user.id,
     })
-    expect(membersEvents.length).toBeGreaterThan(0)
+    expect(membersView.some((e) => e.audience === 'public')).toBe(true)
+    expect(membersView.some((e) => e.audience === 'members')).toBe(true)
+
+    // Public view sees only public events
+    const publicView = await listEventsSince(db, {
+      topicPatterns: ['*'],
+      audience: 'public',
+    })
+    expect(publicView.every((e) => e.audience === 'public')).toBe(true)
+    expect(publicView.some((e) => e.audience === 'members')).toBe(false)
   })
 })
 
@@ -251,13 +252,19 @@ describe('topic pattern matching', () => {
 })
 
 describe('audience filtering', () => {
-  it('allows public events to all viewers', () => {
-    expect(canViewAudience('public', 'u1')).toBe(true)
-    expect(canViewAudience('public', 'u2')).toBe(true)
+  it('allows public events to everyone', () => {
+    expect(canViewAudience('public', 'public')).toBe(true)
+    expect(canViewAudience('public', 'members')).toBe(true)
   })
 
   it('restricts members-only events to members', () => {
-    // For now, all authenticated users are members (single-crew)
-    expect(canViewAudience('members', 'u1')).toBe(true)
+    expect(canViewAudience('members', 'members')).toBe(true)
+    expect(canViewAudience('members', 'public')).toBe(false)
+  })
+
+  it('members can see both public and members-only events', () => {
+    // Access hierarchy: members ⊇ public
+    expect(canViewAudience('public', 'members')).toBe(true)
+    expect(canViewAudience('members', 'members')).toBe(true)
   })
 })

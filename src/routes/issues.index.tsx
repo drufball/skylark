@@ -29,7 +29,8 @@ function BoardRoute() {
   const onEvent = useCallback(() => {
     void router.invalidate()
   }, [router])
-  useShipLog(['public'], onEvent)
+  // Subscribe to all issue events via pattern matching
+  useShipLog(['issue:*'], onEvent)
 
   async function open(title: string, body: string) {
     setBusy(true)
