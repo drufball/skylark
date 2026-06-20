@@ -35,6 +35,24 @@ const STATUS_MARK: Record<IssueStatus, string> = {
   closed: '✗',
 }
 
+/**
+ * Parse the title and optional --body flag from issue new args.
+ * Returns [title, body] where body is undefined if not provided.
+ */
+export function parseNewArgs(args: string[]): [string, string | undefined] {
+  const bodyFlagIndex = args.indexOf('--body')
+  if (bodyFlagIndex === -1) {
+    return [args.join(' ').trim(), undefined]
+  }
+
+  const body = args[bodyFlagIndex + 1]
+  const titleParts = [
+    ...args.slice(0, bodyFlagIndex),
+    ...args.slice(bodyFlagIndex + 2),
+  ]
+  return [titleParts.join(' ').trim(), body]
+}
+
 /** The acting user, or throw a friendly error if the crew isn't seeded. */
 async function actor(): Promise<{ id: string; handle: string }> {
   const a = await cliActor()
@@ -46,10 +64,10 @@ async function actor(): Promise<{ id: string; handle: string }> {
 }
 
 async function cmdNew(args: string[]): Promise<void> {
-  const title = args.join(' ').trim()
-  if (!title) throw new Error('usage: issue new <title>')
+  const [title, body] = parseNewArgs(args)
+  if (!title) throw new Error('usage: issue new <title> [--body <text>]')
   const me = await actor()
-  const issue = await createIssue(db, { title, authorId: me.id })
+  const issue = await createIssue(db, { title, body, authorId: me.id })
   process.stdout.write(
     `Opened #${issue.nano} ${DIM}${issue.id}${RESET}\n${issue.title}\n`,
   )
@@ -146,20 +164,23 @@ async function main(): Promise<void> {
     default:
       process.stdout.write(
         'usage: issue <new|list|show|comment|status|building|open|done|close> …\n' +
-          '  new <title>              open an issue\n' +
-          '  list                     list issues, newest first\n' +
-          '  show <id>                show an issue, its branch, and its thread\n' +
-          '  comment <id> <text>      add a comment\n' +
-          '  status <id> <state>      move status (open|building|done|close)\n' +
-          '  building|open|done|close <id>   move status (shorthand)\n',
+          '  new <title> [--body <text>]   open an issue\n' +
+          '  list                          list issues, newest first\n' +
+          '  show <id>                     show an issue, its branch, and its thread\n' +
+          '  comment <id> <text>           add a comment\n' +
+          '  status <id> <state>           move status (open|building|done|close)\n' +
+          '  building|open|done|close <id> move status (shorthand)\n',
       )
       process.exitCode = command ? 1 : 0
   }
 }
 
-main()
-  .then(() => process.exit(process.exitCode ?? 0))
-  .catch((err: unknown) => {
-    process.stderr.write(`\n${errorMessage(err)}\n`)
-    process.exit(1)
-  })
+// Only run main if this file is being executed directly (not imported for tests)
+if (import.meta.url.endsWith(process.argv[1] ?? '')) {
+  main()
+    .then(() => process.exit(process.exitCode ?? 0))
+    .catch((err: unknown) => {
+      process.stderr.write(`\n${errorMessage(err)}\n`)
+      process.exit(1)
+    })
+}
