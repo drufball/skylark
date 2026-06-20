@@ -61,10 +61,10 @@ describe('users service', () => {
   })
 
   describe('seedCrew', () => {
-    it('seeds the operator and the three agents', async () => {
+    it('seeds the operator and the agents', async () => {
       await seedCrew(db)
       const handles = (await listUsers(db)).map((u) => u.handle).sort()
-      expect(handles).toEqual(['bix', 'dot', 'drufball', 'tilde'])
+      expect(handles).toEqual(['bix', 'builder', 'dot', 'drufball', 'tilde'])
       const dru = defined(await getUserByHandle(db, 'drufball'))
       expect(dru.type).toBe('human')
       expect(dru.displayName).toBe('Dru')

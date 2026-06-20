@@ -1,0 +1,93 @@
+import { index, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+
+import { agentSessions } from '@hull/agent/schema'
+import { users } from '@hull/users/schema'
+
+// The issues service owns these two tables: the ship's message board. An issue
+// is a unit of work or discussion — a forum thread that can become a build. A
+// building agent is launched off an issue, drives a worktree to a merged PR, and
+// reports back by commenting and moving the issue's status. Comments and status
+// changes both ride the ship's log (hull/events) so the board updates live and
+// the orchestrator (server-side) can react across processes.
+//
+// FKs reach into other services only by id (authorId → users.id, sessionId →
+// agent_sessions.id) — the same one-way reference pattern the events and agent
+// schemas already use. The issues service never *queries* those tables; it
+// learns about the world through events and only records the ids it owns.
+//
+// No crew column yet: the crew primitive's compile-time filter (see hull/zine.md)
+// isn't built, so the ship is single-tenant. `visibility` is here as room to
+// grow, defaulting to public; crew-scoping attaches when the primitive lands.
+
+/** A unit of work or discussion on the board — possibly built by an agent. */
+export const issues = pgTable(
+  'issues',
+  {
+    /** UUIDv7 — time-ordered, so insertion order is creation order. */
+    id: text('id').primaryKey(),
+    /**
+     * A 4-char url/git-safe short id, unique across issues. It's what shows up
+     * in a build branch name (`<slug>-<nano>`) so a branch is traceable to its
+     * issue at a glance without carrying a full UUID.
+     */
+    nano: text('nano').notNull().unique(),
+    title: text('title').notNull(),
+    body: text('body').notNull().default(''),
+    /**
+     * The lifecycle state. The legal transitions live in service.ts
+     * (`nextStatus`): open↔building, building→done, open|building→closed; done
+     * and closed are terminal.
+     */
+    status: text('status', { enum: ['open', 'building', 'done', 'closed'] })
+      .notNull()
+      .default('open'),
+    /** Who opened it — a users.id. */
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id),
+    /** Visibility key — room to grow; public for now (single-tenant ship). */
+    visibility: text('visibility', { enum: ['public'] })
+      .notNull()
+      .default('public'),
+    /** The build branch, generated on the first → building transition. */
+    branchName: text('branch_name'),
+    /** Absolute path to the build worktree, set alongside branchName. */
+    worktreePath: text('worktree_path'),
+    /** The builder session driving this issue (→ agent_sessions.id). */
+    sessionId: text('session_id').references(() => agentSessions.id),
+    /** Latest one-line builder progress, shown live on the board/thread. */
+    statusLine: text('status_line'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index('issues_status_idx').on(table.status)],
+)
+
+/** One comment on an issue — a forum reply, or a builder's note. */
+export const issueComments = pgTable(
+  'issue_comments',
+  {
+    /** UUIDv7 — time-ordered, so reading by id gives thread order. */
+    id: text('id').primaryKey(),
+    issueId: text('issue_id')
+      .notNull()
+      .references(() => issues.id, { onDelete: 'cascade' }),
+    /** Who wrote it — a users.id. */
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index('issue_comments_issue_idx').on(table.issueId)],
+)
+
+export type IssueRow = typeof issues.$inferSelect
+export type IssueCommentRow = typeof issueComments.$inferSelect
+export type IssueStatus = IssueRow['status']

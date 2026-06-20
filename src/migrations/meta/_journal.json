@@ -22,6 +22,13 @@
       "when": 1781961459612,
       "tag": "0002_flowery_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781963848245,
+      "tag": "0003_magical_genesis",
+      "breakpoints": true
     }
   ]
 }

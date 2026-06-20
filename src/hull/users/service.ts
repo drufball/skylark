@@ -86,6 +86,9 @@ export const SEED_CREW: readonly {
   { handle: 'tilde', displayName: 'Tilde', type: 'agent' },
   { handle: 'bix', displayName: 'Bix', type: 'agent' },
   { handle: 'dot', displayName: 'Dot', type: 'agent' },
+  // The building agent: the identity M3's builder sessions act as, so their
+  // issue comments and transitions show as the builder (via SKYLARK_ACTOR).
+  { handle: 'builder', displayName: 'Builder', type: 'agent' },
 ]
 
 /**

@@ -1,4 +1,9 @@
-import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  Link,
+  useNavigate,
+  useRouter,
+} from '@tanstack/react-router'
 import { useCallback, useState } from 'react'
 
 import {
@@ -9,6 +14,7 @@ import {
   startAgentChat,
 } from '@hull/agent/server'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
+import { Dock } from '@rigging/views/dock'
 import { useShipLog } from '@rigging/lib/use-ship-log'
 
 // The ship's front door is the agent. This thin route does the data wiring the
@@ -102,25 +108,27 @@ function AgentRoute() {
   }))
 
   return (
-    <AgentChatView
-      sessions={summaries}
-      activeId={activeId}
-      items={shown}
-      running={running}
-      busy={busy}
-      error={chat?.session.error ?? null}
-      onSend={(text) => {
-        void send(text)
-      }}
-      onCancel={() => {
-        void cancel()
-      }}
-      onSelect={(id) => {
-        void navigate({ search: { session: id } })
-      }}
-      onNew={() => {
-        void navigate({ search: {} })
-      }}
-    />
+    <Dock active="chat" Link={Link}>
+      <AgentChatView
+        sessions={summaries}
+        activeId={activeId}
+        items={shown}
+        running={running}
+        busy={busy}
+        error={chat?.session.error ?? null}
+        onSend={(text) => {
+          void send(text)
+        }}
+        onCancel={() => {
+          void cancel()
+        }}
+        onSelect={(id) => {
+          void navigate({ search: { session: id } })
+        }}
+        onNew={() => {
+          void navigate({ search: {} })
+        }}
+      />
+    </Dock>
   )
 }
