@@ -12,6 +12,7 @@ import { errorMessage } from '@hull/lib/errors'
 import {
   getIssue,
   ISSUE_STATUS_CHANGED,
+  issueScope,
   listComments,
   listIssues,
   setBuildContext,
@@ -431,6 +432,14 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     // this, but a replayed or another ship's event must not sail unchecked into
     // the lifecycle. A bad payload is dropped quietly.
     if (typeof payload.issueId !== 'string') return
+    // status_changed is emitted on TWO scopes — the issue's (for the thread's
+    // SSE) and `public` (for the board's). The in-process bus delivers every
+    // note to this handler, so a single transition arrives twice. Act on the
+    // issue-scoped copy ONLY: a transition must drive the lifecycle exactly
+    // once. (Reacting to both raced two builder turns onto one session, and the
+    // loser threw "Agent is already processing" — which disposed the session
+    // and killed the build.)
+    if (note.scope !== issueScope(payload.issueId)) return
     if (!isStatus(payload.from) || !isStatus(payload.to)) return
     await onStatusChanged(payload.issueId, payload.from, payload.to)
   }
