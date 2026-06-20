@@ -88,15 +88,27 @@ export const nodeGitOps: GitOps = {
     }
   },
   async branchMerged(branch) {
-    // `git merge-base --is-ancestor <branch> main` exits 0 when the branch's tip
-    // is reachable from main — i.e. it's been merged. A non-zero exit (run
-    // rejects) means it isn't, so a thrown error reads as "not merged".
-    try {
-      await run(`git merge-base --is-ancestor ${shq(branch)} main`)
-      return true
-    } catch {
-      return false
-    }
+    // A regular / fast-forward merge leaves the branch tip reachable from main,
+    // so `git merge-base --is-ancestor` exits 0.
+    const ancestor = await run(
+      `git merge-base --is-ancestor ${shq(branch)} main`,
+    )
+      .then(() => true)
+      .catch(() => false)
+    if (ancestor) return true
+    // A SQUASH merge (how PRs land here, via `gh pr merge --squash`) makes a NEW
+    // commit on main, so the branch tip is NOT an ancestor — the ancestor check
+    // alone would wrongly say "not merged" and the done-handler would orphan the
+    // worktree. Ask GitHub, the source of truth for the merge: does this branch
+    // have a merged PR? Empty/zero, or a gh failure, reads as "not merged".
+    return run(
+      `gh pr list --head ${shq(branch)} --state merged --json number --jq 'length'`,
+    )
+      .then(({ stdout }) => {
+        const n = stdout.trim()
+        return n !== '' && n !== '0'
+      })
+      .catch(() => false)
   },
 }
 
