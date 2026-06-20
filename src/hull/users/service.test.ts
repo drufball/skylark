@@ -10,11 +10,13 @@ import {
   createUser,
   getUserByHandle,
   getUserById,
+  handleOf,
   listUsers,
   resolveActorHandle,
   seedCrew,
   setUserProfile,
   SEED_CREW,
+  UNKNOWN_HANDLE,
 } from './service'
 
 describe('users service', () => {
@@ -25,6 +27,18 @@ describe('users service', () => {
     ;({ db, close } = await freshDb())
   })
   afterEach(() => close())
+
+  it('handleOf resolves a handle, and falls back to ? for null or unknown', async () => {
+    const u = await createUser(db, {
+      id: 'h1',
+      handle: 'kestrel',
+      displayName: 'Kestrel',
+      type: 'human',
+    })
+    expect(await handleOf(db, u.id)).toBe('kestrel')
+    expect(await handleOf(db, null)).toBe(UNKNOWN_HANDLE)
+    expect(await handleOf(db, 'no-such-id')).toBe(UNKNOWN_HANDLE)
+  })
 
   it('creates a user and reads it back by id and handle', async () => {
     const user = await createUser(db, {
@@ -61,10 +75,10 @@ describe('users service', () => {
   })
 
   describe('seedCrew', () => {
-    it('seeds the operator and the three agents', async () => {
+    it('seeds the operator and the agents', async () => {
       await seedCrew(db)
       const handles = (await listUsers(db)).map((u) => u.handle).sort()
-      expect(handles).toEqual(['bix', 'dot', 'drufball', 'tilde'])
+      expect(handles).toEqual(['bix', 'builder', 'dot', 'drufball', 'tilde'])
       const dru = defined(await getUserByHandle(db, 'drufball'))
       expect(dru.type).toBe('human')
       expect(dru.displayName).toBe('Dru')

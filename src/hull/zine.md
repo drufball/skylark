@@ -25,6 +25,10 @@ action is attributed to).
   [`events/zine.md`](events/zine.md).
 - **users service** (`users/`) — the crew: the people and agents aboard, and the
   actor resolution that says who's acting. See [`users/zine.md`](users/zine.md).
+- **issues service** (`issues/`) — the message board and the building agents: an
+  issue lifecycle (open→building→done/closed) plus the event-driven orchestrator
+  that turns a transition into a worktree + builder session and drives it to a
+  merged PR. See [`issues/zine.md`](issues/zine.md).
 - **errors util** (`lib/errors.ts`) — `errorMessage()`, the one place that
   renders an unknown thrown value as a string. Importable downward by every
   deck.
@@ -55,6 +59,12 @@ finds tables on its own by globbing every `src/**/schema.ts`.)
 
 ## Changelog
 
+- **#4** — the issues service ([`issues/zine.md`](issues/zine.md)): the ship's
+  message board and the building agents. Its orchestrator is the first hull
+  component that _reacts_ to the ship's log across processes — an agent's CLI
+  transition in a separate process drives the worktree/builder lifecycle in the
+  web server — so it's the proof the durable event bus earns its keep. A
+  `builder` crew member joins the seed.
 - **#3** — the ship's log ([`events/zine.md`](events/zine.md)) and the crew,
   partially ([`users/zine.md`](users/zine.md)). The events service makes
   "everything is an event" real and durable; the users service makes "who is

@@ -50,6 +50,24 @@ export async function listUsers(db: Database): Promise<UserRow[]> {
   return db.select().from(users).orderBy(asc(users.id))
 }
 
+/** The fallback handle when an id resolves to no user (a deleted/unknown actor). */
+export const UNKNOWN_HANDLE = '?'
+
+/**
+ * Resolve a user id to a display handle, defaulting to `?` when there's no row.
+ * The "an actorId/authorId becomes a handle, or `?`" policy lived open-coded in
+ * several call sites; this is its one home. A null id (a system-originated
+ * event with no actor) also resolves to `?`.
+ */
+export async function handleOf(
+  db: Database,
+  id: string | null,
+): Promise<string> {
+  if (!id) return UNKNOWN_HANDLE
+  const user = await getUserById(db, id)
+  return user?.handle ?? UNKNOWN_HANDLE
+}
+
 /** Point one crew member at an agent profile (by id). Writes only the users table. */
 export async function setUserProfile(
   db: Database,
@@ -86,6 +104,9 @@ export const SEED_CREW: readonly {
   { handle: 'tilde', displayName: 'Tilde', type: 'agent' },
   { handle: 'bix', displayName: 'Bix', type: 'agent' },
   { handle: 'dot', displayName: 'Dot', type: 'agent' },
+  // The building agent: the identity M3's builder sessions act as, so their
+  // issue comments and transitions show as the builder (via SKYLARK_ACTOR).
+  { handle: 'builder', displayName: 'Builder', type: 'agent' },
 ]
 
 /**

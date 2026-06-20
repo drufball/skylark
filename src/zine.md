@@ -84,6 +84,12 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **#3** — The message board and building agents land in the hull's issues
+  service ([`hull/issues/zine.md`](hull/issues/zine.md)): issues with a
+  lifecycle, and an event-driven orchestrator that reacts to the ship's log to
+  drive a builder agent through a git worktree to a merged PR. The rigging gains
+  a board, an issue thread, and the **dock** — a persistent app-shell nav
+  (Chat/Issues, with an Agents slot for later).
 - **#2** — Two named-but-unbuilt components become real, in the hull: the ship's
   log (a durable event bus, so "everything is an event" works across processes
   and reconnects) and the crew (users + actor resolution; the crew-filter
