@@ -82,7 +82,30 @@ Then close the loop on everything red or unresolved:
 
 ## 6. Merge
 
-Once CI is green and the comments are handled, merge it:
+Once CI is green and the comments are handled, **check the PR is actually
+mergeable before you merge** — don't just trust that checks passed. While your
+PR was in flight, another PR may have merged first and changed the same files,
+leaving yours conflicting:
+
+```
+gh pr view <pr> --json mergeStateStatus -q .mergeStateStatus
+```
+
+- `CLEAN` (or `UNSTABLE` — failing checks are only the advisory reviews) →
+  merge.
+- `DIRTY` / `CONFLICTING` → **do not try to merge** (the merge will be refused).
+  Rebase onto the latest `main`, resolve, re-run `check`, force-push, then
+  re-check `mergeStateStatus` until it's mergeable:
+
+  ```
+  git fetch origin && git rebase origin/main   # resolve conflicts, then:
+  npm run check && git push --force-with-lease
+  ```
+
+- `BEHIND` → update the branch (`git fetch origin && git rebase origin/main`,
+  push) so it's on the latest `main`, then merge.
+
+Only once it's mergeable:
 
 ```
 gh pr merge <pr> --squash --delete-branch
