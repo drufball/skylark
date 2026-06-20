@@ -1,3 +1,5 @@
+<!-- ======================================== HOME ======================================== -->
+
 # home/
 
 Your deck. This is sovereign space — your services, your apps, your experiments,
