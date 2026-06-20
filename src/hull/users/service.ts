@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 
@@ -48,6 +48,32 @@ export async function getUserByHandle(
 /** Everyone aboard, oldest first (UUIDv7 ids are time-ordered). */
 export async function listUsers(db: Database): Promise<UserRow[]> {
   return db.select().from(users).orderBy(asc(users.id))
+}
+
+/** Point one crew member at an agent profile (by id). Writes only the users table. */
+export async function setUserProfile(
+  db: Database,
+  userId: string,
+  profileId: string,
+): Promise<void> {
+  await db.update(users).set({ profileId }).where(eq(users.id, userId))
+}
+
+/**
+ * Give every agent crew member without a profile the supplied default profile,
+ * idempotently. Humans are left alone; agents that already have a profile keep
+ * it (so a hand-assigned profile survives). The agent profiles live in another
+ * service, so the caller passes the id — users only ever writes its own column.
+ * This is how the loose `profileId` text column gets wired once profiles exist.
+ */
+export async function assignDefaultAgentProfile(
+  db: Database,
+  profileId: string,
+): Promise<void> {
+  await db
+    .update(users)
+    .set({ profileId })
+    .where(and(eq(users.type, 'agent'), isNull(users.profileId)))
 }
 
 /** The crew every fresh ship is seeded with: the operator plus the three agents. */

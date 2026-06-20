@@ -1,6 +1,6 @@
 # The Crew
 
-_users zine — issue #1_
+_users zine — issue #2_
 
 ## tl;dr
 
@@ -65,16 +65,24 @@ survives a re-seed. Run it from a migration's data step or `npm run users seed`.
   operator; the CLI reads an explicit `SKYLARK_ACTOR` over the operator. A
   cookie is a browser concept and is ignored in CLI context, so a stray cookie
   can never change who a CLI process acts as.
-- **`profileId` is a plain nullable column, no FK yet.** It will reference agent
-  profiles that don't exist on the ship yet; adding the constraint now would be
-  a reference to nothing. The column reserves the shape; the FK lands with
-  profiles.
+- **`profileId` stays a plain nullable column — wired, but no FK.** It now
+  references real agent profiles (agents default to the `chat` profile via
+  `assignDefaultAgentProfile`), but the column stays loose on purpose: the
+  profiles live in the agent service, and a FK would force `users/schema.ts` to
+  import the agent schema — which imports `users/schema.ts` for its own
+  `agentUserId` FK — a circular module import. So users only ever writes its own
+  column (the agent service's seed passes the id in); enforcement of the link
+  stays out of the schema by design, not by omission.
 - **A user is a human or an agent, in one table.** Agents act on the ship the
   same way people do — they emit events, they'll own work — so they're crew, not
   a separate kind of thing. `type` distinguishes them where it matters.
 
 ## Changelog
 
+- **#2** — `profileId` wired to real agent profiles: `setUserProfile` and
+  `assignDefaultAgentProfile` (idempotent; agents → the `chat` profile, humans
+  untouched), called from the agent service's seed. The column stays FK-free to
+  avoid a circular schema import — see Decisions.
 - **#1** — The crew primitive, partially: the `users` table (human/agent), pure
   service logic, an idempotent `seedCrew` (operator + tilde/bix/dot), actor
   resolution (`currentActor`/`cliActor` over a pure `resolveActorHandle`), and

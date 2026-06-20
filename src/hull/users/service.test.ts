@@ -6,12 +6,14 @@ import { defined, freshDb } from '@hull/db/test-db'
 
 import { users } from './schema'
 import {
+  assignDefaultAgentProfile,
   createUser,
   getUserByHandle,
   getUserById,
   listUsers,
   resolveActorHandle,
   seedCrew,
+  setUserProfile,
   SEED_CREW,
 } from './service'
 
@@ -80,6 +82,26 @@ describe('users service', () => {
       await seedCrew(db)
       await seedCrew(db)
       expect(await listUsers(db)).toHaveLength(SEED_CREW.length)
+    })
+
+    it('assignDefaultAgentProfile sets agents (only) without a profile', async () => {
+      await seedCrew(db)
+      await assignDefaultAgentProfile(db, 'chat-profile')
+
+      const tilde = defined(await getUserByHandle(db, 'tilde'))
+      const dru = defined(await getUserByHandle(db, 'drufball'))
+      expect(tilde.profileId).toBe('chat-profile') // agent → assigned
+      expect(dru.profileId).toBeNull() // human → untouched
+    })
+
+    it("assignDefaultAgentProfile keeps an agent's existing profile", async () => {
+      await seedCrew(db)
+      const bix = defined(await getUserByHandle(db, 'bix'))
+      await setUserProfile(db, bix.id, 'special')
+      await assignDefaultAgentProfile(db, 'chat-profile')
+      expect(defined(await getUserByHandle(db, 'bix')).profileId).toBe(
+        'special',
+      )
     })
 
     it('does not clobber an edited displayName on re-seed', async () => {

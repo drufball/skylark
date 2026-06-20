@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
 
+import { createProfile, registerExtension } from './profiles'
 import { createAgentRuntime, type PiSession } from './runtime'
+import type { ResolvedProfile } from './session-config'
 import {
   appendMessage,
   createSession,
@@ -76,6 +78,26 @@ class FakeSession implements PiSession {
     for (const l of this.listeners) l(event)
   }
 
+  /**
+   * Simulate pi.dev's auto-compaction: emit compaction_start (while the array
+   * still holds the FULL transcript), then rewrite messages in place to
+   * `[summary, ...recentSuffix]` and emit compaction_end. This mirrors the real
+   * SDK ordering verified in agent-session.js: compaction_start fires before
+   * agent.state.messages is reassigned, compaction_end after.
+   */
+  compact(keepFromIndex: number): void {
+    this.emit({ type: 'compaction_start', reason: 'threshold' })
+    const suffix = this.messages.slice(keepFromIndex)
+    this.agent.state.messages = [msg('user', '[summary of earlier]'), ...suffix]
+    this.emit({
+      type: 'compaction_end',
+      reason: 'threshold',
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+    })
+  }
+
   subscribe(listener: (e: AgentSessionEvent) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -114,14 +136,20 @@ describe('agent runtime', () => {
   let fake: FakeSession
   let runtime: ReturnType<typeof createAgentRuntime>
   let emitted: { type: string; scope: string }[]
+  /** What the factory was last called with — to assert profile resolution. */
+  let factoryArgs: { profile: ResolvedProfile; cwd: string; model: string }[]
 
   beforeEach(async () => {
     ;({ db, close } = await freshDb())
     fake = new FakeSession()
     emitted = []
+    factoryArgs = []
     runtime = createAgentRuntime({
       db,
-      factory: () => Promise.resolve(fake),
+      factory: (profile, cwd, model) => {
+        factoryArgs.push({ profile, cwd, model })
+        return Promise.resolve(fake)
+      },
       emit: (e) => {
         emitted.push({ type: e.type, scope: e.scope })
         return Promise.resolve()
@@ -129,6 +157,55 @@ describe('agent runtime', () => {
     })
   })
   afterEach(() => close())
+
+  it("resolves a session's profile + cwd and hands them to the factory", async () => {
+    const ext = await registerExtension(db, {
+      name: 'build-gates',
+      description: 'gates',
+      path: 'src/hull/agent/extensions/build-gates/index.ts',
+    })
+    const profile = await createProfile(db, {
+      id: 'p1',
+      name: 'builder',
+      systemPrompt: 'build',
+      tools: null,
+      readContextFiles: true,
+      useRepoSkills: true,
+      extensionIds: [ext.id],
+      model: 'claude-opus-4-5',
+    })
+    await createSession(db, {
+      id: 's1',
+      model: 'm',
+      profileId: profile.id,
+      cwd: '/tmp/worktree-x',
+    })
+
+    await runtime.runTurn('s1', 'hi')
+
+    expect(factoryArgs).toHaveLength(1)
+    const [args] = factoryArgs
+    expect(args.cwd).toBe('/tmp/worktree-x')
+    expect(args.model).toBe('m')
+    expect(args.profile.systemPrompt).toBe('build')
+    expect(args.profile.tools).toBeNull()
+    expect(args.profile.model).toBe('claude-opus-4-5')
+    // extensionIds were resolved to the registry path.
+    expect(args.profile.extensionPaths).toEqual([
+      'src/hull/agent/extensions/build-gates/index.ts',
+    ])
+  })
+
+  it('falls back to the default profile (full tools) when a session has none', async () => {
+    await createSession(db, { id: 's1', model: 'm' }) // no profileId, no cwd
+    await runtime.runTurn('s1', 'hi')
+    const [args] = factoryArgs
+    expect(args.profile.tools).toBeNull() // default = full coding tools
+    expect(args.profile.readContextFiles).toBe(true)
+    expect(args.profile.useRepoSkills).toBe(true)
+    expect(args.profile.extensionPaths).toEqual([])
+    expect(args.cwd).toBe(process.cwd()) // null cwd → repo root
+  })
 
   it('boots from stored history, seeds it into the session, and persists the new tail', async () => {
     await createSession(db, { id: 's1', model: 'm' })
@@ -146,6 +223,68 @@ describe('agent runtime', () => {
     const stored = await getMessages(db, 's1')
     expect(stored.map((m) => m.role)).toEqual(['user', 'user', 'assistant'])
     expect(defined(await getSession(db, 's1')).status).toBe('idle')
+  })
+
+  it('keeps the FULL history durable across a mid-session compaction', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+
+    // A turn that appends several messages, then compaction kicks in mid-turn,
+    // collapsing the early ones into a summary and keeping only a recent tail.
+    fake.onPrompt = (text) => {
+      fake.append(msg('user', text)) // pi adds the user prompt to the transcript
+      fake.append(msg('user', 'm0'))
+      fake.append(msg('assistant', 'm1'))
+      fake.append(msg('user', 'm2'))
+      fake.append(msg('assistant', 'm3'))
+      // Compaction: keep only the last two messages, summarize the rest.
+      fake.compact(2)
+      // Post-compaction the agent continues and produces another message.
+      fake.append(msg('assistant', 'm4'))
+      fake.emit({
+        type: 'turn_end',
+        message: msg('assistant', 'm4'),
+        toolResults: [],
+      })
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+
+    await runtime.runTurn('s1', 'go')
+
+    const stored = (await getMessages(db, 's1')).map(
+      (r) => (r.message as { content: { text: string }[] }).content[0].text,
+    )
+    // Every real message ever produced is in the durable log, in order, once.
+    expect(stored).toEqual(['go', 'm0', 'm1', 'm2', 'm3', 'm4'])
+    // The compaction SUMMARY is never persisted as if it were history.
+    expect(stored).not.toContain('[summary of earlier]')
+  })
+
+  it('persists post-compaction messages without re-persisting the kept suffix', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    // First turn: two messages, then a standalone compaction shrinks the array.
+    fake.onPrompt = (text) => {
+      fake.append(msg('user', text)) // pi adds the user prompt to the transcript
+      fake.append(msg('user', 'a'))
+      fake.append(msg('assistant', 'b'))
+      fake.compact(1) // keep the recent suffix, summarize the rest
+      fake.append(msg('assistant', 'c'))
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+    await runtime.runTurn('s1', 'hi')
+
+    const stored = (await getMessages(db, 's1')).map(
+      (r) => (r.message as { content: { text: string }[] }).content[0].text,
+    )
+    // 'hi','a','b' flushed at compaction_start; 'c' flushed at agent_end. No dupes.
+    expect(stored).toEqual(['hi', 'a', 'b', 'c'])
   })
 
   it('emits ship-log events for messages and status, scoped to the session', async () => {
@@ -263,6 +402,34 @@ describe('agent runtime', () => {
     const row = defined(await getSession(db, 's1'))
     expect(row.status).toBe('error')
     expect(row.error).toBe('overloaded')
+  })
+
+  it('drops a failed session from the registry so the next turn rebuilds it', async () => {
+    // A failed turn could leave a permanently-rejected persistChain on the live
+    // entry; reusing it would wedge the session forever. After an error the
+    // entry must be disposed and the next turn must rebuild from durable history
+    // (a fresh factory call), not reuse the poisoned one.
+    await createSession(db, { id: 's1', model: 'm' })
+    fake.onPrompt = () => {
+      throw new Error('boom')
+    }
+    await expect(runtime.runTurn('s1', 'hi')).rejects.toThrow('boom')
+    expect(fake.disposed).toBe(true) // the live entry was released
+    expect(factoryArgs).toHaveLength(1)
+
+    // Next turn: the same fake recovers; the runtime must boot it afresh.
+    fake.disposed = false
+    fake.onPrompt = (text) => {
+      fake.append(msg('assistant', `ok:${text}`))
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+    await runtime.runTurn('s1', 'again')
+    expect(factoryArgs).toHaveLength(2) // rebuilt, not reused
+    expect(defined(await getSession(db, 's1')).status).toBe('idle')
   })
 
   it('cancels a live turn: aborts the session and forces status idle', async () => {

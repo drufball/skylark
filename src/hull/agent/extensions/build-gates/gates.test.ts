@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  isCommitCommand,
+  checkPassed,
+  blockReason,
+  hasUnpushedCommits,
+} from './gates'
+
+describe('build-gates decision logic', () => {
+  describe('isCommitCommand', () => {
+    it('flags a plain git commit', () => {
+      expect(isCommitCommand('git commit -m "x"')).toBe(true)
+    })
+
+    it('flags git add', () => {
+      expect(isCommitCommand('git add -A')).toBe(true)
+      expect(isCommitCommand('git add .')).toBe(true)
+    })
+
+    it('flags a commit deeper in a compound command', () => {
+      expect(isCommitCommand('cd foo && git commit -am "x"')).toBe(true)
+      expect(isCommitCommand('npm test; git add src/')).toBe(true)
+    })
+
+    it('ignores non-committing git commands', () => {
+      expect(isCommitCommand('git status')).toBe(false)
+      expect(isCommitCommand('git log --oneline')).toBe(false)
+      expect(isCommitCommand('git diff')).toBe(false)
+    })
+
+    it('ignores commands that merely mention commit as a substring', () => {
+      expect(isCommitCommand('echo "commit your code"')).toBe(false)
+      expect(isCommitCommand('cat git-committer.txt')).toBe(false)
+    })
+
+    it('ignores unrelated commands', () => {
+      expect(isCommitCommand('npm run check')).toBe(false)
+      expect(isCommitCommand('ls -la')).toBe(false)
+    })
+  })
+
+  describe('checkPassed', () => {
+    it('passes on exit code 0', () => {
+      expect(checkPassed(0)).toBe(true)
+    })
+    it('fails on any non-zero exit code', () => {
+      expect(checkPassed(1)).toBe(false)
+      expect(checkPassed(2)).toBe(false)
+    })
+  })
+
+  describe('blockReason', () => {
+    it('summarizes a failed check with its output tail', () => {
+      const reason = blockReason('npm run check', 'eslint: 3 problems\n')
+      expect(reason).toMatch(/check/i)
+      expect(reason).toMatch(/eslint/)
+    })
+  })
+
+  describe('hasUnpushedCommits', () => {
+    it('is true when git reports ahead commits', () => {
+      // `git log @{u}..HEAD --oneline` prints a line per unpushed commit
+      expect(hasUnpushedCommits('abc123 wip\n')).toBe(true)
+    })
+    it('is false when there is no output', () => {
+      expect(hasUnpushedCommits('')).toBe(false)
+      expect(hasUnpushedCommits('   \n')).toBe(false)
+    })
+  })
+})
