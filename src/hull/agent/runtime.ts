@@ -5,6 +5,7 @@ import {
   DefaultResourceLoader,
   getAgentDir,
   SessionManager,
+  type ToolDefinition,
 } from '@earendil-works/pi-coding-agent'
 import { getModels } from '@earendil-works/pi-ai'
 
@@ -13,6 +14,8 @@ import { emitEvent } from '@hull/events/bus'
 import type { AppendEventInput } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 
+import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
+import { createBackgroundTool } from './background-tool'
 import { getProfileById, resolveProfileExtensionPaths } from './profiles'
 import { resolveSessionOptions, type ResolvedProfile } from './session-config'
 import {
@@ -100,6 +103,8 @@ export type SessionFactory = (
   cwd: string,
   /** The session's pinned model; the profile's model override wins if set. */
   model: string,
+  /** Extra tools to register on the session (e.g. the per-session `background` tool). */
+  customTools?: ToolDefinition[],
 ) => Promise<PiSession>
 
 /* v8 ignore start -- live pi.dev/Claude wiring, exercised by the CLI not units */
@@ -134,7 +139,12 @@ function resolveModel(modelId: string) {
  * are pi.dev's answer to the human's Claude Code hooks (build-gates mirrors the
  * commit/landing/session-start gates), wired via additionalExtensionPaths.
  */
-export const createPiSession: SessionFactory = async (profile, cwd, model) => {
+export const createPiSession: SessionFactory = async (
+  profile,
+  cwd,
+  model,
+  customTools,
+) => {
   const options = resolveSessionOptions(profile, cwd)
 
   const resourceLoader = new DefaultResourceLoader({
@@ -156,6 +166,7 @@ export const createPiSession: SessionFactory = async (profile, cwd, model) => {
     sessionManager: SessionManager.inMemory(),
     cwd: options.session.cwd,
     tools: options.session.tools,
+    customTools,
     resourceLoader,
   })
   session.setAutoCompactionEnabled(true)
@@ -190,8 +201,27 @@ export function createAgentRuntime(deps: {
   factory: SessionFactory
   /** How turns announce themselves to the ship's log. Defaults to the real bus. */
   emit?: AgentEmitter
+  /** How background jobs spawn processes. Defaults to a real shell child. */
+  spawn?: SpawnFn
 }) {
   const { db, factory } = deps
+
+  // Background jobs let an agent hand off a long wait (CI, a slow build) and end
+  // its turn; when the job finishes we re-invoke the session with the result.
+  // `runTurn` is referenced before its declaration but only CALLED later (on a
+  // job's completion), by which point the agent has ended its turn and the
+  // session is idle, so the resume prompts cleanly.
+  const jobs = createBackgroundJobs({
+    spawn: deps.spawn ?? defaultSpawn,
+    /* v8 ignore start -- live bridge: fires only when a real background job
+       completes through a real session; runTurn itself is unit-tested */
+    resume: (sessionId, message) => {
+      void runTurn(sessionId, message).catch((err: unknown) => {
+        console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
+      })
+    },
+    /* v8 ignore stop */
+  })
   const emit: AgentEmitter = deps.emit ?? ((event) => emitEvent(db, event))
   const registry = new Map<string, Entry>()
 
@@ -295,7 +325,10 @@ export function createAgentRuntime(deps: {
     if (!row) throw new Error(`No such session: ${sessionId}`)
 
     const profile = await resolveProfile(row.profileId)
-    const session = await factory(profile, row.cwd ?? process.cwd(), row.model)
+    const cwd = row.cwd ?? process.cwd()
+    const session = await factory(profile, cwd, row.model, [
+      createBackgroundTool(sessionId, cwd, jobs),
+    ])
     const history = (await getMessages(db, sessionId)).map(
       (r) => r.message as AgentMessage,
     )
@@ -406,6 +439,7 @@ export function createAgentRuntime(deps: {
    * crash in another process is recoverable from anywhere).
    */
   async function cancel(sessionId: string): Promise<void> {
+    jobs.cancelForSession(sessionId)
     const entry = registry.get(sessionId)
     if (entry) {
       await entry.session.abort()
@@ -416,6 +450,7 @@ export function createAgentRuntime(deps: {
 
   /** Drop a live session, releasing it from the registry. */
   function dispose(sessionId: string): void {
+    jobs.cancelForSession(sessionId)
     const entry = registry.get(sessionId)
     if (!entry) return
     entry.session.dispose()

@@ -224,7 +224,8 @@ export const CHAT_PROFILE: SeedProfile = {
 export const BUILDER_PROFILE: SeedProfile = {
   name: 'builder',
   systemPrompt:
-    'You build a Skylark ship. Follow the ship-feature skill: red-green TDD, npm run check, branch, PR, shepherd CI, merge.',
+    'You build a Skylark ship. Follow the ship-feature skill: red-green TDD, npm run check, branch, PR, shepherd CI, merge. ' +
+    'To wait for CI checks or any long task, call the `background` tool with the command and END YOUR TURN — never block, poll, or `--watch` in the foreground. You are resumed automatically with the result, and then you merge.',
   tools: null,
   readContextFiles: true,
   useRepoSkills: true,
