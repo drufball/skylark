@@ -20,6 +20,7 @@ import {
   createIssue,
   getIssue,
   ISSUE_STATUS_CHANGED,
+  issueScope,
   setBuildContext,
   transitionIssue,
 } from './service'
@@ -466,9 +467,52 @@ describe('orchestrator event subscription', () => {
     await orch.handleBusNote({
       id: (await findStatusEventId(db, issue.id)).id,
       type: ISSUE_STATUS_CHANGED,
+      scope: issueScope(issue.id),
+    })
+
+    expect(git.added).toHaveLength(1)
+  })
+
+  it('acts once per transition, ignoring the public-scope mirror', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, {
+      title: 'Dedup',
+      authorId,
+      nano: 'dd01',
+    })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+
+    // One transition emits two notes — issue scope + public. Both reach the
+    // handler; only the issue-scoped one may drive the build.
+    const { listEventsSince } = await import('@hull/events/service')
+    const issueEvents = await listEventsSince(db, {
+      scopes: [issueScope(issue.id)],
+    })
+    const publicEvents = await listEventsSince(db, { scopes: ['public'] })
+    const issueNote = defined(
+      issueEvents.find((e) => e.type === ISSUE_STATUS_CHANGED),
+    )
+    const publicNote = defined(
+      publicEvents.find((e) => e.type === ISSUE_STATUS_CHANGED),
+    )
+
+    await orch.handleBusNote({
+      id: issueNote.id,
+      type: ISSUE_STATUS_CHANGED,
+      scope: issueScope(issue.id),
+    })
+    await orch.handleBusNote({
+      id: publicNote.id,
+      type: ISSUE_STATUS_CHANGED,
       scope: 'public',
     })
 
+    // Acted exactly once — the public mirror was ignored.
     expect(git.added).toHaveLength(1)
   })
 
