@@ -1,7 +1,7 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
-import { emitEvent } from '@hull/events/bus'
+import { notifyOnly } from '@hull/events/bus'
 import { createSession } from '@hull/agent/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
@@ -80,13 +80,13 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     agentUserId: string,
     line: string,
   ): void {
-    void emitEvent(db, {
+    // Progress is transient UI — notify-only, not durable, not replayed.
+    notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',
       scope: chatScope(chatId),
-      actorId: agentUserId,
       payload: { chatId, agentUserId, line },
-    }).catch(() => undefined)
+    })
   }
 
   /** Run one agent's reply: feed unseen messages, take a turn, post the text. */

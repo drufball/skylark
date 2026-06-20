@@ -1,3 +1,4 @@
+import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 
@@ -17,6 +18,10 @@ import type { EventRow } from './schema'
 // out to every connected SSE stream. The NOTIFY payload is deliberately TINY —
 // just {id,type,scope} — because Postgres caps a notification near 8KB; the full
 // event lives in the row, which the SSE route reads by id.
+//
+// notifyOnly is in-process only: it publishes to the in-process bus (so live SSE
+// subscribers receive it) without firing pg_notify or persisting a row. For
+// transient UI that shouldn't clutter the log or replay on reconnect.
 
 /** The channel every emit notifies and the LISTEN connection subscribes to. */
 export const SHIP_LOG_CHANNEL = 'ship_log'
@@ -26,6 +31,11 @@ export interface NotifyPayload {
   id: string
   type: string
   scope: string
+  /** For ephemeral (in-process only) events: the full event data. */
+  ephemeral?: {
+    source: string
+    payload: unknown
+  }
 }
 
 type Listener = (note: NotifyPayload) => void
@@ -77,9 +87,34 @@ export async function emitEvent(
   return row
 }
 
-/* v8 ignore start -- live LISTEN wiring: a real Postgres connection, not unit-tested */
+/**
+ * Notify-only emit: publish to the in-process bus without persisting a row or
+ * firing pg_notify. For transient UI (chat.agent_progress, status-line ticks)
+ * that shouldn't clutter the log, replay on reconnect, or cross processes. Live
+ * SSE subscribers in this process receive it; other processes and reconnecting
+ * clients don't. Returns the ephemeral id.
+ */
+export function notifyOnly(
+  _db: Database,
+  input: Pick<AppendEventInput, 'type' | 'source' | 'scope' | 'payload'>,
+): string {
+  const id = uuidv7()
+  shipLogBus.publish({
+    id,
+    type: input.type,
+    scope: input.scope,
+    ephemeral: {
+      source: input.source,
+      payload: input.payload,
+    },
+  })
+  return id
+}
+
 /** The process-wide bus every SSE stream subscribes to. */
 export const shipLogBus = new InProcessBus()
+
+/* v8 ignore start -- live LISTEN wiring: a real Postgres connection, not unit-tested */
 
 let listening = false
 

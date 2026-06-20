@@ -3,7 +3,7 @@ import type { EventRow } from './schema'
 
 // The wire-format half of the SSE endpoint, kept pure so it's unit-tested
 // without a server. The route (src/routes/api/stream.ts) is the thin impure
-// shell that opens the ReadableStream and pipes rows through `sseFrame`.
+// shell that opens the ReadableStream and pipes events through `sseFrame`.
 
 /** The shape the client receives in each event's `data:` line. */
 export interface StreamEvent {
@@ -15,22 +15,28 @@ export interface StreamEvent {
 }
 
 /**
- * One Server-Sent-Events frame for an event row. `id:` is the UUIDv7 — the
- * browser echoes it back as Last-Event-ID on reconnect, which is exactly our
- * replay cursor. We deliberately do NOT set a named `event:` line: every frame
- * arrives as the default `message` event so a single `onmessage` handler sees
- * them all, and the client dispatches on the `type` field inside the data. The
- * body is the full event as JSON, terminated by a blank line per the spec.
+ * Lift a durable event row into a StreamEvent (the shape sent to the client).
  */
-export function sseFrame(row: EventRow): string {
-  const data: StreamEvent = {
+export function toStreamEvent(row: EventRow): StreamEvent {
+  return {
     id: row.id,
     type: row.type,
     source: row.source,
     scope: row.scope,
     payload: row.payload,
   }
-  return `id: ${row.id}\ndata: ${JSON.stringify(data)}\n\n`
+}
+
+/**
+ * One Server-Sent-Events frame for a stream event. `id:` is the UUIDv7 — the
+ * browser echoes it back as Last-Event-ID on reconnect, which is exactly our
+ * replay cursor. We deliberately do NOT set a named `event:` line: every frame
+ * arrives as the default `message` event so a single `onmessage` handler sees
+ * them all, and the client dispatches on the `type` field inside the data. The
+ * body is the full event as JSON, terminated by a blank line per the spec.
+ */
+export function sseFrame(event: StreamEvent): string {
+  return `id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`
 }
 
 /**
