@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { freshDb } from '@hull/db/test-db'
+import { createUser } from '@hull/users/service'
 
 import {
   appendEvent,
@@ -33,14 +34,20 @@ describe('events service', () => {
   })
 
   it('records the actor when given one', async () => {
+    const actor = await createUser(db, {
+      id: 'u1',
+      handle: 'drufball',
+      displayName: 'Dru',
+      type: 'human',
+    })
     const e = await appendEvent(db, {
       type: 'agent.message',
       source: 'agent',
       scope: 'public',
-      actorId: null,
+      actorId: actor.id,
       payload: {},
     })
-    expect(e.actorId).toBeNull()
+    expect(e.actorId).toBe('u1')
   })
 
   it('reads one event back by id, undefined when missing', async () => {

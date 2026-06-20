@@ -63,8 +63,17 @@ describe('users service', () => {
       await seedCrew(db)
       const handles = (await listUsers(db)).map((u) => u.handle).sort()
       expect(handles).toEqual(['bix', 'dot', 'drufball', 'tilde'])
-      expect(defined(await getUserByHandle(db, 'drufball')).type).toBe('human')
-      expect(defined(await getUserByHandle(db, 'tilde')).type).toBe('agent')
+      const dru = defined(await getUserByHandle(db, 'drufball'))
+      expect(dru.type).toBe('human')
+      expect(dru.displayName).toBe('Dru')
+      const tilde = defined(await getUserByHandle(db, 'tilde'))
+      expect(tilde.type).toBe('agent')
+      expect(tilde.displayName).toBe('Tilde')
+      // Every seeded member has a non-empty handle and display name.
+      for (const u of await listUsers(db)) {
+        expect(u.handle).not.toBe('')
+        expect(u.displayName).not.toBe('')
+      }
     })
 
     it('is idempotent — running twice leaves one row per handle', async () => {
