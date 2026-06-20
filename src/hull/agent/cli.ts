@@ -4,6 +4,12 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { db } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
 
+import {
+  listExtensions,
+  listProfiles,
+  registerExtension,
+  seedAndWireProfiles,
+} from './profiles'
 import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
 import {
   createSession,
@@ -133,6 +139,55 @@ async function cmdCancel(args: string[]): Promise<void> {
   process.stdout.write(`Cancelled ${id}.\n`)
 }
 
+async function cmdSeed(): Promise<void> {
+  await seedAndWireProfiles(db)
+  const profiles = await listProfiles(db)
+  const exts = await listExtensions(db)
+  process.stdout.write(
+    `Seeded ${String(profiles.length)} profile(s), ${String(exts.length)} extension(s); agents → chat profile.\n`,
+  )
+}
+
+async function cmdProfiles(): Promise<void> {
+  const profiles = await listProfiles(db)
+  if (profiles.length === 0) {
+    process.stdout.write('No profiles — run `npm run agent seed`.\n')
+    return
+  }
+  for (const p of profiles) {
+    const tools = p.tools ? p.tools.join(',') : 'default-coding'
+    process.stdout.write(
+      `${p.name}  ${DIM}tools=${tools} ctx=${String(p.readContextFiles)} skills=${String(p.useRepoSkills)} ext=${String(p.extensionIds.length)} · ${p.id}${RESET}\n`,
+    )
+  }
+}
+
+async function cmdExtensions(args: string[]): Promise<void> {
+  // `agent extensions register <name> <path> [description…]`
+  if (args[0] === 'register') {
+    const [, name, path, ...descParts] = args
+    if (!name || !path)
+      throw new Error(
+        'usage: agent extensions register <name> <path> [description]',
+      )
+    const row = await registerExtension(db, {
+      name,
+      path,
+      description: descParts.join(' ') || name,
+    })
+    process.stdout.write(`Registered ${row.name} ${DIM}${row.id}${RESET}\n`)
+    return
+  }
+  const exts = await listExtensions(db)
+  if (exts.length === 0) {
+    process.stdout.write('No extensions — run `npm run agent seed`.\n')
+    return
+  }
+  for (const e of exts) {
+    process.stdout.write(`${e.name}  ${DIM}${e.path} · ${e.id}${RESET}\n`)
+  }
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2)
   switch (command) {
@@ -144,13 +199,22 @@ async function main(): Promise<void> {
       return cmdList(args)
     case 'cancel':
       return cmdCancel(args)
+    case 'seed':
+      return cmdSeed()
+    case 'profiles':
+      return cmdProfiles()
+    case 'extensions':
+      return cmdExtensions(args)
     default:
       process.stdout.write(
-        'usage: agent <new|send|list|cancel> …\n' +
+        'usage: agent <new|send|list|cancel|seed|profiles|extensions> …\n' +
           '  new <message> [--model <id>]   start a session and send the first message\n' +
           '  send <session-id> <message>    send a message (queued if mid-turn)\n' +
           '  list [--running] [--since D]   list sessions, newest first\n' +
-          '  cancel <session-id>            cancel a running session\n',
+          '  cancel <session-id>            cancel a running session\n' +
+          '  seed                           seed the standard profiles + extensions\n' +
+          '  profiles                       list agent profiles\n' +
+          '  extensions [register …]        list or register extensions\n',
       )
       process.exitCode = command ? 1 : 0
   }

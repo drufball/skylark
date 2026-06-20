@@ -10,6 +10,7 @@ import {
   createPiSession,
   DEFAULT_MODEL,
 } from './runtime'
+import { CHAT_PROFILE, getProfileByName } from './profiles'
 import {
   createSession,
   getMessages,
@@ -61,15 +62,27 @@ export const getAgentChat = createServerFn({ method: 'GET' })
     return { session, items: toChatItems(messages.map((m) => m.message)) }
   })
 
-/** Create a session from a first message and start its turn. Returns the id. */
+/**
+ * Create a session from a first message and start its turn. Returns the id.
+ *
+ * The front-door chat boots the **chat** profile: read-only tools (read+bash),
+ * no CLAUDE.md, no skills, no extensions. This deliberately removes file-write
+ * from the front-door agent — it operates the ship's services and reads its
+ * code, but to build or change something it files an issue (the intended end
+ * state, "file an issue to build"). The builder profile, which can write, is
+ * driven by M3's building agents, not this door. Falls back to the runtime
+ * default if the chat profile hasn't been seeded (`npm run agent seed`).
+ */
 export const startAgentChat = createServerFn({ method: 'POST' })
   .validator((input: { text: string; model?: string }) => input)
   .handler(async ({ data }) => {
     const id = uuidv7()
+    const chat = await getProfileByName(db, CHAT_PROFILE.name)
     await createSession(db, {
       id,
       model: data.model ?? DEFAULT_MODEL,
       title: titleFromMessage(data.text),
+      profileId: chat?.id ?? null,
     })
     fireTurn(id, data.text)
     return { id }

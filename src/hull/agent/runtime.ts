@@ -13,7 +13,8 @@ import { emitEvent } from '@hull/events/bus'
 import type { AppendEventInput } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 
-import { readContextFiles, skillDirs } from './config'
+import { getProfileById, resolveProfileExtensionPaths } from './profiles'
+import { resolveSessionOptions, type ResolvedProfile } from './session-config'
 import {
   appendMessage,
   getMessages,
@@ -44,6 +45,21 @@ export function sessionScope(sessionId: string): string {
 export const DEFAULT_MODEL = 'claude-sonnet-4-5'
 
 /**
+ * The profile a session boots with when it has no profileId — the pre-profiles
+ * default, identical to the old hardcoded behavior: full coding tools, CLAUDE.md
+ * and the repo's skills, no extensions, no system-prompt override. Keeps every
+ * legacy session (and a bare CLI `new`) booting exactly as it did before M2.
+ */
+export const DEFAULT_PROFILE: ResolvedProfile = {
+  systemPrompt: null,
+  tools: null,
+  readContextFiles: true,
+  useRepoSkills: true,
+  extensionPaths: [],
+  model: null,
+}
+
+/**
  * The slice of pi.dev's AgentSession the runtime drives. Narrowing to this makes
  * the runtime testable with a fake — the real createAgentSession result
  * satisfies it structurally.
@@ -59,7 +75,18 @@ export interface PiSession {
   dispose(): void
 }
 
-export type SessionFactory = (model: string) => Promise<PiSession>
+/**
+ * Boots a live pi.dev session for a profile in a given working directory.
+ * Profile-driven: the runtime resolves a session's profile (and its registered
+ * extensions) and hands the factory everything it needs. A fake stands in for
+ * tests; the real one (`createPiSession`) is the live Claude wiring.
+ */
+export type SessionFactory = (
+  profile: ResolvedProfile,
+  cwd: string,
+  /** The session's pinned model; the profile's model override wins if set. */
+  model: string,
+) => Promise<PiSession>
 
 /* v8 ignore start -- live pi.dev/Claude wiring, exercised by the CLI not units */
 /** Resolve an Anthropic model id to a pi.dev model, or throw if unknown. */
@@ -70,44 +97,54 @@ function resolveModel(modelId: string) {
 }
 
 /**
- * The real session factory: a live pi.dev agent talking to Claude, with the
- * full coding toolset (read/bash/edit/write) operating on the ship's repo. No
- * file persistence — pi's own SessionManager is in-memory because Postgres is
- * our source of truth.
+ * The real session factory: a live pi.dev agent talking to Claude, configured
+ * by a profile. The pure profile→options mapping lives in session-config.ts
+ * (`resolveSessionOptions`) and is unit-tested; here we only feed those options
+ * to pi's resource loader and `createAgentSession`. No file persistence — pi's
+ * SessionManager is in-memory because Postgres is our source of truth.
  *
- * Auto-compaction is disabled deliberately. Compaction rewrites the in-memory
- * transcript (summarizing earlier messages in place), which would break our
- * index-based, append-only persistence (see `flush`). Keeping it off means the
- * live transcript only ever grows by appends, so it stays in lockstep with the
- * durable log. The trade-off — a single boot can't exceed the context window —
- * is fine while sessions are short-lived and rebuilt from full history each
- * boot; context-window management that preserves the full log is future work.
+ * Per-session `cwd`. Every pi tool (bash/read/edit/write) operates relative to
+ * the `cwd` passed here, NOT process.cwd() — verified in the SDK and in
+ * runtime-cwd.test.ts. That's what lets M3 run several builders in-process on
+ * different git worktrees without collision.
  *
- * The agent shares the ship's config: CLAUDE.md and the same skills the human's
- * Claude Code session uses, fed in through pi.dev's resource loader (see
- * config.ts). Hooks are not shared — those are Claude Code harness shell-hooks
- * about the human's git flow; pi.dev's equivalent is TS extensions, which the
- * loader can take via additionalExtensionPaths when we want them.
+ * Auto-compaction is ON. A long builder session will overflow the context
+ * window otherwise. Compaction rewrites the in-memory transcript in place
+ * (collapsing a prefix into a summary), but the durable Postgres log stays the
+ * full, append-only history: the runtime flushes the pre-compaction transcript
+ * on `compaction_start` and rebases its baseline on `compaction_end` (see
+ * `ensureEntry`), so the summary is never persisted and no message is lost.
+ *
+ * The profile decides config: tools, system prompt, whether to feed CLAUDE.md,
+ * whether to load the repo's skills, and which extensions to load. Extensions
+ * are pi.dev's answer to the human's Claude Code hooks (build-gates mirrors the
+ * commit/landing/session-start gates), wired via additionalExtensionPaths.
  */
-export const createPiSession: SessionFactory = async (model) => {
-  const cwd = process.cwd()
+export const createPiSession: SessionFactory = async (profile, cwd, model) => {
+  const options = resolveSessionOptions(profile, cwd)
+
   const resourceLoader = new DefaultResourceLoader({
-    cwd,
+    cwd: options.loader.cwd,
     agentDir: getAgentDir(),
-    additionalSkillPaths: skillDirs(cwd),
+    noSkills: options.loader.noSkills,
+    noContextFiles: options.loader.noContextFiles,
+    additionalSkillPaths: options.loader.additionalSkillPaths,
+    additionalExtensionPaths: options.loader.additionalExtensionPaths,
+    systemPrompt: options.loader.systemPrompt ?? undefined,
     agentsFilesOverride: (base) => ({
-      agentsFiles: [...base.agentsFiles, ...readContextFiles(cwd)],
+      agentsFiles: [...base.agentsFiles, ...options.loader.contextFiles],
     }),
   })
   await resourceLoader.reload()
 
   const { session } = await createAgentSession({
-    model: resolveModel(model),
+    model: resolveModel(options.model ?? model),
     sessionManager: SessionManager.inMemory(),
-    cwd,
+    cwd: options.session.cwd,
+    tools: options.session.tools,
     resourceLoader,
   })
-  session.setAutoCompactionEnabled(false)
+  session.setAutoCompactionEnabled(true)
   return session
 }
 /* v8 ignore stop */
@@ -171,20 +208,58 @@ export function createAgentRuntime(deps: {
   }
 
   /**
-   * Append every message past persistedCount to Postgres, in order. This is
-   * append-only by index, which is correct only because the live transcript
-   * never rewrites earlier entries — auto-compaction is disabled in
-   * `createPiSession` precisely to uphold that. Each durable message is then
+   * Append the new tail of `snapshot` (everything past persistedCount) to
+   * Postgres, in order, then advance persistedCount. Each durable message is
    * announced on the ship's log so subscribers (the web chat) update live.
+   *
+   * `snapshot` is captured by the caller, not re-read here — that's what makes
+   * compaction safe. The durable log is append-only and monotonic: a message is
+   * written once, in order, and never rewritten, even though pi.dev's in-memory
+   * transcript IS rewritten by compaction (see `onCompactionStart`).
    */
-  async function flush(sessionId: string, entry: Entry): Promise<void> {
-    const all = entry.session.messages
-    for (let i = entry.persistedCount; i < all.length; i++) {
-      const message = all[i]
+  async function flushSnapshot(
+    sessionId: string,
+    entry: Entry,
+    snapshot: AgentMessage[],
+  ): Promise<void> {
+    for (let i = entry.persistedCount; i < snapshot.length; i++) {
+      const message = snapshot[i]
       await appendMessage(db, { sessionId, role: message.role, message })
       safeEmit(sessionId, 'agent.message', { role: message.role })
     }
-    entry.persistedCount = all.length
+    entry.persistedCount = snapshot.length
+  }
+
+  /** Flush whatever the live transcript currently holds (turn-boundary case). */
+  function flush(sessionId: string, entry: Entry): Promise<void> {
+    return flushSnapshot(sessionId, entry, entry.session.messages)
+  }
+
+  /**
+   * Resolve the profile a session boots with into a `ResolvedProfile` (its
+   * extension ids turned into repo-relative paths). A session with no profileId
+   * — created before profiles existed, or by a plain CLI `new` — falls back to
+   * the built-in default: full coding tools, CLAUDE.md + repo skills, no
+   * extensions. That keeps every pre-profile session booting exactly as before.
+   */
+  async function resolveProfile(
+    profileId: string | null,
+  ): Promise<ResolvedProfile> {
+    if (!profileId) return DEFAULT_PROFILE
+    const profile = await getProfileById(db, profileId)
+    /* v8 ignore next -- unreachable behind the agent_sessions.profile_id FK; defensive only */
+    if (!profile) throw new Error(`No such profile: ${profileId}`)
+    return {
+      systemPrompt: profile.systemPrompt,
+      tools: profile.tools,
+      readContextFiles: profile.readContextFiles,
+      useRepoSkills: profile.useRepoSkills,
+      extensionPaths: await resolveProfileExtensionPaths(
+        db,
+        profile.extensionIds,
+      ),
+      model: profile.model,
+    }
   }
 
   /** Boot a fresh ephemeral session seeded from stored history, or reuse a live one. */
@@ -195,7 +270,8 @@ export function createAgentRuntime(deps: {
     const row = await getSession(db, sessionId)
     if (!row) throw new Error(`No such session: ${sessionId}`)
 
-    const session = await factory(row.model)
+    const profile = await resolveProfile(row.profileId)
+    const session = await factory(profile, row.cwd ?? process.cwd(), row.model)
     const history = (await getMessages(db, sessionId)).map(
       (r) => r.message as AgentMessage,
     )
@@ -211,6 +287,32 @@ export function createAgentRuntime(deps: {
         entry.persistChain = entry.persistChain.then(() =>
           flush(sessionId, entry),
         )
+      } else if (event.type === 'compaction_start') {
+        // Compaction is about to rewrite the in-memory transcript in place
+        // (collapsing a prefix into a summary). Snapshot the FULL transcript
+        // NOW, synchronously, before pi reassigns the array, and flush that —
+        // so every pre-compaction message lands in the durable log. We snapshot
+        // a shallow copy because the array reference is reused/reassigned.
+        const snapshot = [...entry.session.messages]
+        entry.persistChain = entry.persistChain.then(() =>
+          flushSnapshot(sessionId, entry, snapshot),
+        )
+      } else if (event.type === 'compaction_end') {
+        // The transcript is now [summary, ...recentSuffix] — shorter, and the
+        // synthetic summary at the head is NOT history. Rebase persistedCount
+        // onto the new length so (a) the summary and the already-durable suffix
+        // are never (re)persisted, and (b) post-compaction appends continue to
+        // grow the durable log monotonically from here.
+        //
+        // Read the length NOW, synchronously, at the moment compaction ends —
+        // not inside the deferred .then. By the time the chain runs, the agent
+        // may already have appended post-compaction messages, and we must not
+        // count those as already-persisted. We still enqueue the rebase on the
+        // chain so it lands after the compaction_start flush.
+        const rebasedCount = entry.session.messages.length
+        entry.persistChain = entry.persistChain.then(() => {
+          entry.persistedCount = rebasedCount
+        })
       }
     })
     registry.set(sessionId, entry)
@@ -246,7 +348,14 @@ export function createAgentRuntime(deps: {
         await entry.persistChain
         await announceStatus(sessionId, 'idle')
       } catch (err) {
-        await entry.persistChain
+        // A turn (or a flush on its persistChain) failed. Drop the live entry:
+        // its persistChain may now be permanently rejected, and reusing it would
+        // wedge the session forever in a long-lived host (the next runTurn would
+        // `await` the dead chain and rethrow without ever running). Disposing
+        // forces the next turn to rebuild a clean session from the durable log —
+        // the same crash-recovery path any other process would take.
+        await entry.persistChain.catch(() => undefined)
+        dispose(sessionId)
         await announceStatus(sessionId, 'error', errorMessage(err))
         throw err
       }

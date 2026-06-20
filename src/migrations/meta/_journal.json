@@ -15,6 +15,13 @@
       "when": 1781958528148,
       "tag": "0001_heavy_micromax",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781961459612,
+      "tag": "0002_flowery_blade",
+      "breakpoints": true
     }
   ]
 }

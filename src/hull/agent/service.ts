@@ -27,11 +27,28 @@ export function titleFromMessage(text: string, max = 80): string {
 
 export async function createSession(
   db: Database,
-  input: { id: string; model: string; title?: string },
+  input: {
+    id: string
+    model: string
+    title?: string
+    /** Profile the session boots with; null/undefined = the runtime default. */
+    profileId?: string | null
+    /** Working dir for the session's tools; null/undefined = repo root. */
+    cwd?: string | null
+    /** The crew member this session acts as; null/undefined = unattributed. */
+    agentUserId?: string | null
+  },
 ): Promise<AgentSessionRow> {
   const [row] = await db
     .insert(agentSessions)
-    .values({ id: input.id, model: input.model, title: input.title })
+    .values({
+      id: input.id,
+      model: input.model,
+      title: input.title,
+      profileId: input.profileId,
+      cwd: input.cwd,
+      agentUserId: input.agentUserId,
+    })
     .returning()
   return row
 }
