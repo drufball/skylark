@@ -86,3 +86,50 @@ describe('emitEvent', () => {
     expect(replayed.map((e) => e.id)).toEqual([row.id])
   })
 })
+
+describe('notifyOnly', () => {
+  let db: Database
+  let close: () => Promise<void>
+
+  beforeEach(async () => {
+    ;({ db, close } = await freshDb())
+  })
+  afterEach(() => close())
+
+  it('does NOT persist to the database', async () => {
+    const { notifyOnly } = await import('./bus')
+
+    notifyOnly(db, {
+      type: 'chat.agent_progress',
+      source: 'chat',
+      scope: 'session:s1',
+      payload: { line: 'thinking…' },
+    })
+
+    // Should NOT be in the database
+    const replayed = await listEventsSince(db, { scopes: ['session:s1'] })
+    expect(replayed).toHaveLength(0)
+  })
+
+  it('publishes ephemeral event data to the in-process bus', async () => {
+    const { notifyOnly, shipLogBus } = await import('./bus')
+    const received: NotifyPayload[] = []
+    shipLogBus.subscribe((n) => {
+      received.push(n)
+    })
+
+    notifyOnly(db, {
+      type: 'chat.agent_progress',
+      source: 'chat',
+      scope: 'session:s1',
+      payload: { line: 'thinking…' },
+    })
+
+    // The in-process bus should receive the full ephemeral data.
+    expect(received).toHaveLength(1)
+    expect(received[0].ephemeral).toMatchObject({
+      source: 'chat',
+      payload: { line: 'thinking…' },
+    })
+  })
+})

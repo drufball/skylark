@@ -1,7 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { db } from '@hull/db/client'
-import { ensureShipLogListener, shipLogBus } from '@hull/events/bus'
+import {
+  ensureShipLogListener,
+  shipLogBus,
+  type NotifyPayload,
+} from '@hull/events/bus'
 import {
   canViewAudience,
   getEventById,
@@ -9,7 +13,7 @@ import {
   matchesTopic,
   REPLAY_PAGE_SIZE,
 } from '@hull/events/service'
-import { parseTopics, sseFrame } from '@hull/events/sse'
+import { parseTopics, sseFrame, toStreamEvent } from '@hull/events/sse'
 import { currentActor } from '@hull/users/actor'
 
 // The ship's log, streamed. A GET here is a Server-Sent-Events connection: the
@@ -87,35 +91,42 @@ export const Route = createFileRoute('/api/stream')({
             // that dedupes the buffer against the replayed page.
             let replayed = false
             let lastReplayedId = lastEventId
-            const buffer: { id: string; topic?: string; audience?: string }[] =
-              []
-            const deliver = (
-              id: string,
-              topic?: string,
-              eventAudience?: string,
-            ) => {
-              // Check topic pattern match
+            const buffer: NotifyPayload[] = []
+            const deliver = (note: NotifyPayload) => {
+              // Check topic pattern match (use topic if available, else scope)
+              const noteTopic = note.topic ?? note.scope
               const topicMatch =
-                topic &&
-                topicPatterns.some((pattern) => matchesTopic(topic, pattern))
+                noteTopic &&
+                topicPatterns.some((pattern) =>
+                  matchesTopic(noteTopic, pattern),
+                )
               if (!topicMatch) return
               // Check audience access (members can see public + members)
-              if (eventAudience && !canViewAudience(eventAudience, audience))
+              if (note.audience && !canViewAudience(note.audience, audience))
                 return
-              if (lastReplayedId && id <= lastReplayedId) return
-              void getEventById(db, id).then((row) => {
-                if (row) send(sseFrame(row))
-              })
+              if (lastReplayedId && note.id <= lastReplayedId) return
+              // Ephemeral events carry their full data; durable events fetch from DB.
+              if (note.ephemeral) {
+                send(
+                  sseFrame({
+                    id: note.id,
+                    type: note.type,
+                    scope: note.scope,
+                    topic: note.topic,
+                    audience: note.audience,
+                    source: note.ephemeral.source,
+                    payload: note.ephemeral.payload,
+                  }),
+                )
+              } else {
+                void getEventById(db, note.id).then((row) => {
+                  if (row) send(sseFrame(toStreamEvent(row)))
+                })
+              }
             }
             const unsubscribe = shipLogBus.subscribe((note) => {
-              const eventTopic = note.topic ?? note.scope
-              if (replayed) deliver(note.id, eventTopic, note.audience)
-              else
-                buffer.push({
-                  id: note.id,
-                  topic: eventTopic,
-                  audience: note.audience,
-                })
+              if (replayed) deliver(note)
+              else buffer.push(note)
             })
 
             try {
@@ -128,14 +139,13 @@ export const Route = createFileRoute('/api/stream')({
                   sinceId: lastReplayedId,
                 })
                 for (const row of page) {
-                  send(sseFrame(row))
+                  send(sseFrame(toStreamEvent(row)))
                   lastReplayedId = row.id
                 }
                 if (page.length < REPLAY_PAGE_SIZE) break
               }
               replayed = true
-              for (const note of buffer)
-                deliver(note.id, note.topic, note.audience)
+              for (const note of buffer) deliver(note)
 
               // A comment line confirms the stream is open, and a recurring
               // heartbeat keeps it warm — and, if the connection has silently

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { EventRow } from './schema'
-import { parseTopics, sseFrame } from './sse'
+import { parseTopics, sseFrame, toStreamEvent, type StreamEvent } from './sse'
 
 /** Pull the `data:` line out of an SSE frame, failing loudly if it's missing. */
 function dataLineOf(frame: string): string {
@@ -23,9 +23,28 @@ const row = (over: Partial<EventRow> = {}): EventRow => ({
   ...over,
 })
 
+const event = (over: Partial<StreamEvent> = {}): StreamEvent => ({
+  id: '01',
+  type: 'agent.message',
+  source: 'agent',
+  scope: 'session:s1',
+  payload: { text: 'hi' },
+  ...over,
+})
+
+describe('toStreamEvent', () => {
+  it('lifts the fields a client sees from a durable row', () => {
+    const e = toStreamEvent(row({ id: 'abc', actorId: 'u1' }))
+    expect(e.id).toBe('abc')
+    // actorId and createdAt are NOT in StreamEvent — clients don't see them.
+    expect('actorId' in e).toBe(false)
+    expect('createdAt' in e).toBe(false)
+  })
+})
+
 describe('sseFrame', () => {
   it('encodes the id and a JSON data line, no named event', () => {
-    const frame = sseFrame(row({ id: 'abc', type: 'agent.status' }))
+    const frame = sseFrame(event({ id: 'abc', type: 'agent.status' }))
     expect(frame).toContain('id: abc\n')
     // No named event line — everything arrives as the default `message` event.
     expect(frame).not.toContain('event:')
@@ -41,7 +60,7 @@ describe('sseFrame', () => {
   })
 
   it('carries the scope and payload in the data JSON', () => {
-    const frame = sseFrame(row({ scope: 'public', payload: { n: 7 } }))
+    const frame = sseFrame(event({ scope: 'public', payload: { n: 7 } }))
     const dataLine = dataLineOf(frame)
     const parsed = JSON.parse(dataLine.slice('data: '.length)) as {
       scope: string
