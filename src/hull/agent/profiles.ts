@@ -31,6 +31,24 @@ export interface ProfileInput {
   model: string | null
 }
 
+/**
+ * Normalize an untrusted profile input to its stored shape: trim the name, and
+ * fold blank text / empty allowlists to null. The one home for these rules, so
+ * the web door (which re-validates client input) and any other caller agree —
+ * and a new `ProfileInput` field flows through without a second edit site.
+ */
+export function normalizeProfileInput(input: ProfileInput): ProfileInput {
+  return {
+    name: input.name.trim(),
+    systemPrompt: input.systemPrompt?.trim() ? input.systemPrompt : null,
+    tools: input.tools && input.tools.length > 0 ? input.tools : null,
+    readContextFiles: input.readContextFiles,
+    useRepoSkills: input.useRepoSkills,
+    extensionIds: input.extensionIds,
+    model: input.model?.trim() ? input.model : null,
+  }
+}
+
 export async function createProfile(
   db: Database,
   input: ProfileInput & { id: string },
@@ -77,16 +95,12 @@ export async function upsertProfile(
 ): Promise<AgentProfileRow> {
   const existing = await getProfileByName(db, input.name)
   if (existing) {
+    // Set the whole input (name included — it's the same value we matched on),
+    // so a field added to ProfileInput converges on re-seed without a second
+    // edit here. id/createdAt aren't in ProfileInput, so they're untouched.
     const [row] = await db
       .update(agentProfiles)
-      .set({
-        systemPrompt: input.systemPrompt,
-        tools: input.tools,
-        readContextFiles: input.readContextFiles,
-        useRepoSkills: input.useRepoSkills,
-        extensionIds: input.extensionIds,
-        model: input.model,
-      })
+      .set(input)
       .where(eq(agentProfiles.id, existing.id))
       .returning()
     return row

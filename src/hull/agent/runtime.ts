@@ -60,6 +60,20 @@ export const DEFAULT_PROFILE: ResolvedProfile = {
 }
 
 /**
+ * Anything that can run an agent turn — the minimal slice other services drive
+ * the runtime through, so each can declare a fake of just this. The real
+ * `AgentRuntime` satisfies it structurally; the chat and issues orchestrators
+ * build their runtime dependency on top of it.
+ */
+export interface RunsTurns {
+  runTurn(
+    sessionId: string,
+    text: string,
+    onEvent?: (event: AgentSessionEvent) => void,
+  ): Promise<void>
+}
+
+/**
  * The slice of pi.dev's AgentSession the runtime drives. Narrowing to this makes
  * the runtime testable with a fake — the real createAgentSession result
  * satisfies it structurally.

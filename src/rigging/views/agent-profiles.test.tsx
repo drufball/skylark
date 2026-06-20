@@ -85,14 +85,16 @@ describe('AgentProfiles', () => {
     fireEvent.click(screen.getByText('Save profile'))
 
     expect(onSave).toHaveBeenCalledTimes(1)
+    // The form sends raw text; the server normalizes (trims, folds blanks to
+    // null). So blank fields cross the wire as empty strings here.
     expect(onSave).toHaveBeenCalledWith({
       name: 'researcher',
-      systemPrompt: null,
+      systemPrompt: '',
       tools: ['read', 'grep'],
       readContextFiles: false,
       useRepoSkills: false,
       extensionIds: ['ext-1'],
-      model: null,
+      model: '',
     })
   })
 

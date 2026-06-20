@@ -4,6 +4,7 @@ import {
   readContextFiles as defaultReadContextFiles,
   skillDirs as defaultSkillDirs,
 } from './config'
+import type { ProfileInput } from './profiles'
 
 /**
  * The pure mapping from an agent profile to pi.dev session options. Kept apart
@@ -14,17 +15,16 @@ import {
  * this, then hands the result to `createAgentSession` + `DefaultResourceLoader`.
  */
 
-/** A profile with its extension ids already resolved to repo-relative paths. */
-export interface ResolvedProfile {
-  systemPrompt: string | null
-  /** Tool allowlist, or null for the default coding tools. */
-  tools: string[] | null
-  readContextFiles: boolean
-  useRepoSkills: boolean
+/**
+ * A profile as the runtime resolves it for booting a session: the stored
+ * `ProfileInput` minus its identity (`name`) and with the extension *ids*
+ * already turned into repo-relative `extensionPaths`. Derived from
+ * `ProfileInput` so the profile shape has one home — add a knob there and the
+ * runtime's mapping fails to compile until it's threaded through here.
+ */
+export type ResolvedProfile = Omit<ProfileInput, 'name' | 'extensionIds'> & {
   /** Repo-relative paths to the profile's extension modules, in load order. */
   extensionPaths: string[]
-  /** Model id override, or null to use the session/default model. */
-  model: string | null
 }
 
 /** What the live factory needs to build a pi session — framework-shaped, pure. */

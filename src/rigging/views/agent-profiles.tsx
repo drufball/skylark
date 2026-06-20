@@ -184,14 +184,17 @@ function ProfileForm({
 
   function submit() {
     if (!name.trim() || saving) return
+    // Send raw text; the server's normalizeProfileInput trims and folds blanks
+    // to null (the one home for those rules). Tools are parsed here because the
+    // field is a string the form owns.
     onSave({
-      name: name.trim(),
-      systemPrompt: systemPrompt.trim() ? systemPrompt : null,
+      name,
+      systemPrompt,
       tools: parseToolList(tools),
       readContextFiles,
       useRepoSkills,
       extensionIds,
-      model: model.trim() ? model : null,
+      model,
     })
   }
 
