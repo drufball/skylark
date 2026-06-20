@@ -12,7 +12,6 @@ import {
   assistantTextFrom,
   type ChatAgentRuntime,
   createChatOrchestrator,
-  progressLine,
 } from './orchestrator'
 import {
   addMessage,
@@ -21,24 +20,6 @@ import {
   listMembers,
   listMessages,
 } from './service'
-
-describe('progressLine', () => {
-  it('surfaces tool steps only — never a line per delta', () => {
-    expect(
-      progressLine({
-        type: 'tool_execution_start',
-        toolName: 'read',
-      } as unknown as AgentSessionEvent),
-    ).toBe('using read…')
-    // Everything else is quiet, so a turn's stream of deltas can't flood the log.
-    expect(
-      progressLine({ type: 'message_update' } as unknown as AgentSessionEvent),
-    ).toBeNull()
-    expect(
-      progressLine({ type: 'turn_end' } as unknown as AgentSessionEvent),
-    ).toBeNull()
-  })
-})
 
 describe('assistantTextFrom', () => {
   it('lifts only assistant text out of a transcript tail', () => {

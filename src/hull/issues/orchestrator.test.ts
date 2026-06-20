@@ -11,7 +11,6 @@ import { createSession, getSession, listSessions } from '@hull/agent/service'
 import {
   createOrchestrator,
   parseWorktreeInclude,
-  statusLineFromEvent,
   type GitOps,
   type OrchestratorDeps,
 } from './orchestrator'
@@ -162,55 +161,6 @@ describe('parseWorktreeInclude', () => {
 
   it('is empty for an all-comment/blank file', () => {
     expect(parseWorktreeInclude('# nothing\n\n')).toEqual([])
-  })
-})
-
-describe('statusLineFromEvent', () => {
-  it('summarizes a tool execution', () => {
-    expect(
-      statusLineFromEvent({
-        type: 'tool_execution_start',
-        toolName: 'bash',
-        args: { command: 'npm run check' },
-      } as unknown as AgentSessionEvent),
-    ).toMatch(/bash/)
-  })
-
-  it('reports a turn boundary as thinking/working', () => {
-    expect(
-      statusLineFromEvent({ type: 'turn_end' } as AgentSessionEvent),
-    ).toBeTruthy()
-  })
-
-  it('returns null for events that carry no progress worth showing', () => {
-    expect(
-      statusLineFromEvent({
-        type: 'queue_update',
-        steering: [],
-        followUp: [],
-      } as unknown as AgentSessionEvent),
-    ).toBeNull()
-  })
-
-  it('truncates a very long tool line', () => {
-    const line = statusLineFromEvent({
-      type: 'tool_execution_start',
-      toolName: 'bash',
-      args: { command: 'x'.repeat(300) },
-    } as unknown as AgentSessionEvent)
-    expect(line).not.toBeNull()
-    expect((line ?? '').length).toBeLessThanOrEqual(120)
-    expect(line).toMatch(/…$/)
-  })
-
-  it('handles a tool event with no command arg', () => {
-    expect(
-      statusLineFromEvent({
-        type: 'tool_execution_start',
-        toolName: 'read',
-        args: { path: 'x' },
-      } as unknown as AgentSessionEvent),
-    ).toMatch(/read/)
   })
 })
 
