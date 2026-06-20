@@ -381,8 +381,8 @@ export function createAgentRuntime(deps: {
         await entry.session.prompt(text)
         await entry.persistChain
         await announceStatus(sessionId, 'idle')
-        // Return the messages that were flushed during this turn.
-        return entry.currentTurnMessages
+        // Return a copy so callers can't mutate the runtime's internal state.
+        return [...entry.currentTurnMessages]
       } catch (err) {
         // A turn (or a flush on its persistChain) failed. Drop the live entry:
         // its persistChain may now be permanently rejected, and reusing it would
