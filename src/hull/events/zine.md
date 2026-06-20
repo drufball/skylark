@@ -4,13 +4,13 @@ _events zine — issue #1_
 
 ## tl;dr
 
-The ship's log is a **durable** event bus. Every service emits to it; anything
-can subscribe. It's not ephemeral pub/sub — every event is a row in Postgres, so
-the log is the same kind of source-of-truth the rest of the ship is. A
-subscriber that drops its connection reconnects and replays exactly what it
-missed; a process that emits (the web server, the CLI, a future ship across the
-water) is heard by every other process, because the signal is a row, not an
-in-memory broadcast.
+The ship's log is a **durable** event bus, with a narrow ephemeral path for
+transient UI. Every service emits to it; anything can subscribe. Most events are
+rows in Postgres — a durable source of truth that replays on reconnect and
+crosses process boundaries. A small class (chat progress, status ticks) use the
+ephemeral `notifyOnly` path: they reach live subscribers in this process but
+aren't persisted, never replay, and never cross to other processes. The default
+is durable; ephemeral is a deliberate opt-in for UI that would clutter the log.
 
 Two halves make that work. **Postgres NOTIFY** is the doorbell — a tiny "event
 `X` happened in scope `Y`" announcement that crosses process boundaries
@@ -31,10 +31,15 @@ automatic.
   is one they subscribed to — e.g. `session:<id>` for one conversation, or
   `public`. The same rule (`isScopeVisible`) gates both the live fan-out and the
   replay.
-- **Emit** (`emitEvent`) — the one true write: append the durable row, then
+- **Emit** (`emitEvent`) — the durable write: append the row, then
   `pg_notify('ship_log', …)`. The notify body is **tiny** — only
   `{id,type,scope}` — because Postgres caps a notification near 8KB; the full
   event lives in the row, read back by id.
+- **Notify-only** (`notifyOnly`) — the ephemeral path: publish to the in-process
+  bus (so live SSE subscribers receive it) without persisting a row. For
+  transient UI — chat agent progress, status-line ticks — that shouldn't clutter
+  the log or replay on reconnect. In-process only: no `pg_notify`, so other
+  processes never see it.
 - **The bus** (`bus.ts`) — the impure shell. One process-wide `InProcessBus` (a
   subscriber set) plus the single dedicated `LISTEN ship_log` connection that
   feeds it. A throwing subscriber is isolated so one broken stream can't starve
@@ -74,10 +79,16 @@ agent runtime's Claude wiring.
 
 ## Decisions
 
-- **The log is durable, not ephemeral.** Events are rows; NOTIFY is only the
-  doorbell. This is why a reconnect replays, why a crash loses nothing, and why
-  the CLI's emits reach the web server — all of which ephemeral pub/sub gives
-  up.
+- **The log is durable by default; ephemeral is a narrow opt-in.** Most events
+  are rows; NOTIFY is the doorbell. This is why a reconnect replays, why a crash
+  loses nothing, and why the CLI's emits reach the web server. The ephemeral
+  path (`notifyOnly`) is deliberately constrained: in-process only (no
+  `pg_notify`), never replayed, for the small class of transient UI (progress
+  placeholders, heartbeats) that would clutter the log if persisted. The
+  **decision rule**: if a reconnecting client should see the event, or another
+  process should hear it, or you'd want it in a transcript dump → durable. If
+  it's live-only UI scaffolding that goes stale the moment it renders →
+  ephemeral.
 - **NOTIFY carries only `{id,type,scope}`; the payload lives in the row.**
   Postgres caps a notification near 8KB, and a payload can be anything. The
   subscriber reads the full row by id, so the doorbell stays tiny by
@@ -107,6 +118,10 @@ agent runtime's Claude wiring.
 
 ## Changelog
 
+- **#2** — Ephemeral notify-only path (`notifyOnly`) for transient UI: publishes
+  to the in-process bus (live SSE delivery) without persisting a row or firing
+  `pg_notify`. In-process only, never replayed. Chat orchestrator uses it for
+  `agent_progress` events (the "working…" placeholder).
 - **#1** — The ship's log: a durable `events` table, `emitEvent` (row +
   pg_notify), a single LISTEN connection fanning out to SSE clients, the
   `/api/stream` endpoint with `Last-Event-ID` replay, and the `useShipLog` hook

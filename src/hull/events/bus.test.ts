@@ -96,24 +96,10 @@ describe('notifyOnly', () => {
   })
   afterEach(() => close())
 
-  it('fans out to live subscribers via the in-process bus', () => {
-    const bus = new InProcessBus()
-    const seen: NotifyPayload[] = []
-    bus.subscribe((n) => {
-      seen.push(n)
-    })
-
-    // notifyOnly will be imported and call bus.publish directly
-    bus.publish(note({ id: 'ephemeral-1', type: 'chat.agent_progress' }))
-    expect(seen.map((n) => n.id)).toEqual(['ephemeral-1'])
-  })
-
   it('does NOT persist to the database', async () => {
-    // This will fail until we implement notifyOnly
-    // notifyOnly should NOT call appendEvent
     const { notifyOnly } = await import('./bus')
 
-    await notifyOnly(db, {
+    notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',
       scope: 'session:s1',
@@ -125,25 +111,6 @@ describe('notifyOnly', () => {
     expect(replayed).toHaveLength(0)
   })
 
-  it('still delivers the notification payload so live subscribers receive it', () => {
-    const bus = new InProcessBus()
-    const received: NotifyPayload[] = []
-    bus.subscribe((n) => {
-      received.push(n)
-    })
-
-    // Simulate what notifyOnly will do: publish to bus without persisting
-    const payload: NotifyPayload = {
-      id: 'ephemeral-123',
-      type: 'chat.agent_progress',
-      scope: 'session:abc',
-    }
-    bus.publish(payload)
-
-    expect(received).toHaveLength(1)
-    expect(received[0].type).toBe('chat.agent_progress')
-  })
-
   it('publishes ephemeral event data to the in-process bus', async () => {
     const { notifyOnly, shipLogBus } = await import('./bus')
     const received: NotifyPayload[] = []
@@ -151,11 +118,10 @@ describe('notifyOnly', () => {
       received.push(n)
     })
 
-    await notifyOnly(db, {
+    notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',
       scope: 'session:s1',
-      actorId: 'user-123',
       payload: { line: 'thinking…' },
     })
 
@@ -163,7 +129,6 @@ describe('notifyOnly', () => {
     expect(received).toHaveLength(1)
     expect(received[0].ephemeral).toMatchObject({
       source: 'chat',
-      actorId: 'user-123',
       payload: { line: 'thinking…' },
     })
   })

@@ -12,7 +12,7 @@ import {
   listEventsSince,
   REPLAY_PAGE_SIZE,
 } from '@hull/events/service'
-import { parseTopics, sseFrame } from '@hull/events/sse'
+import { parseTopics, sseFrame, toStreamEvent } from '@hull/events/sse'
 import { currentActor } from '@hull/users/actor'
 
 // The ship's log, streamed. A GET here is a Server-Sent-Events connection: the
@@ -99,14 +99,12 @@ export const Route = createFileRoute('/api/stream')({
                     type: note.type,
                     scope: note.scope,
                     source: note.ephemeral.source,
-                    actorId: note.ephemeral.actorId,
                     payload: note.ephemeral.payload,
-                    createdAt: new Date(), // ephemeral, so timestamp is now
                   }),
                 )
               } else {
                 void getEventById(db, note.id).then((row) => {
-                  if (row) send(sseFrame(row))
+                  if (row) send(sseFrame(toStreamEvent(row)))
                 })
               }
             }
@@ -124,7 +122,7 @@ export const Route = createFileRoute('/api/stream')({
                   sinceId: lastReplayedId,
                 })
                 for (const row of page) {
-                  send(sseFrame(row))
+                  send(sseFrame(toStreamEvent(row)))
                   lastReplayedId = row.id
                 }
                 if (page.length < REPLAY_PAGE_SIZE) break

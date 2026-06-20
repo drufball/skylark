@@ -81,13 +81,12 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     line: string,
   ): void {
     // Progress is transient UI — notify-only, not durable, not replayed.
-    void notifyOnly(db, {
+    notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',
       scope: chatScope(chatId),
-      actorId: agentUserId,
       payload: { chatId, agentUserId, line },
-    }).catch(() => undefined)
+    })
   }
 
   /** Run one agent's reply: feed unseen messages, take a turn, post the text. */
