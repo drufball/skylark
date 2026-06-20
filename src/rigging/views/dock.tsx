@@ -4,10 +4,9 @@ import { Anchor, Bot, Hammer, MessageSquare } from 'lucide-react'
 import { cn } from '@rigging/lib/utils'
 
 // The dock: the ship's persistent app-shell nav. It switches between the ship's
-// surfaces — Chat (the front door), Issues (the board), and a slot for Agents
-// (M4 fills it; a disabled placeholder for now). Presentational and
-// router-agnostic: the link element is injected so the dock is testable without
-// a router and reusable across routes.
+// surfaces — Chat (the front door), Issues (the board), and Agents (profiles +
+// the session monitor). Presentational and router-agnostic: the link element is
+// injected so the dock is testable without a router and reusable across routes.
 
 export type DockSection = 'chat' | 'issues' | 'agents'
 
@@ -23,20 +22,12 @@ interface DockItem {
   to: string
   label: string
   Icon: typeof Anchor
-  /** Not yet built — rendered as a dimmed, non-navigating placeholder. */
-  disabled?: boolean
 }
 
 const ITEMS: DockItem[] = [
   { section: 'chat', to: '/', label: 'Chat', Icon: MessageSquare },
   { section: 'issues', to: '/issues', label: 'Issues', Icon: Hammer },
-  {
-    section: 'agents',
-    to: '/agents',
-    label: 'Agents',
-    Icon: Bot,
-    disabled: true,
-  },
+  { section: 'agents', to: '/agents', label: 'Agents', Icon: Bot },
 ]
 
 export interface DockProps {
@@ -81,19 +72,6 @@ function DockButton({
   const { Icon, label } = item
   const base =
     'flex w-14 flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium'
-
-  if (item.disabled) {
-    return (
-      <span
-        className={cn(base, 'cursor-not-allowed text-muted-foreground/40')}
-        aria-disabled="true"
-        title={`${label} — coming soon`}
-      >
-        <Icon className="size-5" />
-        {label}
-      </span>
-    )
-  }
 
   return (
     <Link

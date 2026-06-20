@@ -15,7 +15,7 @@ const FakeLink: DockLink = ({ to, className, children }) => (
 )
 
 describe('Dock', () => {
-  it('renders the chat and issues links and the children', () => {
+  it('renders the chat, issues, and agents links and the children', () => {
     render(
       <Dock active="issues" Link={FakeLink}>
         <p>surface</p>
@@ -27,19 +27,10 @@ describe('Dock', () => {
     expect(screen.getByText('Issues').closest('a')?.getAttribute('href')).toBe(
       '/issues',
     )
-    expect(screen.getByText('surface')).toBeTruthy()
-  })
-
-  it('marks the agents slot as a disabled placeholder (no link)', () => {
-    render(
-      <Dock active="chat" Link={FakeLink}>
-        <span />
-      </Dock>,
+    expect(screen.getByText('Agents').closest('a')?.getAttribute('href')).toBe(
+      '/agents',
     )
-    const agents = screen.getByText('Agents')
-    // The placeholder is not a navigating link.
-    expect(agents.closest('a')).toBeNull()
-    expect(agents.closest('[aria-disabled="true"]')).toBeTruthy()
+    expect(screen.getByText('surface')).toBeTruthy()
   })
 
   it('flags the active section for assistive tech', () => {
