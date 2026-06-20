@@ -1,7 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { db } from '@hull/db/client'
-import { ensureShipLogListener, shipLogBus } from '@hull/events/bus'
+import {
+  ensureShipLogListener,
+  shipLogBus,
+  type NotifyPayload,
+} from '@hull/events/bus'
 import {
   getEventById,
   isScopeVisible,
@@ -83,17 +87,32 @@ export const Route = createFileRoute('/api/stream')({
             // that dedupes the buffer against the replayed page.
             let replayed = false
             let lastReplayedId = lastEventId
-            const buffer: { id: string; scope: string }[] = []
-            const deliver = (id: string, scope: string) => {
-              if (!isScopeVisible(scope, scopes)) return
-              if (lastReplayedId && id <= lastReplayedId) return
-              void getEventById(db, id).then((row) => {
-                if (row) send(sseFrame(row))
-              })
+            const buffer: NotifyPayload[] = []
+            const deliver = (note: NotifyPayload) => {
+              if (!isScopeVisible(note.scope, scopes)) return
+              if (lastReplayedId && note.id <= lastReplayedId) return
+              // Ephemeral events carry their full data; durable events fetch from DB.
+              if (note.ephemeral) {
+                send(
+                  sseFrame({
+                    id: note.id,
+                    type: note.type,
+                    scope: note.scope,
+                    source: note.ephemeral.source,
+                    actorId: note.ephemeral.actorId,
+                    payload: note.ephemeral.payload,
+                    createdAt: new Date(), // ephemeral, so timestamp is now
+                  }),
+                )
+              } else {
+                void getEventById(db, note.id).then((row) => {
+                  if (row) send(sseFrame(row))
+                })
+              }
             }
             const unsubscribe = shipLogBus.subscribe((note) => {
-              if (replayed) deliver(note.id, note.scope)
-              else buffer.push({ id: note.id, scope: note.scope })
+              if (replayed) deliver(note)
+              else buffer.push(note)
             })
 
             try {
@@ -111,7 +130,7 @@ export const Route = createFileRoute('/api/stream')({
                 if (page.length < REPLAY_PAGE_SIZE) break
               }
               replayed = true
-              for (const note of buffer) deliver(note.id, note.scope)
+              for (const note of buffer) deliver(note)
 
               // A comment line confirms the stream is open, and a recurring
               // heartbeat keeps it warm — and, if the connection has silently

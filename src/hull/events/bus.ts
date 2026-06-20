@@ -1,3 +1,4 @@
+import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 
@@ -17,6 +18,10 @@ import type { EventRow } from './schema'
 // out to every connected SSE stream. The NOTIFY payload is deliberately TINY —
 // just {id,type,scope} — because Postgres caps a notification near 8KB; the full
 // event lives in the row, which the SSE route reads by id.
+//
+// For ephemeral (notify-only) events, the in-process bus carries the full event
+// data, so the SSE route doesn't need to fetch from the database. These events
+// are delivered live but never replayed on reconnect.
 
 /** The channel every emit notifies and the LISTEN connection subscribes to. */
 export const SHIP_LOG_CHANNEL = 'ship_log'
@@ -26,6 +31,12 @@ export interface NotifyPayload {
   id: string
   type: string
   scope: string
+  /** For ephemeral events: the full event data (not in NOTIFY, only in-process). */
+  ephemeral?: {
+    source: string
+    actorId: string | null
+    payload: unknown
+  }
 }
 
 type Listener = (note: NotifyPayload) => void
@@ -77,9 +88,40 @@ export async function emitEvent(
   return row
 }
 
-/* v8 ignore start -- live LISTEN wiring: a real Postgres connection, not unit-tested */
+/**
+ * Notify-only emit: announce the event on the ship_log channel without persisting
+ * it to the events table. For transient UI (chat.agent_progress, status-line
+ * ticks) that shouldn't be durable or replayed on reconnect. Live SSE subscribers
+ * still receive it, but a reconnect with Last-Event-ID skips it (it's not in the
+ * table). Returns the ephemeral id that was notified.
+ */
+export async function notifyOnly(
+  db: Database,
+  input: Omit<AppendEventInput, 'actorId'> & { actorId?: string | null },
+): Promise<string> {
+  const id = uuidv7()
+  // pg_notify carries only the minimal {id,type,scope} — Postgres caps NOTIFY at 8KB.
+  const note: NotifyPayload = { id, type: input.type, scope: input.scope }
+  await db.execute(
+    sql`select pg_notify(${SHIP_LOG_CHANNEL}, ${JSON.stringify(note)})`,
+  )
+  // The in-process bus gets the full ephemeral event data, so the SSE route
+  // doesn't need to fetch from the database.
+  shipLogBus.publish({
+    ...note,
+    ephemeral: {
+      source: input.source,
+      actorId: input.actorId ?? null,
+      payload: input.payload,
+    },
+  })
+  return id
+}
+
 /** The process-wide bus every SSE stream subscribes to. */
 export const shipLogBus = new InProcessBus()
+
+/* v8 ignore start -- live LISTEN wiring: a real Postgres connection, not unit-tested */
 
 let listening = false
 

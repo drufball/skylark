@@ -89,7 +89,7 @@ describe('chat orchestrator', () => {
   })
   afterEach(() => close())
 
-  it('auto-replies in a 1:1, posting the agent message and a progress event', async () => {
+  it('auto-replies in a 1:1, posting the agent message', async () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
     await addMessage(db, {
@@ -114,10 +114,27 @@ describe('chat orchestrator', () => {
     // A backing session was created and recorded on the membership.
     const members = await listMembers(db, chatId)
     expect(members.find((m) => m.userId === tilde)?.sessionId).not.toBeNull()
+  })
 
-    // Live progress rode the chat scope.
+  it('emits transient progress events that are NOT persisted', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: dru,
+      body: 'hello tilde',
+    })
+
+    const orch = createChatOrchestrator({
+      db,
+      runtime: fakeRuntime(db, 'hi dru'),
+    })
+    await orch.respond({ chatId, authorId: dru, body: 'hello tilde' })
+
+    // Progress events should NOT be in the durable log.
     const events = await listEventsSince(db, { scopes: [chatScope(chatId)] })
-    expect(events.map((e) => e.type)).toContain('chat.agent_progress')
+    expect(events.map((e) => e.type)).not.toContain('chat.agent_progress')
   })
 
   it('reuses the backing session across turns', async () => {
