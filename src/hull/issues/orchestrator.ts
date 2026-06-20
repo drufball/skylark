@@ -1,5 +1,4 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import type { Database } from '@hull/db/client'
 import { getProfileByName } from '@hull/agent/profiles'
@@ -8,6 +7,7 @@ import { createSession } from '@hull/agent/service'
 import { getEventById } from '@hull/events/service'
 import { handleOf } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
+import { issuesProgressLine } from '@hull/agent/progress'
 
 import {
   getIssue,
@@ -78,30 +78,6 @@ export function slugify(text: string, max = 40): string {
  */
 export function branchNameFor(slug: string, nano: string): string {
   return `${slugify(slug)}-${nano}`
-}
-
-/**
- * A short progress line for the board/thread, derived from a live agent event.
- * Returns null for events that carry no progress worth showing (so the existing
- * line stays put rather than flickering to nothing).
- */
-export function statusLineFromEvent(event: AgentSessionEvent): string | null {
-  switch (event.type) {
-    case 'tool_execution_start': {
-      const args: unknown = event.args
-      const detail =
-        typeof args === 'object' && args && 'command' in args
-          ? String(args.command)
-          : ''
-      const text = `🔧 ${event.toolName} ${detail}`.trim()
-      return text.length > 120 ? `${text.slice(0, 119)}…` : text
-    }
-    case 'turn_end':
-    case 'agent_end':
-      return 'thinking…'
-    default:
-      return null
-  }
 }
 
 /**
@@ -242,7 +218,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   function fireBuilderTurn(issueId: string, sessionId: string, text: string) {
     void runtime
       .runTurn(sessionId, text, (event) => {
-        const line = statusLineFromEvent(event)
+        const line = issuesProgressLine(event)
         if (line)
           void setStatusLine(db, issueId, line).catch(
             /* v8 ignore next 2 -- defensive: a status-line write failing must never break a build */

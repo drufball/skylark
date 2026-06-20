@@ -62,6 +62,12 @@ logic.
   profile + cwd to pi.dev session/resource-loader options. Unit-tested apart
   from the live `createPiSession` wiring, so the decision (which tools, skills,
   context, extensions) is verifiable without a network.
+- **Progress helpers** (`progress.ts`) — neutral primitives for translating
+  `AgentSessionEvent`s into progress lines: `toolExecutionDetail` extracts tool
+  name + args, `isTurnBoundary` identifies turn_end/agent_end, `truncate` limits
+  text length. Consumer formatters (`chatProgressLine`, `issuesProgressLine`)
+  compose these for their display policy. The CLI also uses the primitives for
+  terminal rendering.
 - **Doors** — `cli.ts` (the default door: also `seed`, `profiles`, `extensions`)
   and `server.ts` (the web door; the front-door chat boots the chat profile).
 - **Shared config** (`config.ts`) — resolves the ship's CLAUDE.md and skill
@@ -181,6 +187,10 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **#27** — Progress primitives: extracted neutral event helpers
+  (`toolExecutionDetail`, `isTurnBoundary`, `truncate`) into `progress.ts` so
+  chat, issues, and the CLI all compose from the same base rather than
+  duplicating ~120-char truncation and tool formatting logic.
 - **#4** — Profiles, an extensions registry, and compaction-safe persistence.
   How an agent boots is now a profile row (tools/prompt/context/skills/
   extensions/model), resolved by the runtime into pi.dev options; two are seeded

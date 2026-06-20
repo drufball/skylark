@@ -1,11 +1,11 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
 import { createSession } from '@hull/agent/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
+import { chatProgressLine } from '@hull/agent/progress'
 
 import {
   addMessage,
@@ -37,19 +37,6 @@ import {
 
 /** The slice of the agent runtime the chat orchestrator drives. */
 export type ChatAgentRuntime = RunsTurns
-
-/**
- * A short progress line from a live agent event, or null if nothing worth
- * showing. Returns a line only on a *few* events (tool use) — never per delta —
- * so a turn emits a handful of progress events, not one per streamed token. The
- * initial "thinking…" is emitted once by `reply` before the turn; here we only
- * surface tool steps. (The issues orchestrator's `statusLineFromEvent` makes the
- * same choice; keeping both quiet keeps the durable log from filling with ticks.)
- */
-export function progressLine(event: AgentSessionEvent): string | null {
-  if (event.type === 'tool_execution_start') return `using ${event.toolName}…`
-  return null
-}
 
 /** Lift the assistant's text out of the messages a turn produced. */
 export function assistantTextFrom(messages: unknown[]): string {
@@ -120,7 +107,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     let lastLine = 'thinking…'
     emitProgress(chatId, agentUserId, lastLine)
     const produced = await runtime.runTurn(sessionId, prompt, (event) => {
-      const line = progressLine(event)
+      const line = chatProgressLine(event)
       if (line && line !== lastLine) {
         lastLine = line
         emitProgress(chatId, agentUserId, line)
