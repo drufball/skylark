@@ -81,6 +81,8 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       model: DEFAULT_MODEL,
       profileId: agent.profileId,
       agentUserId: agent.userId,
+      // The session inherits this chat's visibility (members only).
+      origin: chatScope(chatId),
     })
     await setMemberSession(db, chatId, agent.userId, id)
     return id
