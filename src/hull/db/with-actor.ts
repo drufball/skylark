@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 
 import type { Database } from './client'
+import { APP_ROLE } from './url'
 
 // Run a unit of work AS a specific crew member, so Postgres Row-Level Security
 // filters every query to what that actor may see (see migrations/0007). This is
@@ -25,9 +26,6 @@ import type { Database } from './client'
 // Keep the wrapped unit SHORT — never wrap a long-lived stream in one call, or
 // you hold a transaction open for the life of the connection. The SSE route
 // wraps each individual db touch instead.
-
-/** The non-superuser role the app acts as; RLS policies are written against it. */
-export const APP_ROLE = 'app_user'
 
 /**
  * Run `fn` as `actorId`: open a transaction, switch to `app_user`, set the
