@@ -110,12 +110,13 @@ idle session, because the truth is in the database, not the registry.
 - **The web doors gate on session visibility, mirroring the SSE stream.** A
   session has no crew column; its visibility is inherited from where it came
   from — an issue's builder session is public, a chat's backing session follows
-  that chat's membership, a bare/monitor session is crew-visible. `getAgentChat`
-  (and the `send`/`cancel` controls) run the same `canSeeSession` gate the
-  ship's log uses, so the Agents monitor can't read or poke a private chat's
-  transcript the stream already hides. That gate **probes `agent_sessions` under
-  RLS** (the migration 0008 policy), not an origin-derivation in code — so the
-  rule lives once, in the policy, and the doors are thin callers.
+  that chat's membership, a bare/monitor session is crew-visible. The read doors
+  (`getAgentChat`/`listAgentSessions`) run under `withCurrentActor` and let RLS
+  filter; the `send`/`cancel` controls call the same unified `canSeeTopic` gate
+  the ship's log uses (via the session's topic), since RLS can't govern an
+  in-process runtime call. Either way the rule **probes `agent_sessions` under
+  RLS** (the migration 0008 policy), not an origin-derivation in code — so it
+  lives once, in the policy, and the doors are thin callers.
 - **Postgres is the source of truth; the pi.dev session is ephemeral.** We do
   not rely on an in-process session surviving. pi.dev's own JSONL session store
   is run in-memory and ignored. This is the whole point of the service: durable
@@ -206,10 +207,11 @@ idle session, because the truth is in the database, not the registry.
 
 - **#49** — The web doors are entitlement-gated by session visibility:
   `getAgentChat` returns null for a session the actor can't see,
-  `listAgentSessions` filters to visible ones, and `send`/`cancel` refuse a
-  session the actor can't see — all via `canSeeSession` (`hull/access`), the
-  same gate the SSE stream uses (issue→public, chat→members, bare→crew). Closes
-  the door-side counterpart of the chat/session read leak the stream fixed.
+  `listAgentSessions` filters to visible ones (both via RLS under
+  `withCurrentActor`), and `send`/`cancel` refuse a session the actor can't see
+  via `canSeeTopic` (`hull/access`) — the one unified gate the SSE stream uses
+  (issue→public, chat→members, bare→crew). Closes the door-side counterpart of
+  the chat/session read leak the stream fixed.
 - **#27** — Progress primitives: extracted neutral event helpers
   (`toolExecutionDetail`, `isTurnBoundary`, `truncate`) into `progress.ts` so
   chat, issues, and the CLI all compose from the same base rather than

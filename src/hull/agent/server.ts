@@ -3,13 +3,13 @@ import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import { createServerFn } from '@tanstack/react-start'
 
 import { db } from '@hull/db/client'
-import { canSeeSession } from '@hull/access/visibility'
+import { canSeeTopic } from '@hull/access/visibility'
 import { errorMessage } from '@hull/lib/errors'
 import { currentActor, withCurrentActor } from '@hull/users/actor'
 
 import { defaultModelRef } from './models'
 import { isHostedProvider, providersWithStatus } from './providers'
-import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
+import { type AgentRuntime, DEFAULT_MODEL, sessionScope } from './runtime'
 import { createServerRuntime } from './fake-session'
 import {
   CHAT_PROFILE,
@@ -37,9 +37,10 @@ import { toChatItems } from './transcript'
 // Two access patterns live here on purpose, not as an unfinished migration:
 // the READ doors (listAgentSessions/getAgentChat) run under `withCurrentActor`
 // and let RLS filter — the policy is the gate. The ACTION doors (send/cancel)
-// instead probe with `canSeeSession` (itself an RLS probe) and then act,
-// because the effect they guard is a RUNTIME call (fire/cancel a turn), not a
-// DB write — so there's no insert for a WITH CHECK policy to gate.
+// instead probe with `canSeeTopic` (the same unified gate the SSE stream uses,
+// via the session's topic) and then act, because the effect they guard is a
+// RUNTIME call (fire/cancel a turn), not a DB write — so there's no insert for a
+// WITH CHECK policy to gate.
 
 // One runtime per server process, created lazily on first server-side use. The
 // registry must outlive individual requests so a turn can be queued into or
@@ -72,7 +73,9 @@ function fireTurn(sessionId: string, text: string): void {
  */
 async function actorCanSeeSession(sessionId: string): Promise<boolean> {
   const actor = await currentActor()
-  return canSeeSession(db, actor.id, sessionId)
+  // The same unified gate the SSE stream uses, via the session's topic — no
+  // bespoke per-door check.
+  return canSeeTopic(db, actor.id, sessionScope(sessionId))
 }
 
 /** Refuse an action on a session the actor can't see. */
