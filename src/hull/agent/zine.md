@@ -107,6 +107,14 @@ idle session, because the truth is in the database, not the registry.
 
 ## Decisions
 
+- **The web doors gate on session visibility, mirroring the SSE stream.** A
+  session has no crew column; its visibility is inherited from where it came
+  from — an issue's builder session is public, a chat's backing session follows
+  that chat's membership, a bare/monitor session is crew-visible. `getAgentChat`
+  (and the `send`/`cancel` controls) run the same `canSeeSession` gate the
+  ship's log uses, so the Agents monitor can't read or poke a private chat's
+  transcript the stream already hides. The rule lives once in `hull/access`; the
+  doors are thin callers.
 - **Postgres is the source of truth; the pi.dev session is ephemeral.** We do
   not rely on an in-process session surviving. pi.dev's own JSONL session store
   is run in-memory and ignored. This is the whole point of the service: durable
@@ -195,6 +203,12 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **#49** — The web doors are entitlement-gated by session visibility:
+  `getAgentChat` returns null for a session the actor can't see,
+  `listAgentSessions` filters to visible ones, and `send`/`cancel` refuse a
+  session the actor can't see — all via `canSeeSession` (`hull/access`), the
+  same gate the SSE stream uses (issue→public, chat→members, bare→crew). Closes
+  the door-side counterpart of the chat/session read leak the stream fixed.
 - **#27** — Progress primitives: extracted neutral event helpers
   (`toolExecutionDetail`, `isTurnBoundary`, `truncate`) into `progress.ts` so
   chat, issues, and the CLI all compose from the same base rather than

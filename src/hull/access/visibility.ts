@@ -11,8 +11,12 @@ import { issueOwnsSession } from '@hull/issues/service'
 // This is the one home for the ship's per-topic visibility rules — a deliberate
 // cross-cutting hub, since a session's visibility spans services (it derives from
 // whether an issue or a chat owns it). It depends downward on service contracts
-// (no service imports back) and asks each module to parse its own topic grammar
-// (`chatIdFromTopic`, `sessionIdFromTopic`) rather than re-deriving it here.
+// and asks each module to parse its own topic grammar (`chatIdFromTopic`,
+// `sessionIdFromTopic`) rather than re-deriving it here. The edges run one way:
+// service *logic* never imports this hub; only the serving edge does — the SSE
+// route and the web doors (`createServerFn` handlers), which are where "who is
+// acting?" is known. So `agent/server.ts` calling `canSeeSession` is a door
+// reaching down to the hub, not a service depending sideways on it.
 //
 // For chat, this mirrors the RLS policies (migration 0007) on the same
 // `chat_members` table — stream gate and table policies agree. Sessions have no
@@ -25,8 +29,12 @@ import { issueOwnsSession } from '@hull/issues/service'
  * derives from where the session came from: an issue's builder session is public
  * (the board is public); a chat's backing session follows that chat's
  * membership; a bare/monitor session (a CLI `agent new`) is visible to the crew.
+ *
+ * The public session-visibility primitive: the agent doors hold a sessionId, so
+ * they call this directly; `canSeeTopic` routes `session:` topics here too, so
+ * the doors and the SSE stream funnel session visibility through one function.
  */
-async function canSeeSession(
+export async function canSeeSession(
   db: Database,
   actorId: string,
   sessionId: string,
