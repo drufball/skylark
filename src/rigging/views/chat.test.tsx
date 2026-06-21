@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { ChatView, type ChatViewProps, chatName } from './chat'
+import { classTokensOf } from './test-support'
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
@@ -56,10 +57,6 @@ describe('ChatView', () => {
     expect(onSelect).toHaveBeenCalledWith('c1')
   })
 
-  // The accent token also appears as `hover:bg-accent`, so match it as a
-  // standalone class, not a substring.
-  const classTokens = (el: Element) => el.className.split(/\s+/)
-
   it('highlights only the active chat in the list', () => {
     renderView({
       activeId: 'c1',
@@ -69,8 +66,8 @@ describe('ChatView', () => {
       ],
     })
     // The active row carries the accent class; the inactive one does not.
-    expect(classTokens(screen.getByText('@tilde'))).toContain('bg-accent')
-    expect(classTokens(screen.getByText('@bix'))).not.toContain('bg-accent')
+    expect(classTokensOf('@tilde')).toContain('bg-accent')
+    expect(classTokensOf('@bix')).not.toContain('bg-accent')
   })
 
   it('does not highlight any chat while composing a new one', () => {
@@ -82,7 +79,7 @@ describe('ChatView', () => {
       chats: [{ id: 'c1', title: null, memberHandles: ['zara'] }],
       crew: [{ id: 'a', handle: 'tilde', displayName: 'Tilde', type: 'agent' }],
     })
-    expect(classTokens(screen.getByText('@zara'))).not.toContain('bg-accent')
+    expect(classTokensOf('@zara')).not.toContain('bg-accent')
   })
 
   it('renders messages, attributing only others (not mine)', () => {

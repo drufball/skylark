@@ -3,6 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { Dock, type DockLink } from './dock'
+import { classTokensOf } from './test-support'
 
 afterEach(cleanup)
 
@@ -52,9 +53,7 @@ describe('Dock', () => {
         <span />
       </Dock>,
     )
-    const tokens = (text: string) =>
-      screen.getByText(text).closest('a')?.className.split(/\s+/) ?? []
-    expect(tokens('Issues')).toContain('bg-accent')
-    expect(tokens('Chat')).not.toContain('bg-accent')
+    expect(classTokensOf('Issues', 'a')).toContain('bg-accent')
+    expect(classTokensOf('Chat', 'a')).not.toContain('bg-accent')
   })
 })

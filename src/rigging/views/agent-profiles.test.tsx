@@ -9,6 +9,7 @@ import {
   parseToolList,
   type ProfileSummary,
 } from './agent-profiles'
+import { classTokensOf } from './test-support'
 
 afterEach(cleanup)
 
@@ -79,14 +80,12 @@ describe('AgentProfiles', () => {
         onSave={vi.fn()}
       />,
     )
-    const tokens = (text: string) =>
-      screen.getByText(text).closest('button')?.className.split(/\s+/) ?? []
     // Nothing is highlighted until a profile is picked.
-    expect(tokens('chat')).not.toContain('bg-accent')
+    expect(classTokensOf('chat', 'button')).not.toContain('bg-accent')
     fireEvent.click(screen.getByText('chat'))
     // Now the edited profile is highlighted, and only it.
-    expect(tokens('chat')).toContain('bg-accent')
-    expect(tokens('research')).not.toContain('bg-accent')
+    expect(classTokensOf('chat', 'button')).toContain('bg-accent')
+    expect(classTokensOf('research', 'button')).not.toContain('bg-accent')
   })
 
   it('saves a new profile with parsed tools and selected extensions', () => {

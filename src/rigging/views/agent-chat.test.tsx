@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ChatItem } from '@hull/agent/transcript'
 
 import { AgentChatView, type AgentChatViewProps } from './agent-chat'
+import { classTokensOf } from './test-support'
 
 // jsdom has no layout engine, so the transcript's auto-scroll call is a no-op.
 beforeAll(() => {
@@ -87,10 +88,8 @@ describe('AgentChatView', () => {
       ],
       activeId: 'a',
     })
-    const tokens = (text: string) =>
-      screen.getByText(text).closest('button')?.className.split(/\s+/) ?? []
-    expect(tokens('first')).toContain('bg-accent')
-    expect(tokens('second')).not.toContain('bg-accent')
+    expect(classTokensOf('first', 'button')).toContain('bg-accent')
+    expect(classTokensOf('second', 'button')).not.toContain('bg-accent')
   })
 
   it('marks an errored tool result distinctly', () => {
