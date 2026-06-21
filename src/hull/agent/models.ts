@@ -14,6 +14,19 @@ export const DEFAULT_PROVIDER = 'anthropic'
 /** Where a local Ollama server exposes its OpenAI-compatible API by default. */
 export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'
 
+/**
+ * Default context window assumed for an Ollama model. This is NOT inert
+ * metadata: the runtime runs with auto-compaction on, and pi triggers
+ * compaction off `model.contextWindow`. Too low and a large model compacts far
+ * too early; too high and a small model overflows. Since the locally-pulled set
+ * has no fixed catalog to read windows from, we use one conservative default —
+ * 32k, which also matches the `num_ctx` an agentic tool-caller needs — and let
+ * a deployment override it (per the env below). Reading Ollama's `/api/show`
+ * `context_length` to size this exactly is a follow-up for the live bring-up.
+ */
+const DEFAULT_OLLAMA_CONTEXT_WINDOW = 32768
+const DEFAULT_OLLAMA_MAX_TOKENS = 8192
+
 /** A model string split into its provider and the provider-local model id. */
 export interface ModelRef {
   provider: string
@@ -65,9 +78,36 @@ export function ollamaBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   return DEFAULT_OLLAMA_BASE_URL
 }
 
-/** Resolve an Anthropic model id against pi-ai's built-in registry. */
+/** Read a positive integer from `env`, falling back when unset or invalid. */
+function envInt(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number,
+): number {
+  const raw = env[name]?.trim()
+  if (!raw) return fallback
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+/**
+ * Find the first Anthropic model matching one of `ids`, or undefined. The one
+ * place that knows Anthropic models come from pi-ai's registry: `resolveModel`
+ * throws on a miss, while a tolerant caller (e.g. the issue slug generator,
+ * which tries candidate ids and degrades gracefully) takes the undefined.
+ */
+export function findAnthropicModel(ids: string[]): Model<Api> | undefined {
+  const models = getModels('anthropic')
+  for (const id of ids) {
+    const model = models.find((m) => m.id === id)
+    if (model) return model
+  }
+  return undefined
+}
+
+/** Resolve a single Anthropic model id, or throw if it doesn't exist. */
 function resolveAnthropic(modelId: string): Model<Api> {
-  const model = getModels('anthropic').find((m) => m.id === modelId)
+  const model = findAnthropicModel([modelId])
   if (!model) throw new Error(`Unknown Anthropic model: ${modelId}`)
   return model
 }
@@ -94,8 +134,12 @@ function resolveOllama(
     reasoning: false,
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32768,
-    maxTokens: 8192,
+    contextWindow: envInt(
+      env,
+      'OLLAMA_CONTEXT_WINDOW',
+      DEFAULT_OLLAMA_CONTEXT_WINDOW,
+    ),
+    maxTokens: envInt(env, 'OLLAMA_MAX_TOKENS', DEFAULT_OLLAMA_MAX_TOKENS),
     compat: {
       supportsStore: false,
       supportsDeveloperRole: false,

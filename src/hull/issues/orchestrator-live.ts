@@ -5,10 +5,10 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { completeSimple } from '@earendil-works/pi-ai'
-import { getModels } from '@earendil-works/pi-ai'
 
 import { db } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
+import { findAnthropicModel } from '@hull/agent/models'
 import { createAgentRuntime, createPiSession } from '@hull/agent/runtime'
 import { getUserByHandle } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
@@ -119,9 +119,10 @@ export const nodeGitOps: GitOps = {
  */
 export async function generateSlug(issue: IssueRow): Promise<string> {
   try {
-    const model = getModels('anthropic').find(
-      (m) => m.id === 'claude-haiku-4-5' || m.id === 'claude-3-5-haiku-latest',
-    )
+    const model = findAnthropicModel([
+      'claude-haiku-4-5',
+      'claude-3-5-haiku-latest',
+    ])
     if (!model) return slugify(issue.title)
     const result = await completeSimple(model, {
       systemPrompt:

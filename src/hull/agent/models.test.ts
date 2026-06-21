@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DEFAULT_OLLAMA_BASE_URL,
+  findAnthropicModel,
   ollamaBaseUrl,
   parseModelRef,
   resolveModel,
@@ -132,6 +133,22 @@ describe('resolveModel', () => {
     expect(model.baseUrl).toBe('http://gpu-box:1234/v1')
   })
 
+  it('lets the Ollama context window be overridden (it drives compaction)', () => {
+    const model = resolveModel('ollama/qwen3-coder:30b', {
+      OLLAMA_CONTEXT_WINDOW: '131072',
+      OLLAMA_MAX_TOKENS: '16384',
+    })
+    expect(model.contextWindow).toBe(131072)
+    expect(model.maxTokens).toBe(16384)
+  })
+
+  it('ignores a non-positive or junk context-window override', () => {
+    const model = resolveModel('ollama/qwen3:8b', {
+      OLLAMA_CONTEXT_WINDOW: 'lots',
+    })
+    expect(model.contextWindow).toBe(32768)
+  })
+
   it('throws on an unknown Anthropic model', () => {
     expect(() => resolveModel('anthropic/not-a-real-model')).toThrow(
       /unknown anthropic model/i,
@@ -140,5 +157,17 @@ describe('resolveModel', () => {
 
   it('throws on an unknown provider', () => {
     expect(() => resolveModel('weirdprovider/foo')).toThrow(/provider/i)
+  })
+})
+
+describe('findAnthropicModel', () => {
+  it('returns the first candidate id that exists, in order', () => {
+    const known = getModels('anthropic')[0]
+    expect(findAnthropicModel(['not-real', known.id])).toEqual(known)
+  })
+
+  it('returns undefined when no candidate matches (tolerant callers degrade)', () => {
+    expect(findAnthropicModel(['nope', 'also-nope'])).toBeUndefined()
+    expect(findAnthropicModel([])).toBeUndefined()
   })
 })
