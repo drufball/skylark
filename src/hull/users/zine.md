@@ -10,13 +10,19 @@ Everyone who does anything on the ship is a **user**: you and your friends
 acts — sends a message, emits an event — resolves to a row here, and `actorId`
 columns elsewhere point back at it.
 
-This is the crew primitive landing **partially**. We build the data model and
-**actor resolution** — given a request or a CLI process, who is acting? — but
-**not** the compile-time crew-filter helper (the "every row knows its crew, by
-construction" enforcement promised in [`../zine.md`](../zine.md)). That
-enforcement is the load-bearing security invariant and is deliberately still
-ahead of us; this issue makes "who" a real, queryable thing so the rest of the
-ship can start attributing actions to people.
+The crew primitive landed in parts: first the data model and **actor
+resolution** — given a request or a CLI process, who is acting? — and now the
+**access enforcement** that the original primitive promised. Skylark is
+single-crew (everyone in `users` is the crew), so access is intra-crew: a
+resource is either public or visible to a specific set of users. We enforce that
+with **Postgres Row-Level Security** rather than a compile-time helper — the
+rule lives in the database, where (once the app connects as a non-superuser) a
+forgotten filter can't leak rows. `withActor` (hull/db) runs a request as a crew
+member: the non-superuser `app_user` role plus an `app.actor` GUC, and the
+policies filter to what that actor may see. Chat's policies land first, proven
+at the service layer; the doors and SSE stream adopt `withActor` to make
+enforcement live in the app, then issues (public) and agent sessions (by origin)
+follow.
 
 ## Components
 
@@ -56,11 +62,27 @@ survives a re-seed. Run it from a migration's data step or `npm run users seed`.
 
 ## Decisions
 
-- **The crew lands in two parts; this is part one.** Data model + actor
-  resolution now; the compile-time crew-filter helper later. Stated plainly so
-  the deferral is honest, not silent — the agent service already carries a known
-  single-tenant debt ([`../agent/zine.md`](../agent/zine.md)) waiting on exactly
-  that enforcement, and this issue does **not** discharge it.
+- **Enforcement is Postgres RLS, not a compile-time helper.** The original plan
+  named a "compile-time crew-filter helper"; we landed on **Row-Level Security**
+  instead. Reasons: it lives in the database (the lowest layer — so once the app
+  connects as a non-superuser, a service that forgets to filter still can't
+  leak), it keeps membership **normalized** (policies join to `chat_members`; no
+  per-row ACL to denormalize and re-sync), and the same rule that filters table
+  reads will gate the event stream (via a `canSee` probe) once that's wired. The
+  cost is real and accepted: the app must run as the non-superuser `app_user`
+  (the superuser bypasses RLS). Until the base connection is flipped to
+  `app_user` (a tracked follow-up), enforcement is by convention — every door
+  must remember `withActor` — rather than truly fail-closed; flipping it is what
+  makes a forgotten `withActor` see no rows.
+- **`withActor` is the one place identity meets the database.** A door resolves
+  who's acting and wraps its work in `withActor`; the services it calls receive
+  a transaction-scoped db and stay oblivious to access. Kept short by design —
+  never wrap a long-lived stream in one call (it holds a transaction open); the
+  SSE route wraps each db touch instead.
+- **The agent's single-tenant debt is being discharged.** The debt
+  ([`../agent/zine.md`](../agent/zine.md)) waited on exactly this enforcement;
+  chat lands first, agent sessions follow (visible by where they came from — an
+  issue's session is public, a chat's follows membership).
 - **Identity is ambient, resolved per context.** The web reads a cookie over the
   operator; the CLI reads an explicit `SKYLARK_ACTOR` over the operator. A
   cookie is a browser concept and is ignored in CLI context, so a stray cookie
@@ -79,6 +101,13 @@ survives a re-seed. Run it from a migration's data step or `npm run users seed`.
 
 ## Changelog
 
+- **#3** — Access enforcement lands as Postgres RLS, discharging the deferred
+  crew-filter promise. `withActor`/`runAsActor` (hull/db) run a request as a
+  crew member via the `app_user` role + an `app.actor` GUC; migration 0007 adds
+  the role and chat's membership policies (a chat, its roster, and its messages
+  are visible/writable only to members, enforced in the database). The chat
+  service is proven against it (`chat/access.test.ts`); the doors + SSE stream
+  adopt `withActor` next, then issues (public) and agent sessions (by origin).
 - **#2** — `profileId` wired to real agent profiles: `setUserProfile` and
   `assignDefaultAgentProfile` (idempotent; agents → the `chat` profile, humans
   untouched), called from the agent service's seed. The column stays FK-free to

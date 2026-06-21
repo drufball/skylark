@@ -2,6 +2,8 @@ import { type PgDatabase, type PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
+import { runAsActor } from './with-actor'
+
 /** Local default. Override with DATABASE_URL (see .env / .env.example). */
 export const DEFAULT_DATABASE_URL =
   'postgres://postgres:postgres@localhost:5432/skylark'
@@ -24,3 +26,17 @@ export const db: PostgresJsDatabase = drizzle(client)
 // query builder (`.select().from(...)`). Typing a service's db parameter as this
 // is what keeps the service driver-agnostic and testable against PGlite.
 export type Database = PgDatabase<PgQueryResultHKT>
+
+/**
+ * Run a unit of work as a crew member, with Row-Level Security filtering every
+ * query to what that actor may see. The web doors wrap their handlers in this;
+ * the services they call receive the transaction-scoped db and stay oblivious to
+ * access. Keep the unit short — see runAsActor for why a long-lived stream must
+ * not be wrapped whole.
+ */
+export function withActor<T>(
+  actorId: string,
+  fn: (db: Database) => Promise<T>,
+): Promise<T> {
+  return runAsActor(db, actorId, fn)
+}
