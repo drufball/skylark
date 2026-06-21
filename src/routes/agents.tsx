@@ -17,6 +17,7 @@ import {
   sendAgentMessage,
 } from '@hull/agent/server'
 import { listLocalModels } from '@hull/local-model/server'
+import { modelPickerOptions } from '@hull/local-model/service'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
 import {
   AgentProfiles,
@@ -55,11 +56,7 @@ export const Route = createFileRoute('/agents')({
       listLocalModels(),
       getDefaultModel(),
     ])
-    // Picker suggestions: installed local models (as provider-prefixed refs)
-    // plus the ship default, deduped.
-    const modelOptions = [
-      ...new Set([def.ref, ...local.installed.map((m) => `ollama/${m.name}`)]),
-    ]
+    const modelOptions = modelPickerOptions(def.ref, local.installed)
     const chat = deps.session
       ? await getAgentChat({ data: deps.session })
       : null

@@ -12,6 +12,11 @@ export interface InstalledModel {
   sizeBytes: number
 }
 
+/** The provider-prefixed runtime ref for an installed Ollama model. */
+export function localModelRef(model: InstalledModel): string {
+  return `ollama/${model.name}`
+}
+
 type FetchLike = (
   input: string,
   init?: { method?: string; headers?: Record<string, string>; body?: string },

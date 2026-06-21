@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { LOCAL_MODEL_CATALOG } from './catalog'
-import { detectHardware, selectModel, usableMemoryGB } from './service'
+import {
+  detectHardware,
+  modelPickerOptions,
+  selectModel,
+  usableMemoryGB,
+} from './service'
 import type { Hardware } from './service'
 
 function hw(overrides: Partial<Hardware>): Hardware {
@@ -152,5 +157,24 @@ describe('detectHardware', () => {
     expect(detected.isUnifiedMemory).toBe(false)
     expect(detected.vramGB).toBe(24)
     expect(detected.cpuCount).toBe(16)
+  })
+})
+
+describe('modelPickerOptions', () => {
+  it('lists the default first, then installed local models as refs', () => {
+    expect(
+      modelPickerOptions('ollama/qwen3:8b', [
+        { name: 'qwen3:8b', sizeBytes: 1 },
+        { name: 'qwen3-coder:30b', sizeBytes: 2 },
+      ]),
+    ).toEqual(['ollama/qwen3:8b', 'ollama/qwen3-coder:30b'])
+  })
+
+  it('keeps a hosted default and dedups it from the installed set', () => {
+    expect(
+      modelPickerOptions('anthropic/claude-sonnet-4-5', [
+        { name: 'qwen3:8b', sizeBytes: 1 },
+      ]),
+    ).toEqual(['anthropic/claude-sonnet-4-5', 'ollama/qwen3:8b'])
   })
 })
