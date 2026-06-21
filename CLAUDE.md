@@ -31,11 +31,12 @@ Start here:
 ./scripts/ensure-ollama  install/start Ollama, auto-pick & pull a model that fits (best-effort)
 npm run local-model      detect|select|catalog — what model fits this machine
 npm run dev              start the ship (port 3000)
-npm run check            format:check + lint + typecheck + test — "is the ship sound"
+npm run check            format:check + lint + knip + typecheck + test — "is the ship sound"
 npm test                 vitest — runs on PGlite, needs no database
 npm run coverage         vitest --coverage — global gate (threshold in vitest.config.ts)
 npm run coverage:diff    diff-cover (via uvx): are the lines you changed vs main tested?
 npm run coverage:check   coverage + coverage:diff — both gates, what the agent runs
+npm run knip             knip — dead-code gate: unused files/exports/deps (config in knip.json)
 npm run lint             eslint .            (lint:fix to autofix)
 npm run format           prettier --write .  (format:check to verify)
 npm run typecheck        tsc --noEmit

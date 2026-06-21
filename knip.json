@@ -1,0 +1,22 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/router.tsx",
+    "src/routes/**/*.{ts,tsx}",
+    "src/hull/**/cli.ts",
+    "src/hull/agent/extensions/build-gates/index.ts",
+    "e2e/**/*.ts",
+    "test-excludes.mjs"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "e2e/**/*.ts"],
+  "ignoreExportsUsedInFile": true,
+  "ignore": ["src/rigging/components/ui/**", "src/hull/users/server.ts"],
+  "ignoreDependencies": [
+    "tailwindcss",
+    "tw-animate-css",
+    "@tailwindcss/typography",
+    "@tanstack/react-router-ssr-query",
+    "@tanstack/router-plugin",
+    "@stryker-mutator/api"
+  ]
+}

@@ -115,6 +115,10 @@ export const getAgentChat = createServerFn({ method: 'GET' })
  * state, "file an issue to build"). The builder profile, which can write, is
  * driven by M3's building agents, not this door. Falls back to the runtime
  * default if the chat profile hasn't been seeded (`npm run agent seed`).
+ *
+ * @public — forward-built door, not yet wired to a route. Kept intentionally;
+ * knip's unused-export gate respects @public. To be wired by the user-management
+ * UI work (see board issue).
  */
 export const startAgentChat = createServerFn({ method: 'POST' })
   .validator((input: { text: string; model?: string }) => input)
