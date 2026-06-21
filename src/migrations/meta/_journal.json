@@ -57,6 +57,13 @@
       "when": 1782041602570,
       "tag": "0007_crew_access",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782052785099,
+      "tag": "0008_agent_session_rls",
+      "breakpoints": true
     }
   ]
 }
