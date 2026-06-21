@@ -9,6 +9,7 @@
     "agent": "node --env-file=.env --import tsx src/hull/agent/cli.ts",
     "users": "node --env-file=.env --import tsx src/hull/users/cli.ts",
     "issue": "node --env-file=.env --import tsx src/hull/issues/cli.ts",
+    "local-model": "node --import tsx src/hull/local-model/cli.ts",
     "build": "vite build",
     "start": "node .output/server/index.mjs",
     "preview": "vite preview",
