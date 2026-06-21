@@ -17,6 +17,13 @@ describe('parseModelRef', () => {
     })
   })
 
+  it('trims surrounding whitespace', () => {
+    expect(parseModelRef('  ollama/qwen3:8b  ')).toEqual({
+      provider: 'ollama',
+      modelId: 'qwen3:8b',
+    })
+  })
+
   it('splits provider/model on the first slash, keeping ollama tags intact', () => {
     // Ollama tags carry a colon (qwen3-coder:30b) but never a slash.
     expect(parseModelRef('ollama/qwen3-coder:30b')).toEqual({
@@ -32,29 +39,46 @@ describe('parseModelRef', () => {
     })
   })
 
-  it('rejects an empty provider or model id', () => {
-    expect(() => parseModelRef('')).toThrow()
-    expect(() => parseModelRef('ollama/')).toThrow()
-    expect(() => parseModelRef('/qwen3:8b')).toThrow()
+  it('rejects an empty id', () => {
+    expect(() => parseModelRef('')).toThrow(/empty/i)
+    expect(() => parseModelRef('   ')).toThrow(/empty/i)
+  })
+
+  it('rejects a malformed ref with an empty provider or model id', () => {
+    expect(() => parseModelRef('ollama/')).toThrow(/malformed/i)
+    expect(() => parseModelRef('/qwen3:8b')).toThrow(/malformed/i)
   })
 })
 
 describe('ollamaBaseUrl', () => {
-  it('defaults to the local Ollama OpenAI endpoint', () => {
-    expect(ollamaBaseUrl({})).toBe(DEFAULT_OLLAMA_BASE_URL)
+  it('defaults to the loopback Ollama OpenAI endpoint', () => {
+    expect(ollamaBaseUrl({})).toBe('http://127.0.0.1:11434/v1')
+    expect(DEFAULT_OLLAMA_BASE_URL).toBe('http://127.0.0.1:11434/v1')
   })
 
-  it('honors an explicit OLLAMA_BASE_URL', () => {
-    expect(ollamaBaseUrl({ OLLAMA_BASE_URL: 'http://gpu-box:1234/v1' })).toBe(
-      'http://gpu-box:1234/v1',
-    )
+  it('honors an explicit OLLAMA_BASE_URL, trimming whitespace', () => {
+    expect(
+      ollamaBaseUrl({ OLLAMA_BASE_URL: '  http://gpu-box:1234/v1  ' }),
+    ).toBe('http://gpu-box:1234/v1')
   })
 
-  it('normalizes OLLAMA_HOST (Ollama’s own env) into an OpenAI /v1 url', () => {
-    expect(ollamaBaseUrl({ OLLAMA_HOST: '10.0.0.5:11434' })).toBe(
+  it('normalizes a bare host[:port] OLLAMA_HOST into an http /v1 url', () => {
+    expect(ollamaBaseUrl({ OLLAMA_HOST: '  10.0.0.5:11434  ' })).toBe(
       'http://10.0.0.5:11434/v1',
     )
-    expect(ollamaBaseUrl({ OLLAMA_HOST: 'https://ollama.lan/' })).toBe(
+  })
+
+  it('keeps an http(s) scheme already on OLLAMA_HOST', () => {
+    expect(ollamaBaseUrl({ OLLAMA_HOST: 'http://box:11434' })).toBe(
+      'http://box:11434/v1',
+    )
+    expect(ollamaBaseUrl({ OLLAMA_HOST: 'https://ollama.lan' })).toBe(
+      'https://ollama.lan/v1',
+    )
+  })
+
+  it('strips all trailing slashes before appending /v1', () => {
+    expect(ollamaBaseUrl({ OLLAMA_HOST: 'https://ollama.lan//' })).toBe(
       'https://ollama.lan/v1',
     )
   })
@@ -78,16 +102,26 @@ describe('resolveModel', () => {
 
   it('builds an Ollama model as an OpenAI-compatible, zero-cost local model', () => {
     const model = resolveModel('ollama/qwen3-coder:30b', {})
-    expect(model.provider).toBe('ollama')
-    expect(model.api).toBe('openai-completions')
-    expect(model.id).toBe('qwen3-coder:30b')
-    expect(model.baseUrl).toBe(DEFAULT_OLLAMA_BASE_URL)
-    // Local inference is free — cost stays zero so usage accounting never bills.
-    expect(model.cost).toEqual({
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
+    expect(model).toEqual({
+      id: 'qwen3-coder:30b',
+      name: 'qwen3-coder:30b',
+      api: 'openai-completions',
+      provider: 'ollama',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      reasoning: false,
+      input: ['text'],
+      // Local inference is free — zero cost so usage accounting never bills.
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 32768,
+      maxTokens: 8192,
+      // OpenAI-platform-only features Ollama doesn't implement, off so they
+      // don't break requests or tool calls.
+      compat: {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        supportsStrictMode: false,
+      },
     })
   })
 
