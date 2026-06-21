@@ -61,10 +61,13 @@ export default defineConfig(
   },
   // …except the fixed system plumbing that legitimately needs all rows: the
   // agent runtime (persists transcripts) and the orchestrators (reconcile +
-  // drive the runtime). A fourth importer has to consciously join this list.
+  // drive the runtime). The agent CLI drives that same runtime (new/send/cancel
+  // a turn) and so runs it on systemDb too — its discrete queries still go
+  // through `db` + `withCliActor`. A further importer has to consciously join.
   {
     files: [
       'src/hull/agent/server.ts',
+      'src/hull/agent/cli.ts',
       'src/hull/chat/orchestrator-live.ts',
       'src/hull/issues/orchestrator-live.ts',
     ],

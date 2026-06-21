@@ -1,8 +1,9 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
-import { db } from '@hull/db/client'
+import { systemDb } from '@hull/db/client'
 import { isMain, runCli } from '@hull/lib/cli'
+import { withCliActor } from '@hull/users/actor'
 
 import {
   listExtensions,
@@ -81,10 +82,16 @@ async function cmdNew(args: string[]): Promise<void> {
   if (!message) throw new Error('usage: agent new <message> [--model <id>]')
 
   const id = uuidv7()
-  await createSession(db, { id, model, title: titleFromMessage(message) })
+  await withCliActor((tx) =>
+    createSession(tx, { id, model, title: titleFromMessage(message) }),
+  )
   process.stdout.write(`${DIM}session ${id} · ${model}${RESET}\n`)
 
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
+  // The turn itself is long-lived system plumbing — it persists the transcript
+  // for this one session — so it runs on systemDb, not wrapped in withCliActor
+  // (a turn must not be a single long transaction; see runAsActor). Same posture
+  // as the server's runtime.
+  const runtime = createAgentRuntime({ db: systemDb, factory: createPiSession })
   await runtime.runTurn(id, message, renderEvent)
   runtime.disposeAll()
 }
@@ -95,10 +102,13 @@ async function cmdSend(args: string[]): Promise<void> {
   if (!id || !message)
     throw new Error('usage: agent send <session-id> <message>')
 
-  const session = await getSession(db, id)
+  // Resolve under the actor: you can only send to a session your identity may
+  // see (a private chat's backing session stays hidden, rather than reachable
+  // via a permissive policy).
+  const session = await withCliActor((tx) => getSession(tx, id))
   if (!session) throw new Error(`No such session: ${id}`)
 
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
+  const runtime = createAgentRuntime({ db: systemDb, factory: createPiSession })
   await runtime.runTurn(id, message, renderEvent)
   runtime.disposeAll()
 }
@@ -109,10 +119,12 @@ async function cmdList(args: string[]): Promise<void> {
   rest = rest.filter((a) => a !== '--running')
   const [since] = takeFlag(rest, '--since')
 
-  const sessions = await listSessions(db, {
-    running,
-    since: since ? new Date(since) : undefined,
-  })
+  const sessions = await withCliActor((tx) =>
+    listSessions(tx, {
+      running,
+      since: since ? new Date(since) : undefined,
+    }),
+  )
 
   if (sessions.length === 0) {
     process.stdout.write('No sessions.\n')
@@ -134,22 +146,23 @@ async function cmdCancel(args: string[]): Promise<void> {
   // A fresh CLI process doesn't host the live turn (the web server does), so
   // this resets the stored status to idle. When the hosting process runs this
   // it also aborts the in-flight turn.
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
+  const runtime = createAgentRuntime({ db: systemDb, factory: createPiSession })
   await runtime.cancel(id)
   process.stdout.write(`Cancelled ${id}.\n`)
 }
 
 async function cmdSeed(): Promise<void> {
-  await seedAndWireProfiles(db)
-  const profiles = await listProfiles(db)
-  const exts = await listExtensions(db)
+  const { profiles, exts } = await withCliActor(async (tx) => {
+    await seedAndWireProfiles(tx)
+    return { profiles: await listProfiles(tx), exts: await listExtensions(tx) }
+  })
   process.stdout.write(
     `Seeded ${String(profiles.length)} profile(s), ${String(exts.length)} extension(s); agents → chat profile.\n`,
   )
 }
 
 async function cmdProfiles(): Promise<void> {
-  const profiles = await listProfiles(db)
+  const profiles = await withCliActor((tx) => listProfiles(tx))
   if (profiles.length === 0) {
     process.stdout.write('No profiles — run `npm run agent seed`.\n')
     return
@@ -170,15 +183,17 @@ async function cmdExtensions(args: string[]): Promise<void> {
       throw new Error(
         'usage: agent extensions register <name> <path> [description]',
       )
-    const row = await registerExtension(db, {
-      name,
-      path,
-      description: descParts.join(' ') || name,
-    })
+    const row = await withCliActor((tx) =>
+      registerExtension(tx, {
+        name,
+        path,
+        description: descParts.join(' ') || name,
+      }),
+    )
     process.stdout.write(`Registered ${row.name} ${DIM}${row.id}${RESET}\n`)
     return
   }
-  const exts = await listExtensions(db)
+  const exts = await withCliActor((tx) => listExtensions(tx))
   if (exts.length === 0) {
     process.stdout.write('No extensions — run `npm run agent seed`.\n')
     return
