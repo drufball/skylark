@@ -3,13 +3,13 @@ import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import { createServerFn } from '@tanstack/react-start'
 
 import { db } from '@hull/db/client'
-import { canSeeTopic } from '@hull/access/visibility'
+import { canSeeSession } from '@hull/access/visibility'
 import { errorMessage } from '@hull/lib/errors'
 import { currentActor } from '@hull/users/actor'
 
 import { defaultModelRef } from './models'
 import { isHostedProvider, providersWithStatus } from './providers'
-import { type AgentRuntime, DEFAULT_MODEL, sessionScope } from './runtime'
+import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
 import { createServerRuntime } from './fake-session'
 import {
   CHAT_PROFILE,
@@ -65,7 +65,12 @@ function fireTurn(sessionId: string, text: string): void {
  */
 async function actorCanSeeSession(sessionId: string): Promise<boolean> {
   const actor = await currentActor()
-  return canSeeTopic(db, actor.id, sessionScope(sessionId))
+  return canSeeSession(db, actor.id, sessionId)
+}
+
+/** Refuse an action on a session the actor can't see. */
+function notAllowed(): never {
+  throw new Error('not allowed')
 }
 
 /** Sessions the current actor may see, newest activity first — the sidebar. */
@@ -74,7 +79,7 @@ export const listAgentSessions = createServerFn({ method: 'GET' }).handler(
     const actor = await currentActor()
     const sessions = await listSessions(db)
     const visible = await Promise.all(
-      sessions.map((s) => canSeeTopic(db, actor.id, sessionScope(s.id))),
+      sessions.map((s) => canSeeSession(db, actor.id, s.id)),
     )
     return sessions.filter((_, i) => visible[i])
   },
@@ -122,8 +127,7 @@ export const sendAgentMessage = createServerFn({ method: 'POST' })
   .validator((input: { sessionId: string; text: string }) => input)
   .handler(async ({ data }) => {
     // Can't poke a session you can't see — e.g. a private chat's backing agent.
-    if (!(await actorCanSeeSession(data.sessionId)))
-      throw new Error('not allowed')
+    if (!(await actorCanSeeSession(data.sessionId))) notAllowed()
     fireTurn(data.sessionId, data.text)
     return { ok: true }
   })
@@ -132,7 +136,7 @@ export const sendAgentMessage = createServerFn({ method: 'POST' })
 export const cancelAgentChat = createServerFn({ method: 'POST' })
   .validator((sessionId: string) => sessionId)
   .handler(async ({ data: sessionId }) => {
-    if (!(await actorCanSeeSession(sessionId))) throw new Error('not allowed')
+    if (!(await actorCanSeeSession(sessionId))) notAllowed()
     await runtime().cancel(sessionId)
     return { ok: true }
   })
