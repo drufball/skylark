@@ -10,10 +10,19 @@ import type { Database } from './client'
 //
 // Mechanism: a transaction that drops to the non-superuser `app_user` role and
 // sets the `app.actor` GUC, both LOCAL so they're scoped to this transaction and
-// can never leak across a pooled connection. (The live `db` connects as the
-// superuser, which BYPASSES RLS — so the `set local role` is what makes the
-// policies actually apply. Forgetting it fails OPEN; forgetting `withActor`
-// entirely on an RLS table, while connected as app_user, fails CLOSED.)
+// can never leak across a pooled connection. The `set local role` is what makes
+// the policies apply at all, because the live `db` connects as the superuser,
+// which BYPASSES RLS.
+//
+// FAIL MODE, honestly: because the base connection is the superuser, a door that
+// forgets `withActor` fails OPEN today (it reads as superuser and RLS is
+// bypassed) — so the "a forgotten filter can't leak" guarantee is currently by
+// convention (wrap every door), not by construction. The load-bearing follow-up
+// that makes it truly fail-closed is to make the app's normal connection a
+// NON-superuser (app_user), with a separate superuser handle for the few paths
+// that need all rows (migrations, seed, the orchestrator's reconcile). Then
+// `withActor` only sets the actor GUC, and forgetting it sees a NULL actor →
+// the membership check matches nothing → no rows. Tracked, not done here.
 //
 // Keep the wrapped unit SHORT — never wrap a long-lived stream in one call, or
 // you hold a transaction open for the life of the connection. The SSE route

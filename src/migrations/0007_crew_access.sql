@@ -61,6 +61,18 @@ grant execute on function app_is_chat_member(text, text) to app_user;
 --> statement-breakpoint
 grant execute on function app_chat_has_members(text) to app_user;
 --> statement-breakpoint
+-- The actual policy predicate, named once: "may the current actor see this
+-- chat?" Reads the app.actor GUC and defers to the membership check, so every
+-- chat-scoped policy is `using (app_can_see_chat(<chat id>))` rather than
+-- re-typing the GUC read + join — and future chat-scoped tables reuse it.
+create function app_can_see_chat(p_chat text)
+  returns boolean language sql stable security definer
+  set search_path = public as $$
+    select app_is_chat_member(p_chat, current_setting('app.actor', true))
+  $$;
+--> statement-breakpoint
+grant execute on function app_can_see_chat(text) to app_user;
+--> statement-breakpoint
 
 -- --- chats: a chat is visible only to its members -----------------------------
 alter table "chats" enable row level security;
@@ -68,14 +80,14 @@ alter table "chats" enable row level security;
 alter table "chats" force row level security;
 --> statement-breakpoint
 create policy "chats_select" on "chats" for select using (
-  app_is_chat_member("chats".id, current_setting('app.actor', true)));
+  app_can_see_chat("chats".id));
 --> statement-breakpoint
 -- A brand-new chat has no members yet; createChat adds them in the same
 -- transaction, after which it's only visible to those members.
 create policy "chats_insert" on "chats" for insert with check (true);
 --> statement-breakpoint
 create policy "chats_update" on "chats" for update using (
-  app_is_chat_member("chats".id, current_setting('app.actor', true)));
+  app_can_see_chat("chats".id));
 --> statement-breakpoint
 
 -- --- chat_members: the roster of a chat you're in -----------------------------
@@ -84,20 +96,20 @@ alter table "chat_members" enable row level security;
 alter table "chat_members" force row level security;
 --> statement-breakpoint
 create policy "chat_members_select" on "chat_members" for select using (
-  app_is_chat_member("chat_members".chat_id, current_setting('app.actor', true)));
+  app_can_see_chat("chat_members".chat_id));
 --> statement-breakpoint
 -- You may add members to a chat you're already in; the bootstrap clause lets the
 -- creator seed a brand-new (memberless) chat. This blocks the escalation of
 -- inserting yourself into someone else's populated chat to read it.
 create policy "chat_members_insert" on "chat_members" for insert with check (
-  app_is_chat_member("chat_members".chat_id, current_setting('app.actor', true))
+  app_can_see_chat("chat_members".chat_id)
   or not app_chat_has_members("chat_members".chat_id));
 --> statement-breakpoint
 create policy "chat_members_update" on "chat_members" for update using (
-  app_is_chat_member("chat_members".chat_id, current_setting('app.actor', true)));
+  app_can_see_chat("chat_members".chat_id));
 --> statement-breakpoint
 create policy "chat_members_delete" on "chat_members" for delete using (
-  app_is_chat_member("chat_members".chat_id, current_setting('app.actor', true)));
+  app_can_see_chat("chat_members".chat_id));
 --> statement-breakpoint
 
 -- --- chat_messages: read + post only within chats you're in -------------------
@@ -106,7 +118,7 @@ alter table "chat_messages" enable row level security;
 alter table "chat_messages" force row level security;
 --> statement-breakpoint
 create policy "chat_messages_select" on "chat_messages" for select using (
-  app_is_chat_member("chat_messages".chat_id, current_setting('app.actor', true)));
+  app_can_see_chat("chat_messages".chat_id));
 --> statement-breakpoint
 create policy "chat_messages_insert" on "chat_messages" for insert with check (
-  app_is_chat_member("chat_messages".chat_id, current_setting('app.actor', true)));
+  app_can_see_chat("chat_messages".chat_id));

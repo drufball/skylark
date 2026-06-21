@@ -41,9 +41,10 @@ action is attributed to), the issues board (and its building agents), and chat
   crew it belongs to. Skylark is single-crew, so access is intra-crew (public,
   or a specific set of users). Enforced with **Postgres Row-Level Security**,
   not a compile-time helper: `withActor` (`db/with-actor.ts`) runs a request as
-  the non-superuser `app_user` with an `app.actor` GUC, and policies filter
-  every query in the database itself. The data model + actor resolution live in
-  the users service; the RLS enforcement lands per service (chat first — see
+  the non-superuser `app_user` with an `app.actor` GUC, and policies filter its
+  queries in the database itself. The data model + actor resolution live in the
+  users service; the RLS policies land per service (chat first), and a service
+  is enforced live once its doors adopt `withActor` (see
   [`users/zine.md`](users/zine.md)). The agent service's single-tenant debt is
   discharged as its sessions come under policy.
 

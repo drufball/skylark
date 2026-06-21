@@ -16,10 +16,13 @@ resolution** — given a request or a CLI process, who is acting? — and now th
 single-crew (everyone in `users` is the crew), so access is intra-crew: a
 resource is either public or visible to a specific set of users. We enforce that
 with **Postgres Row-Level Security** rather than a compile-time helper — the
-guarantee lives in the database, so a forgotten filter in a service can't leak
-rows. `withActor` (hull/db) runs a request as a crew member (the non-superuser
-`app_user` role + an `app.actor` GUC), and policies filter every query. Chat is
-the first service enforced this way; issues and agent sessions follow.
+rule lives in the database, where (once the app connects as a non-superuser) a
+forgotten filter can't leak rows. `withActor` (hull/db) runs a request as a crew
+member: the non-superuser `app_user` role plus an `app.actor` GUC, and the
+policies filter to what that actor may see. Chat's policies land first, proven
+at the service layer; the doors and SSE stream adopt `withActor` to make
+enforcement live in the app, then issues (public) and agent sessions (by origin)
+follow.
 
 ## Components
 
@@ -61,12 +64,16 @@ survives a re-seed. Run it from a migration's data step or `npm run users seed`.
 
 - **Enforcement is Postgres RLS, not a compile-time helper.** The original plan
   named a "compile-time crew-filter helper"; we landed on **Row-Level Security**
-  instead. Reasons: it's enforced in the database (the lowest layer — a service
-  that forgets to filter still can't leak), it keeps membership **normalized**
-  (policies join to `chat_members`; no per-row ACL to denormalize and re-sync),
-  and a single uniform rule covers both table reads and event-stream gating. The
+  instead. Reasons: it lives in the database (the lowest layer — so once the app
+  connects as a non-superuser, a service that forgets to filter still can't
+  leak), it keeps membership **normalized** (policies join to `chat_members`; no
+  per-row ACL to denormalize and re-sync), and the same rule that filters table
+  reads will gate the event stream (via a `canSee` probe) once that's wired. The
   cost is real and accepted: the app must run as the non-superuser `app_user`
-  (the superuser bypasses RLS), and each request sets the actor via `withActor`.
+  (the superuser bypasses RLS). Until the base connection is flipped to
+  `app_user` (a tracked follow-up), enforcement is by convention — every door
+  must remember `withActor` — rather than truly fail-closed; flipping it is what
+  makes a forgotten `withActor` see no rows.
 - **`withActor` is the one place identity meets the database.** A door resolves
   who's acting and wraps its work in `withActor`; the services it calls receive
   a transaction-scoped db and stay oblivious to access. Kept short by design —
