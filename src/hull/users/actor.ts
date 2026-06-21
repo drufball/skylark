@@ -73,4 +73,24 @@ export async function withCurrentActor<T>(
   const me = await currentActor()
   return withActor(me.id, (tx) => fn(tx, me))
 }
+
+/**
+ * The CLI counterpart to `withCurrentActor`: resolve who the CLI/agent process
+ * is acting as (`cliActor()` — SKYLARK_ACTOR or the operator), then run the work
+ * under that actor's RLS context, handing the callback the scoped db + actor
+ * row. So a CLI command reads only what its identity may see (fail closed),
+ * rather than leaning on a permissive policy. Throws if no actor resolves —
+ * the same message the doors used to inline. Keep the unit short: never wrap a
+ * long-lived runtime turn in this (see runAsActor); those run on `systemDb`.
+ */
+export async function withCliActor<T>(
+  fn: (db: Database, me: UserRow) => Promise<T>,
+): Promise<T> {
+  const me = await cliActor()
+  if (!me)
+    throw new Error(
+      'No actor resolved — seed the crew (`npm run users seed`) or set SKYLARK_ACTOR.',
+    )
+  return withActor(me.id, (tx) => fn(tx, me))
+}
 /* v8 ignore stop */

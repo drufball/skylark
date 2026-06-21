@@ -1,6 +1,5 @@
-import { db } from '@hull/db/client'
 import { isMain, runCli } from '@hull/lib/cli'
-import { cliActor } from '@hull/users/actor'
+import { withCliActor } from '@hull/users/actor'
 import { getUserById } from '@hull/users/service'
 
 import {
@@ -53,28 +52,19 @@ export function parseNewArgs(args: string[]): [string, string | undefined] {
   return [titleParts.join(' ').trim(), body]
 }
 
-/** The acting user, or throw a friendly error if the crew isn't seeded. */
-async function actor(): Promise<{ id: string; handle: string }> {
-  const a = await cliActor()
-  if (!a)
-    throw new Error(
-      'No actor resolved — seed the crew (`npm run users seed`) or set SKYLARK_ACTOR.',
-    )
-  return a
-}
-
 async function cmdNew(args: string[]): Promise<void> {
   const [title, body] = parseNewArgs(args)
   if (!title) throw new Error('usage: issue new <title> [--body <text>]')
-  const me = await actor()
-  const issue = await createIssue(db, { title, body, authorId: me.id })
+  const issue = await withCliActor((tx, me) =>
+    createIssue(tx, { title, body, authorId: me.id }),
+  )
   process.stdout.write(
     `Opened #${issue.nano} ${DIM}${issue.id}${RESET}\n${issue.title}\n`,
   )
 }
 
 async function cmdList(): Promise<void> {
-  const list = await listIssues(db)
+  const list = await withCliActor((tx) => listIssues(tx))
   if (list.length === 0) {
     process.stdout.write('No issues — open one with `npm run issue new`.\n')
     return
@@ -90,47 +80,57 @@ async function cmdList(): Promise<void> {
 async function cmdShow(args: string[]): Promise<void> {
   const [ref] = args
   if (!ref) throw new Error('usage: issue show <id>')
-  const issue = await resolveIssueRef(db, ref)
-  if (!issue) throw new Error(`No such issue: ${ref}`)
-  const author = await getUserById(db, issue.authorId)
-  process.stdout.write(
-    `${STATUS_MARK[issue.status]} #${issue.nano} ${issue.title}  ${DIM}[${issue.status}]${RESET}\n` +
-      `${DIM}by @${author?.handle ?? '?'} · ${issue.id}${RESET}\n`,
-  )
-  if (issue.branchName)
-    process.stdout.write(`${DIM}branch ${issue.branchName}${RESET}\n`)
-  if (issue.body) process.stdout.write(`\n${issue.body}\n`)
-  const comments = await listComments(db, issue.id)
-  for (const c of comments) {
-    const who = await getUserById(db, c.authorId)
-    process.stdout.write(`\n${DIM}@${who?.handle ?? '?'}:${RESET} ${c.body}\n`)
-  }
+  await withCliActor(async (tx) => {
+    const issue = await resolveIssueRef(tx, ref)
+    if (!issue) throw new Error(`No such issue: ${ref}`)
+    const author = await getUserById(tx, issue.authorId)
+    process.stdout.write(
+      `${STATUS_MARK[issue.status]} #${issue.nano} ${issue.title}  ${DIM}[${issue.status}]${RESET}\n` +
+        `${DIM}by @${author?.handle ?? '?'} · ${issue.id}${RESET}\n`,
+    )
+    if (issue.branchName)
+      process.stdout.write(`${DIM}branch ${issue.branchName}${RESET}\n`)
+    if (issue.body) process.stdout.write(`\n${issue.body}\n`)
+    const comments = await listComments(tx, issue.id)
+    for (const c of comments) {
+      const who = await getUserById(tx, c.authorId)
+      process.stdout.write(
+        `\n${DIM}@${who?.handle ?? '?'}:${RESET} ${c.body}\n`,
+      )
+    }
+  })
 }
 
 async function cmdComment(args: string[]): Promise<void> {
   const [ref, ...bodyParts] = args
   const body = bodyParts.join(' ').trim()
   if (!ref || !body) throw new Error('usage: issue comment <id> <text>')
-  const issue = await resolveIssueRef(db, ref)
-  if (!issue) throw new Error(`No such issue: ${ref}`)
-  const me = await actor()
-  await addComment(db, { issueId: issue.id, authorId: me.id, body })
-  process.stdout.write(`Commented on #${issue.nano} as @${me.handle}.\n`)
+  const { nano, handle } = await withCliActor(async (tx, me) => {
+    const issue = await resolveIssueRef(tx, ref)
+    if (!issue) throw new Error(`No such issue: ${ref}`)
+    await addComment(tx, { issueId: issue.id, authorId: me.id, body })
+    return { nano: issue.nano, handle: me.handle }
+  })
+  process.stdout.write(`Commented on #${nano} as @${handle}.\n`)
 }
 
 /** Move an issue to a status. Shared by `status <id> <word>` and the verbs. */
 async function transitionTo(ref: string, word: string): Promise<void> {
   const to = resolveStatusWord(word)
   if (!to) throw new Error(`Unknown status: ${word} (open|building|done|close)`)
-  const issue = await resolveIssueRef(db, ref)
-  if (!issue) throw new Error(`No such issue: ${ref}`)
-  const me = await actor()
-  const moved = await transitionIssue(db, {
-    issueId: issue.id,
-    to,
-    actorId: me.id,
+  const { moved, handle } = await withCliActor(async (tx, me) => {
+    const issue = await resolveIssueRef(tx, ref)
+    if (!issue) throw new Error(`No such issue: ${ref}`)
+    return {
+      moved: await transitionIssue(tx, {
+        issueId: issue.id,
+        to,
+        actorId: me.id,
+      }),
+      handle: me.handle,
+    }
   })
-  process.stdout.write(`#${moved.nano} → ${moved.status} (by @${me.handle})\n`)
+  process.stdout.write(`#${moved.nano} → ${moved.status} (by @${handle})\n`)
 }
 
 async function cmdStatus(args: string[]): Promise<void> {
