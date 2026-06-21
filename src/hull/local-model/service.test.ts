@@ -72,6 +72,24 @@ describe('selectModel', () => {
     const sel = selectModel(hw({ isUnifiedMemory: true, totalMemGB: 4 }))
     expect(sel.model).toBe(LOCAL_MODEL_CATALOG[0].model)
     expect(sel.fitsComfortably).toBe(false)
+    expect(sel.reason).toMatch(/tight fit/i)
+  })
+
+  it('explains a comfortable choice with the budget and label', () => {
+    const sel = selectModel(hw({ isUnifiedMemory: true, totalMemGB: 32 }))
+    expect(sel.reason).toContain('22.4GB usable')
+    expect(sel.reason).toContain('Qwen3-Coder')
+  })
+
+  it('treats a model that needs exactly the usable budget as fitting (inclusive)', () => {
+    // Boundary: minMemGB === usable must select the model (<=, not <).
+    const catalog = [
+      { model: 'exact', minMemGB: 24, label: 'Exact', notes: '' },
+      { model: 'too-big', minMemGB: 25, label: 'Too big', notes: '' },
+    ]
+    const sel = selectModel(hw({ vramGB: 24 }), catalog)
+    expect(sel.model).toBe('exact')
+    expect(sel.fitsComfortably).toBe(true)
   })
 
   it('always selects a model that exists in the catalog', () => {
@@ -94,6 +112,17 @@ describe('detectHardware', () => {
     expect(detected.totalMemGB).toBe(32)
     expect(detected.vramGB).toBeUndefined()
     expect(detectVramGB).not.toHaveBeenCalled()
+  })
+
+  it('does NOT treat an Intel Mac as unified memory (needs both darwin AND arm64)', async () => {
+    const detected = await detectHardware({
+      platform: () => 'darwin',
+      arch: () => 'x64',
+      totalmem: () => 16 * 1e9,
+      cpus: () => Array.from({ length: 8 }),
+      detectVramGB: () => Promise.resolve(undefined),
+    })
+    expect(detected.isUnifiedMemory).toBe(false)
   })
 
   it('probes VRAM on a discrete-GPU Linux box', async () => {
