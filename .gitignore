@@ -26,6 +26,10 @@ coverage/
 reports/
 .stryker-tmp/
 
+# smoke tests (Playwright) — run artifacts, never committed
+test-results/
+playwright-report/
+
 # logs & OS cruft
 *.log
 .DS_Store

@@ -9,7 +9,8 @@ import { completeSimple } from '@earendil-works/pi-ai'
 import { db } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
 import { findHostedModel } from '@hull/agent/models'
-import { createAgentRuntime, createPiSession } from '@hull/agent/runtime'
+import { createAgentRuntime } from '@hull/agent/runtime'
+import { resolveSessionFactory } from '@hull/agent/fake-session'
 import { getUserByHandle } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
 
@@ -165,7 +166,7 @@ export async function ensureOrchestrator(): Promise<Orchestrator> {
   const builder =
     (await getUserByHandle(db, 'builder')) ??
     (await getUserByHandle(db, 'drufball'))
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
+  const runtime = createAgentRuntime({ db, factory: resolveSessionFactory() })
 
   const orch = createOrchestrator({
     db,
