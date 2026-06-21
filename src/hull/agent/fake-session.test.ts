@@ -37,6 +37,28 @@ describe('resolveSessionFactory', () => {
   })
 })
 
+describe('the fake session surface', () => {
+  it('emits the turn boundaries on prompt and stays inert elsewhere', async () => {
+    const session = await createFakeSession()
+    const events: string[] = []
+    const unsubscribe = session.subscribe((e) => events.push(e.type))
+
+    await session.prompt('build this\nand more')
+    expect(session.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(events).toEqual(['turn_end', 'agent_end'])
+
+    // The lifecycle methods are inert (no network, no throw) — a smoke run can
+    // open, drive, and tear down a session without surprises.
+    await expect(session.followUp('again')).resolves.toBeUndefined()
+    await expect(session.abort()).resolves.toBeUndefined()
+    expect(session.isStreaming).toBe(false)
+    unsubscribe()
+    expect(() => {
+      session.dispose()
+    }).not.toThrow()
+  })
+})
+
 describe('createFakeSession driven through the runtime', () => {
   let db: Database
   let close: () => Promise<void>
