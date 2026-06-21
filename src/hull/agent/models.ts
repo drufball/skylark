@@ -3,8 +3,8 @@ import type { Api, KnownProvider, Model } from '@earendil-works/pi-ai'
 
 // Provider-aware model resolution. A stored model is a string the runtime hands
 // to pi.dev; this module turns that string into a concrete pi `Model`, picking
-// the provider from a `provider/modelId` prefix. Anthropic models come from
-// pi-ai's built-in registry; Ollama models are local and built on the fly,
+// the provider from a `provider/modelId` prefix. Hosted-provider models come
+// from pi-ai's built-in registry; Ollama models are local and built on the fly,
 // since the locally-pulled set is whatever the machine has downloaded — there's
 // no fixed catalog to enumerate.
 
@@ -114,13 +114,18 @@ function envInt(
 }
 
 /**
- * Find the first Anthropic model matching one of `ids`, or undefined. The one
- * place that knows Anthropic models come from pi-ai's registry: `resolveModel`
- * throws on a miss, while a tolerant caller (e.g. the issue slug generator,
- * which tries candidate ids and degrades gracefully) takes the undefined.
+ * Find the first model matching one of `ids` in a hosted provider's pi-ai
+ * registry, or undefined (unknown provider included). The one place that knows
+ * hosted models come from the registry: `resolveHosted` throws on a miss, while
+ * a tolerant caller (e.g. the issue slug generator, which tries candidate ids
+ * and degrades gracefully) takes the undefined.
  */
-export function findAnthropicModel(ids: string[]): Model<Api> | undefined {
-  const models = getModels('anthropic')
+export function findHostedModel(
+  provider: string,
+  ids: string[],
+): Model<Api> | undefined {
+  if (!getProviders().includes(provider as KnownProvider)) return undefined
+  const models = getModels(provider as KnownProvider)
   for (const id of ids) {
     const model = models.find((m) => m.id === id)
     if (model) return model
@@ -133,15 +138,20 @@ export function findAnthropicModel(ids: string[]): Model<Api> | undefined {
  * OpenRouter, …) against its registry, or throw if the provider or model id is
  * unknown. These are the hosted providers a crew member reaches by adding an
  * API key; the key is resolved at session boot from the environment, not here.
+ * `ref` is the original string, threaded through only to keep error messages
+ * pointing at what the crew member actually typed.
  */
-function resolveHosted(provider: string, modelId: string): Model<Api> {
+function resolveHosted(
+  provider: string,
+  modelId: string,
+  ref: string,
+): Model<Api> {
   if (!getProviders().includes(provider as KnownProvider)) {
-    throw new Error(`Unknown model provider "${provider}"`)
+    throw new Error(`Unknown model provider "${provider}" in "${ref}"`)
   }
-  const model = getModels(provider as KnownProvider).find(
-    (m) => m.id === modelId,
-  )
-  if (!model) throw new Error(`Unknown ${provider} model: ${modelId}`)
+  const model = findHostedModel(provider, [modelId])
+  if (!model)
+    throw new Error(`Unknown ${provider} model "${modelId}" in "${ref}"`)
   return model
 }
 
@@ -194,5 +204,5 @@ export function resolveModel(
 ): Model<Api> {
   const { provider, modelId } = parseModelRef(ref)
   if (provider === 'ollama') return resolveOllama(modelId, env)
-  return resolveHosted(provider, modelId)
+  return resolveHosted(provider, modelId, ref)
 }

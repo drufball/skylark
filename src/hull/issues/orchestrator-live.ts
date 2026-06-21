@@ -8,7 +8,7 @@ import { completeSimple } from '@earendil-works/pi-ai'
 
 import { db } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
-import { findAnthropicModel } from '@hull/agent/models'
+import { findHostedModel } from '@hull/agent/models'
 import { createAgentRuntime, createPiSession } from '@hull/agent/runtime'
 import { getUserByHandle } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
@@ -119,7 +119,7 @@ export const nodeGitOps: GitOps = {
  */
 export async function generateSlug(issue: IssueRow): Promise<string> {
   try {
-    const model = findAnthropicModel([
+    const model = findHostedModel('anthropic', [
       'claude-haiku-4-5',
       'claude-3-5-haiku-latest',
     ])
