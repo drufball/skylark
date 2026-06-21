@@ -75,4 +75,10 @@ describe('canSeeTopic', () => {
     await createSession(db, { id: sid, model: 'm' })
     expect(await canSeeTopic(db, bob, `session:${sid}`)).toBe(true)
   })
+
+  it('denies a session that does not exist', async () => {
+    // The probe reads the row; no row → not visible (so cancel/send on a bogus
+    // id is refused rather than firing into the void).
+    expect(await canSeeTopic(db, bob, `session:${uuidv7()}`)).toBe(false)
+  })
 })

@@ -113,8 +113,9 @@ idle session, because the truth is in the database, not the registry.
   that chat's membership, a bare/monitor session is crew-visible. `getAgentChat`
   (and the `send`/`cancel` controls) run the same `canSeeSession` gate the
   ship's log uses, so the Agents monitor can't read or poke a private chat's
-  transcript the stream already hides. The rule lives once in `hull/access`; the
-  doors are thin callers.
+  transcript the stream already hides. That gate **probes `agent_sessions` under
+  RLS** (the migration 0008 policy), not an origin-derivation in code — so the
+  rule lives once, in the policy, and the doors are thin callers.
 - **Postgres is the source of truth; the pi.dev session is ephemeral.** We do
   not rely on an in-process session surviving. pi.dev's own JSONL session store
   is run in-memory and ignored. This is the whole point of the service: durable
