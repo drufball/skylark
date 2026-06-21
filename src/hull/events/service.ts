@@ -79,7 +79,6 @@ export async function listEventsSince(
   opts: {
     topicPatterns?: string[]
     audience?: string
-    viewerId?: string
     sinceId?: string
     limit?: number
   },

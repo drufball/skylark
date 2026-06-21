@@ -15,7 +15,11 @@
 /** The prefix every issue topic carries. The single source of the namespace. */
 export const ISSUE_SCOPE_PREFIX = 'issue:'
 
-/** The scope a single issue's events are published under (thread view subscribes). */
+/**
+ * The ship-log **topic** a single issue's events are published under (the thread
+ * view subscribes to it). Named `*Scope` for historical reasons — the event
+ * `scope` field is retired; this returns a topic string.
+ */
 export function issueScope(issueId: string): string {
   return `${ISSUE_SCOPE_PREFIX}${issueId}`
 }
