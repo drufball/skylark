@@ -1,7 +1,7 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
-import { notifyOnly } from '@hull/events/bus'
+import { notifyOnly, type NotifyPayload } from '@hull/events/bus'
 import { getEventById, MEMBERS_AUDIENCE } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 import { createSession } from '@hull/agent/service'
@@ -170,10 +170,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
    * vanished message is dropped quietly — another ship's event must not sail
    * unchecked into the reply flow.
    */
-  async function handleBusNote(note: {
-    id: string
-    type: string
-  }): Promise<void> {
+  async function handleBusNote(note: NotifyPayload): Promise<void> {
     if (note.type !== CHAT_MESSAGE_POSTED) return
     const event = await getEventById(db, note.id)
     if (!event) return
@@ -224,6 +221,11 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       members.filter((m) => m.type === 'human').map((m) => m.userId),
     )
     // messages are ascending by id, so the last human entry is the latest one.
+    // We re-drive targeting off this single message; in the rare case a restart
+    // lands between two rapid human posts whose @mentions differ, reconcile
+    // picks targets from the later body. The reply *content* is always correct
+    // (reply re-derives from messagesSinceAgent); only the who-answers decision
+    // uses this body — an acceptable edge for a restart-recovery path.
     const lastHuman = messages.filter((m) => humanIds.has(m.authorId)).at(-1)
     if (!lastHuman) return
     await respond({

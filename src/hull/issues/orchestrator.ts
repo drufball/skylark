@@ -4,6 +4,7 @@ import type { Database } from '@hull/db/client'
 import { getProfileByName } from '@hull/agent/profiles'
 import type { RunsTurns } from '@hull/agent/runtime'
 import { createSession } from '@hull/agent/service'
+import type { NotifyPayload } from '@hull/events/bus'
 import { getEventById } from '@hull/events/service'
 import { handleOf } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
@@ -169,16 +170,6 @@ export interface OrchestratorDeps {
   worktreeRoot: string
   /** Generate a short branch slug from the issue (a cheap LLM call live). */
   generateSlug: (issue: IssueRow) => Promise<string>
-}
-
-/** A tiny note off the ship-log bus: just enough to read the full event by id. */
-export interface BusNote {
-  id: string
-  type: string
-  /** The entity stream (e.g. "issue:123"). */
-  topic?: string
-  /** Who may see this ("public" | "members"). */
-  audience?: string
 }
 
 export function createOrchestrator(deps: OrchestratorDeps) {
@@ -399,7 +390,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * (topic + audience), each transition arrives exactly once — the dedup
    * workaround is retired.
    */
-  async function handleBusNote(note: BusNote): Promise<void> {
+  async function handleBusNote(note: NotifyPayload): Promise<void> {
     if (note.type !== ISSUE_STATUS_CHANGED) return
     const event = await getEventById(db, note.id)
     if (!event) return

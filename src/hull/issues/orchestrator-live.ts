@@ -8,7 +8,7 @@ import { completeSimple } from '@earendil-works/pi-ai'
 import { getModels } from '@earendil-works/pi-ai'
 
 import { db } from '@hull/db/client'
-import { shipLogBus, ensureShipLogListener } from '@hull/events/bus'
+import { subscribeToShipLog } from '@hull/events/bus'
 import { createAgentRuntime, createPiSession } from '@hull/agent/runtime'
 import { getUserByHandle } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
@@ -161,7 +161,6 @@ let started: Orchestrator | undefined
 export async function ensureOrchestrator(): Promise<Orchestrator> {
   if (started) return started
 
-  ensureShipLogListener()
   const builder =
     (await getUserByHandle(db, 'builder')) ??
     (await getUserByHandle(db, 'drufball'))
@@ -176,16 +175,8 @@ export async function ensureOrchestrator(): Promise<Orchestrator> {
     generateSlug,
   })
 
-  shipLogBus.subscribe((note) => {
-    void orch.handleBusNote(note).catch((err: unknown) => {
-      console.error(`orchestrator bus handler failed: ${errorMessage(err)}`)
-    })
-  })
-
   started = orch
-  await orch.reconcile().catch((err: unknown) => {
-    console.error(`orchestrator reconcile failed: ${errorMessage(err)}`)
-  })
+  subscribeToShipLog(orch, 'issues orchestrator')
   return orch
 }
 

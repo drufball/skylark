@@ -2,7 +2,6 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { createServerFn } from '@tanstack/react-start'
 
 import { db } from '@hull/db/client'
-import { errorMessage } from '@hull/lib/errors'
 import { currentActor } from '@hull/users/actor'
 import { listUsers } from '@hull/users/service'
 
@@ -28,13 +27,12 @@ import {
 
 /**
  * Ensure the chat orchestrator is booted + subscribed to the ship's log in this
- * process (idempotent). Fire-and-forget for the GET doors: opening the app runs
- * reconcile, recovering any agent reply a restart interrupted.
+ * process (idempotent). Synchronous — the subscription is registered before this
+ * returns and reconcile runs in the background — so opening the app recovers any
+ * agent reply a restart interrupted without blocking the door.
  */
 function bootChatOrchestrator(): void {
-  void ensureChatOrchestrator().catch((err: unknown) => {
-    console.error(`chat orchestrator boot failed: ${errorMessage(err)}`)
-  })
+  ensureChatOrchestrator()
 }
 
 /** Everyone aboard — the picker for who's in a chat. */
@@ -105,7 +103,7 @@ export const postChatMessage = createServerFn({ method: 'POST' })
     // Subscribe the orchestrator BEFORE the post, so the message's ship-log
     // event is heard and drives the reply. The reply runs off the bus, not from
     // an inline call here — the same path an agent's cross-process post takes.
-    await ensureChatOrchestrator()
+    ensureChatOrchestrator()
     await addMessage(db, {
       id: uuidv7(),
       chatId: data.chatId,

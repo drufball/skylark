@@ -44,6 +44,17 @@ export interface NotifyPayload {
 type Listener = (note: NotifyPayload) => void
 
 /**
+ * A service that reacts to the ship's log: a `handleBusNote` that drives one
+ * note (it reads the full event by id and decides what to do) and a `reconcile`
+ * that recovers work a restart missed. The chat and issues orchestrators both
+ * implement this; `subscribeToShipLog` wires either one in the same way.
+ */
+export interface ShipLogReactor {
+  handleBusNote(note: NotifyPayload): Promise<void>
+  reconcile(): Promise<void>
+}
+
+/**
  * The in-process fan-out: every live SSE stream subscribes here, and each
  * Postgres notification is published to all of them. Pure and synchronous —
  * the network lives in the LISTEN connection, not here — so it's unit-tested
@@ -175,5 +186,28 @@ export function ensureShipLogListener(): void {
       listening = false
       console.error(`ship_log: LISTEN failed: ${errorMessage(err)}`)
     })
+}
+
+/**
+ * Wire a reactor to the ship's log: ensure the LISTEN connection is open,
+ * subscribe its bus-note handler (a throwing handler is isolated + logged), and
+ * kick reconcile in the BACKGROUND. Recovery is background work — it must never
+ * gate the door that booted the orchestrator — so reconcile is `void`, not
+ * awaited. The subscription itself is registered synchronously before this
+ * returns, so no note is missed.
+ */
+export function subscribeToShipLog(
+  reactor: ShipLogReactor,
+  label: string,
+): void {
+  ensureShipLogListener()
+  shipLogBus.subscribe((note) => {
+    void reactor.handleBusNote(note).catch((err: unknown) => {
+      console.error(`${label} bus handler failed: ${errorMessage(err)}`)
+    })
+  })
+  void reactor.reconcile().catch((err: unknown) => {
+    console.error(`${label} reconcile failed: ${errorMessage(err)}`)
+  })
 }
 /* v8 ignore stop */

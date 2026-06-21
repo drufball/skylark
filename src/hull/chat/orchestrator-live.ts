@@ -1,7 +1,6 @@
 import { db } from '@hull/db/client'
-import { ensureShipLogListener, shipLogBus } from '@hull/events/bus'
+import { subscribeToShipLog } from '@hull/events/bus'
 import { createAgentRuntime, createPiSession } from '@hull/agent/runtime'
-import { errorMessage } from '@hull/lib/errors'
 
 import { type ChatOrchestrator, createChatOrchestrator } from './orchestrator'
 
@@ -15,29 +14,16 @@ let started: ChatOrchestrator | undefined
 
 /**
  * Boot the chat orchestrator into the server process (idempotent): wire it to
- * the real runtime, subscribe it to the ship's log so a posted message drives
- * the agent reply off the bus (the same path the issues orchestrator uses), and
- * run startup reconciliation for any human message a restart left unanswered.
+ * the real runtime and subscribe it to the ship's log, so a posted message
+ * drives the agent reply off the bus (the same path the issues orchestrator
+ * uses). `subscribeToShipLog` registers the subscription synchronously and kicks
+ * startup reconciliation in the background, so booting never blocks a door.
  */
-export async function ensureChatOrchestrator(): Promise<ChatOrchestrator> {
+export function ensureChatOrchestrator(): ChatOrchestrator {
   if (started) return started
-
-  ensureShipLogListener()
   const runtime = createAgentRuntime({ db, factory: createPiSession })
-  const orch = createChatOrchestrator({ db, runtime })
-
-  shipLogBus.subscribe((note) => {
-    void orch.handleBusNote(note).catch((err: unknown) => {
-      console.error(
-        `chat orchestrator bus handler failed: ${errorMessage(err)}`,
-      )
-    })
-  })
-
-  started = orch
-  await orch.reconcile().catch((err: unknown) => {
-    console.error(`chat reconcile failed: ${errorMessage(err)}`)
-  })
-  return orch
+  started = createChatOrchestrator({ db, runtime })
+  subscribeToShipLog(started, 'chat orchestrator')
+  return started
 }
 /* v8 ignore stop */
