@@ -7,7 +7,7 @@ import {
 import { useCallback, useState } from 'react'
 
 import { commentOnIssue, getThread, setIssueStatus } from '@hull/issues/server'
-import { issueScope } from '@hull/issues/service'
+import { issueScope } from '@hull/issues/scope'
 import { Dock } from '@rigging/views/dock'
 import { IssueThreadView } from '@rigging/views/issue-thread'
 import { useShipLog } from '@rigging/lib/use-ship-log'
