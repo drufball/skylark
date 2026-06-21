@@ -98,15 +98,6 @@ export const agentSessions = pgTable('agent_sessions', {
    */
   agentUserId: text('agent_user_id').references(() => users.id),
   /**
-   * Where this session came from, as a ship-log topic — `chat:<id>`,
-   * `issue:<id>`, or null for a bare/CLI session. A session has no crew column
-   * of its own; it INHERITS visibility from its origin (an issue's session is
-   * public; a chat's follows that chat's membership). The RLS policy dispatches
-   * on this label, so the access rule lives in the database, not in every
-   * reader — see migration 0008.
-   */
-  origin: text('origin'),
-  /**
    * "running" while a turn is in flight in some process, otherwise "idle".
    * "error" records a turn that failed. A row stuck on "running" after a crash
    * is stale; cancel forces it back to idle.

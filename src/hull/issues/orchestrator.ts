@@ -12,7 +12,6 @@ import { issuesProgressLine } from '@hull/agent/progress'
 
 import {
   getIssue,
-  issueScope,
   ISSUE_STATUS_CHANGED,
   listComments,
   listIssues,
@@ -284,8 +283,6 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         profileId: builder?.id ?? null,
         cwd: worktreePath,
         agentUserId: builderUserId,
-        // The builder session inherits the issue's visibility (public board).
-        origin: issueScope(issue.id),
       })
     }
 

@@ -37,12 +37,6 @@ export async function createSession(
     cwd?: string | null
     /** The crew member this session acts as; null/undefined = unattributed. */
     agentUserId?: string | null
-    /**
-     * Where the session came from, as a ship-log topic (`chat:<id>` /
-     * `issue:<id>`); null/undefined = a bare session. Its visibility is
-     * inherited from this — see the agent_sessions RLS policy.
-     */
-    origin?: string | null
   },
 ): Promise<AgentSessionRow> {
   const [row] = await db
@@ -54,7 +48,6 @@ export async function createSession(
       profileId: input.profileId,
       cwd: input.cwd,
       agentUserId: input.agentUserId,
-      origin: input.origin,
     })
     .returning()
   return row

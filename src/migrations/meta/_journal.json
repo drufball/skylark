@@ -61,15 +61,8 @@
     {
       "idx": 8,
       "version": "7",
-      "when": 1782052001666,
-      "tag": "0008_last_bug",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1782052008572,
-      "tag": "0009_agent_session_rls",
+      "when": 1782052785099,
+      "tag": "0008_agent_session_rls",
       "breakpoints": true
     }
   ]

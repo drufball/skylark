@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { asActor, freshDb } from '@hull/db/test-db'
-import { createChat } from '@hull/chat/service'
+import { createChat, setMemberSession } from '@hull/chat/service'
+import { createIssue, setBuildContext } from '@hull/issues/service'
 import { createUser } from '@hull/users/service'
 
 import {
@@ -14,10 +15,12 @@ import {
   listSessions,
 } from './service'
 
-// Proves migration 0009: an agent session inherits visibility from its `origin`
-// label — issue→public, chat→members, bare→crew — enforced by RLS, so any
-// reader (door or future code) gets only the sessions it may see without its own
-// auth logic. Fixtures arranged as the PGlite superuser; assertions via asActor.
+// Proves migration 0008: an agent session inherits visibility from its parent —
+// an issue's builder session is public, a chat's backing session follows that
+// chat's membership, a bare session is crew-visible — enforced by RLS reading
+// the STRUCTURAL relationship (issues.session_id / chat_members.session_id), the
+// same truth the app layer reads. Fixtures arranged as the PGlite superuser;
+// assertions via asActor.
 
 describe('agent session access (RLS)', () => {
   let db: Database
@@ -51,9 +54,16 @@ describe('agent session access (RLS)', () => {
     sBare = uuidv7()
     sIssue = uuidv7()
     sChat = uuidv7()
-    await createSession(db, { id: sBare, model: 'm' }) // origin null
-    await createSession(db, { id: sIssue, model: 'm', origin: 'issue:abc' })
-    await createSession(db, { id: sChat, model: 'm', origin: `chat:${chat}` })
+    await createSession(db, { id: sBare, model: 'm' }) // no parent → crew-visible
+
+    // An issue's builder session → public (link it via issues.session_id).
+    await createSession(db, { id: sIssue, model: 'm' })
+    const issue = await createIssue(db, { title: 'build', authorId: alice })
+    await setBuildContext(db, issue.id, { sessionId: sIssue })
+
+    // A chat's backing session → members only (link via chat_members.session_id).
+    await createSession(db, { id: sChat, model: 'm' })
+    await setMemberSession(db, chat, alice, sChat)
     await appendMessage(db, {
       sessionId: sChat,
       role: 'assistant',
