@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { and, asc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, or, type SQL } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 
@@ -77,6 +77,10 @@ export async function getEventById(
  * replay. `sinceId` is a Last-Event-ID cursor: only events with a strictly greater
  * id come back (UUIDv7 ids are monotonic, so "greater" means "later").
  *
+ * Returns at most `limit` matches, defaulting to `REPLAY_PAGE_SIZE`. A caller
+ * that pages (the SSE route) relies on that default: a short page (`< REPLAY_
+ * PAGE_SIZE`) means the log is exhausted, so keep `limit` unset there.
+ *
  * Supports both old (scopes) and new (topicPatterns + audience) APIs during migration.
  */
 export async function listEventsSince(
@@ -103,41 +107,66 @@ export async function listEventsSince(
       .limit(opts.limit ?? REPLAY_PAGE_SIZE)
   }
 
-  // New API: use topic patterns + audience
+  // New API: topic patterns + audience.
+  //
+  // The audience facet is an exact column, so it's pushed into SQL. Topic
+  // patterns need wildcard matching, which stays in memory (`matchesTopic` is
+  // the one source of truth, shared with the live fan-out). To reconcile that
+  // in-memory filter with `limit`, we scan the log in bounded id-ordered pages
+  // and accumulate matches until we have `limit` of them or the log is
+  // exhausted — so a sparse match far past the first page is still found,
+  // instead of being silently dropped by a fixed over-fetch window.
   const patterns = opts.topicPatterns ?? []
   if (patterns.length === 0) return []
 
-  // Fetch events and filter. Topic patterns need in-memory matching (for now),
-  // but we can at least ensure we get enough after filtering by fetching more.
-  const conditions = []
-  if (opts.sinceId) conditions.push(gt(events.id, opts.sinceId))
+  const want = opts.limit ?? REPLAY_PAGE_SIZE
+  const audienceFilter = audienceCondition(opts.audience)
+  const matched: EventRow[] = []
+  let cursor = opts.sinceId
 
-  // Fetch more than the limit to account for filtering
-  const fetchLimit = (opts.limit ?? REPLAY_PAGE_SIZE) * 3
-  const allEvents = await db
-    .select()
-    .from(events)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(asc(events.id))
-    .limit(fetchLimit)
+  for (;;) {
+    const conditions: SQL[] = []
+    if (audienceFilter) conditions.push(audienceFilter)
+    if (cursor) conditions.push(gt(events.id, cursor))
+    const page = await db
+      .select()
+      .from(events)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(asc(events.id))
+      .limit(REPLAY_PAGE_SIZE)
 
-  // Filter by topic pattern and audience, then apply limit
-  const filtered = allEvents.filter((event) => {
-    // Check topic pattern match
-    const topicMatch = patterns.some((pattern) =>
-      matchesTopic(event.topic ?? event.scope ?? '', pattern),
-    )
-    if (!topicMatch) return false
-
-    // Check audience access: viewerAccess 'members' can see public + members
-    if (opts.audience && event.audience) {
-      return canViewAudience(event.audience, opts.audience)
+    for (const event of page) {
+      cursor = event.id
+      const topic = event.topic ?? event.scope ?? ''
+      if (patterns.some((pattern) => matchesTopic(topic, pattern))) {
+        matched.push(event)
+        if (matched.length >= want) return matched
+      }
     }
-    return true
-  })
 
-  // Apply the actual limit after filtering
-  return filtered.slice(0, opts.limit ?? REPLAY_PAGE_SIZE)
+    // A short page means we've scanned to the end of the log.
+    if (page.length < REPLAY_PAGE_SIZE) break
+  }
+
+  return matched
+}
+
+/**
+ * The SQL audience clause for a viewer's access level — the row-set form of
+ * `canViewAudience`, kept exactly equivalent to it (the agreement is pinned by a
+ * test). An un-audienced row (`audience IS NULL`) always passes; otherwise the
+ * row's audience must be one the viewer is entitled to: a `public` viewer sees
+ * only public rows, a `members` viewer sees public + members. An unrecognized
+ * audience is in neither set, so it's excluded — just as `canViewAudience`
+ * returns false for it. Undefined viewer = no clause (see everything).
+ */
+function audienceCondition(viewerAccess?: string): SQL | undefined {
+  if (!viewerAccess) return undefined
+  const visible =
+    viewerAccess === MEMBERS_AUDIENCE
+      ? [PUBLIC_AUDIENCE, MEMBERS_AUDIENCE]
+      : [PUBLIC_AUDIENCE]
+  return or(isNull(events.audience), inArray(events.audience, visible))
 }
 
 /**

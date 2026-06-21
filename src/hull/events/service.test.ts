@@ -179,6 +179,83 @@ describe('events service', () => {
     expect(oneIssue.map((e) => (e.payload as { n: number }).n)).toEqual([1])
   })
 
+  it('finds a matching event beyond the first scan window (no silent drop)', async () => {
+    // A long run of non-matching events, then one match far down the log. A
+    // naive "fetch limit*N rows then filter" replay would never see the match
+    // and would falsely report "caught up"; the scan must page until it finds it.
+    for (let i = 0; i < 10; i++) {
+      await appendEvent(db, {
+        type: 't',
+        source: 's',
+        topic: `other:${String(i)}`,
+        audience: 'public',
+        payload: { i },
+      })
+    }
+    await appendEvent(db, {
+      type: 't',
+      source: 's',
+      topic: 'issue:123',
+      audience: 'public',
+      payload: { hit: true },
+    })
+
+    const got = await listEventsSince(db, {
+      topicPatterns: ['issue:*'],
+      audience: 'public',
+      limit: 2,
+    })
+    expect(got).toHaveLength(1)
+    expect((got[0].payload as { hit: boolean }).hit).toBe(true)
+  })
+
+  it('caps the topic replay to the limit, returning the earliest matches', async () => {
+    for (let i = 0; i < 5; i++) {
+      await appendEvent(db, {
+        type: 't',
+        source: 's',
+        topic: `issue:${String(i)}`,
+        audience: 'public',
+        payload: { i },
+      })
+    }
+    const got = await listEventsSince(db, {
+      topicPatterns: ['issue:*'],
+      audience: 'public',
+      limit: 2,
+    })
+    expect(got.map((e) => (e.payload as { i: number }).i)).toEqual([0, 1])
+  })
+
+  it('replay audience filtering agrees with canViewAudience on every pair', async () => {
+    // The SQL clause in listEventsSince and the in-memory canViewAudience
+    // predicate (used by the live fan-out) both encode "members ⊇ public". Pin
+    // them together so a future audience tier can't drift the two apart.
+    const audiences = ['public', 'members']
+    for (const eventAudience of audiences) {
+      await appendEvent(db, {
+        type: 't',
+        source: 's',
+        topic: `t:${eventAudience}`,
+        audience: eventAudience,
+        payload: { eventAudience },
+      })
+    }
+
+    for (const viewerAccess of audiences) {
+      const visible = await listEventsSince(db, {
+        topicPatterns: ['t:*'],
+        audience: viewerAccess,
+      })
+      const visibleAudiences = new Set(visible.map((e) => e.audience))
+      for (const eventAudience of audiences) {
+        expect(visibleAudiences.has(eventAudience)).toBe(
+          canViewAudience(eventAudience, viewerAccess),
+        )
+      }
+    }
+  })
+
   it('filters events by audience access (members see public + members)', async () => {
     await appendEvent(db, {
       type: 'chat.message',
