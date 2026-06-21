@@ -9,22 +9,16 @@ import { issueOwnsSession } from '@hull/issues/service'
 // chat's topic (or a chat's backing-session topic) isn't enough to read it.
 //
 // This is the one home for the ship's per-topic visibility rules — a deliberate
-// cross-cutting hub, since visibility spans services (an agent session's
-// visibility derives from whether an issue or a chat owns it). Each rule asks
-// the owning module to parse its own topic grammar (`chatIdFromTopic`,
-// `sessionIdFromTopic`) rather than re-deriving it here, and consults the same
-// tables the RLS policies do, so the stream gate and table policies agree.
+// cross-cutting hub, since a session's visibility spans services (it derives from
+// whether an issue or a chat owns it). It depends downward on service contracts
+// (no service imports back) and asks each module to parse its own topic grammar
+// (`chatIdFromTopic`, `sessionIdFromTopic`) rather than re-deriving it here.
 //
-// Adding a topic kind = add a TopicRule. A topic no rule claims is visible to
-// any crew member (e.g. `issue:*` — the board is public).
-
-/** One topic kind's visibility: parse its id from a topic, then decide. */
-interface TopicRule {
-  /** The id this topic refers to, or null if this rule doesn't own the topic. */
-  idFromTopic: (topic: string) => string | null
-  /** May `actorId` see the entity with this id? */
-  canSee: (db: Database, actorId: string, id: string) => Promise<boolean>
-}
+// For chat, this mirrors the RLS policies (migration 0007) on the same
+// `chat_members` table — stream gate and table policies agree. Sessions have no
+// RLS policy yet, so for `session:` topics this gate is the SOLE enforcement of
+// the issue→public / chat→members / bare→crew rule; a session-events table
+// policy is still owed (see the agent-session door hardening).
 
 /**
  * A `session:<id>` topic carries an agent session's transcript. Its visibility
@@ -43,27 +37,20 @@ async function canSeeSession(
   return true
 }
 
-const TOPIC_RULES: TopicRule[] = [
-  {
-    idFromTopic: chatIdFromTopic,
-    canSee: (db, actor, id) => isMember(db, id, actor),
-  },
-  { idFromTopic: sessionIdFromTopic, canSee: canSeeSession },
-]
-
 /**
- * May `actorId` see events on `topic`? Runs the first rule that claims the
- * topic; a topic no rule owns is public (visible to any crew member).
+ * May `actorId` see events on `topic`? Each topic kind is a guard clause; a
+ * topic no kind owns (e.g. `issue:*`) is public — visible to any crew member.
  */
 export async function canSeeTopic(
   db: Database,
   actorId: string,
   topic: string,
-  rules: TopicRule[] = TOPIC_RULES,
 ): Promise<boolean> {
-  for (const rule of rules) {
-    const id = rule.idFromTopic(topic)
-    if (id !== null) return rule.canSee(db, actorId, id)
-  }
+  const chatId = chatIdFromTopic(topic)
+  if (chatId !== null) return isMember(db, chatId, actorId)
+
+  const sessionId = sessionIdFromTopic(topic)
+  if (sessionId !== null) return canSeeSession(db, actorId, sessionId)
+
   return true
 }
