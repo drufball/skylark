@@ -1,9 +1,11 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import {
   type AgentSessionEvent,
+  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
+  ModelRegistry,
   SessionManager,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent'
@@ -164,8 +166,16 @@ export const createPiSession: SessionFactory = async (
   })
   await resourceLoader.reload()
 
+  // Auth resolves from the environment (ANTHROPIC_API_KEY, OPENAI_API_KEY, …)
+  // for hosted models. Ollama is local and keyless, but pi's OpenAI client still
+  // requires a non-empty key, so register a dummy for the `ollama` provider —
+  // Ollama ignores it. Without this the local-first default can't take a turn.
+  const authStorage = AuthStorage.create()
+  authStorage.setRuntimeApiKey('ollama', 'ollama')
+
   const { session } = await createAgentSession({
     model: resolveModel(options.model ?? model),
+    modelRegistry: ModelRegistry.create(authStorage),
     sessionManager: SessionManager.inMemory(),
     cwd: options.session.cwd,
     tools: options.session.tools,

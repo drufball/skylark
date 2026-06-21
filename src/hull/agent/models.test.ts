@@ -166,7 +166,14 @@ describe('resolveModel', () => {
     ).toBe(32768)
   })
 
-  it('throws on an unknown Anthropic model', () => {
+  it('resolves models from other hosted providers (OpenAI, Google) by prefix', () => {
+    const openai = getModels('openai')[0]
+    expect(resolveModel(`openai/${openai.id}`)).toEqual(openai)
+    const google = getModels('google')[0]
+    expect(resolveModel(`google/${google.id}`)).toEqual(google)
+  })
+
+  it('throws on an unknown model for a known provider', () => {
     expect(() => resolveModel('anthropic/not-a-real-model')).toThrow(
       /unknown anthropic model/i,
     )

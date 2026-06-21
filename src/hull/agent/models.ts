@@ -1,5 +1,5 @@
-import { getModels } from '@earendil-works/pi-ai'
-import type { Api, Model } from '@earendil-works/pi-ai'
+import { getModels, getProviders } from '@earendil-works/pi-ai'
+import type { Api, KnownProvider, Model } from '@earendil-works/pi-ai'
 
 // Provider-aware model resolution. A stored model is a string the runtime hands
 // to pi.dev; this module turns that string into a concrete pi `Model`, picking
@@ -128,10 +128,20 @@ export function findAnthropicModel(ids: string[]): Model<Api> | undefined {
   return undefined
 }
 
-/** Resolve a single Anthropic model id, or throw if it doesn't exist. */
-function resolveAnthropic(modelId: string): Model<Api> {
-  const model = findAnthropicModel([modelId])
-  if (!model) throw new Error(`Unknown Anthropic model: ${modelId}`)
+/**
+ * Resolve a model from any pi.dev built-in provider (Anthropic, OpenAI, Google,
+ * OpenRouter, …) against its registry, or throw if the provider or model id is
+ * unknown. These are the hosted providers a crew member reaches by adding an
+ * API key; the key is resolved at session boot from the environment, not here.
+ */
+function resolveHosted(provider: string, modelId: string): Model<Api> {
+  if (!getProviders().includes(provider as KnownProvider)) {
+    throw new Error(`Unknown model provider "${provider}"`)
+  }
+  const model = getModels(provider as KnownProvider).find(
+    (m) => m.id === modelId,
+  )
+  if (!model) throw new Error(`Unknown ${provider} model: ${modelId}`)
   return model
 }
 
@@ -183,12 +193,6 @@ export function resolveModel(
   env: NodeJS.ProcessEnv = process.env,
 ): Model<Api> {
   const { provider, modelId } = parseModelRef(ref)
-  switch (provider) {
-    case 'anthropic':
-      return resolveAnthropic(modelId)
-    case 'ollama':
-      return resolveOllama(modelId, env)
-    default:
-      throw new Error(`Unknown model provider "${provider}" in "${ref}"`)
-  }
+  if (provider === 'ollama') return resolveOllama(modelId, env)
+  return resolveHosted(provider, modelId)
 }
