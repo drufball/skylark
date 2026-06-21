@@ -17,6 +17,22 @@ export function localModelRef(model: InstalledModel): string {
   return `ollama/${model.name}`
 }
 
+/**
+ * Model refs to suggest in a picker: the ship default first, then the installed
+ * local models (as `ollama/…` refs), deduped. Pure so the order/dedup rule is
+ * tested directly rather than buried in a route loader.
+ *
+ * Lives here (not in service.ts) so a route can import it client-side: service.ts
+ * pulls in `node:child_process` for hardware detection, which can't go in the
+ * browser bundle. This module is fetch-only and safe to import isomorphically.
+ */
+export function modelPickerOptions(
+  defaultRef: string,
+  installed: InstalledModel[],
+): string[] {
+  return [...new Set([defaultRef, ...installed.map(localModelRef)])]
+}
+
 type FetchLike = (
   input: string,
   init?: { method?: string; headers?: Record<string, string>; body?: string },
