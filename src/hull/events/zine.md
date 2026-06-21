@@ -137,17 +137,17 @@ Claude wiring.
   member who isn't in a chat could still subscribe to its topic — so the route
   also gates every event through **`canSeeTopic`**
   ([`../access/visibility.ts`](../access/visibility.ts)): topic patterns say
-  what the client _asked_ for, entitlement says what they're _allowed_. For
-  `chat:<id>` that's membership (the same `chat_members` truth the RLS policies
-  use); `issue:*` is public; `session:*` opens up when the agent service is
-  scoped. This is the per-user entitlement the crew-filter promised, applied on
-  the read path the durable tables can't cover (live + ephemeral events never
-  hit an RLS-gated query). The gate is **memoised per topic for the life of the
-  connection** — a busy chat doesn't re-probe per event — which leaves one known
-  window: a member _removed_ from a chat keeps receiving its events until they
-  reconnect. Accepted for now; the fix when it matters is a short TTL on the
-  memo or invalidating the entry on a `chat.membership_changed` event over the
-  bus.
+  what the client _asked_ for, entitlement says what they're _allowed_. It
+  **probes the parent under the actor's RLS context** — `chat:<id>` reads
+  `chats` (0007), `session:<id>` reads `agent_sessions` (0008), `issue:*` is
+  public — so the policies are the single source of truth, not a copy. This is
+  the per-user entitlement the crew-filter promised, applied on the read path
+  the durable tables can't cover (live + ephemeral events never hit an RLS-gated
+  query). The gate is **memoised per topic for the life of the connection** — a
+  busy chat doesn't re-probe per event — which leaves one known window: a member
+  _removed_ from a chat keeps receiving its events until they reconnect.
+  Accepted for now; the fix when it matters is a short TTL on the memo or
+  invalidating the entry on a `chat.membership_changed` event over the bus.
 - **Agent events are unattributed for now (`actorId` is null).** The runtime
   emits without an actor because a turn is fired server-side without yet
   threading who initiated it. The column and FK exist so attribution can land

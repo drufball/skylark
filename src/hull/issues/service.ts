@@ -194,23 +194,6 @@ export async function getIssueByNano(
 }
 
 /**
- * Does an issue own this builder session? An issue-owned session is public (the
- * board is public), so its events are visible to the whole crew. Used by the
- * ship's-log entitlement gate to decide a `session:<id>` topic's visibility.
- */
-export async function issueOwnsSession(
-  db: Database,
-  sessionId: string,
-): Promise<boolean> {
-  const rows = await db
-    .select({ id: issues.id })
-    .from(issues)
-    .where(eq(issues.sessionId, sessionId))
-    .limit(1)
-  return rows.length > 0
-}
-
-/**
  * Resolve an issue from a CLI/branch reference: a 4-char nano (what agents type,
  * and what's embedded in branch names) or a full UUID. Tries nano first since
  * that's the common case, then falls back to the id. Returns undefined if
