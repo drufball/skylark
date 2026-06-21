@@ -179,6 +179,54 @@ describe('events service', () => {
     expect(oneIssue.map((e) => (e.payload as { n: number }).n)).toEqual([1])
   })
 
+  it('finds a matching event beyond the first scan window (no silent drop)', async () => {
+    // A long run of non-matching events, then one match far down the log. A
+    // naive "fetch limit*N rows then filter" replay would never see the match
+    // and would falsely report "caught up"; the scan must page until it finds it.
+    for (let i = 0; i < 10; i++) {
+      await appendEvent(db, {
+        type: 't',
+        source: 's',
+        topic: `other:${String(i)}`,
+        audience: 'public',
+        payload: { i },
+      })
+    }
+    await appendEvent(db, {
+      type: 't',
+      source: 's',
+      topic: 'issue:123',
+      audience: 'public',
+      payload: { hit: true },
+    })
+
+    const got = await listEventsSince(db, {
+      topicPatterns: ['issue:*'],
+      audience: 'public',
+      limit: 2,
+    })
+    expect(got).toHaveLength(1)
+    expect((got[0].payload as { hit: boolean }).hit).toBe(true)
+  })
+
+  it('caps the topic replay to the limit, returning the earliest matches', async () => {
+    for (let i = 0; i < 5; i++) {
+      await appendEvent(db, {
+        type: 't',
+        source: 's',
+        topic: `issue:${String(i)}`,
+        audience: 'public',
+        payload: { i },
+      })
+    }
+    const got = await listEventsSince(db, {
+      topicPatterns: ['issue:*'],
+      audience: 'public',
+      limit: 2,
+    })
+    expect(got.map((e) => (e.payload as { i: number }).i)).toEqual([0, 1])
+  })
+
   it('filters events by audience access (members see public + members)', async () => {
     await appendEvent(db, {
       type: 'chat.message',
