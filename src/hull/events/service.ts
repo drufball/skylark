@@ -77,6 +77,10 @@ export async function getEventById(
  * replay. `sinceId` is a Last-Event-ID cursor: only events with a strictly greater
  * id come back (UUIDv7 ids are monotonic, so "greater" means "later").
  *
+ * Returns at most `limit` matches, defaulting to `REPLAY_PAGE_SIZE`. A caller
+ * that pages (the SSE route) relies on that default: a short page (`< REPLAY_
+ * PAGE_SIZE`) means the log is exhausted, so keep `limit` unset there.
+ *
  * Supports both old (scopes) and new (topicPatterns + audience) APIs during migration.
  */
 export async function listEventsSince(
@@ -148,13 +152,21 @@ export async function listEventsSince(
 }
 
 /**
- * The SQL audience clause for a viewer's access level, mirroring
- * `canViewAudience`: a `members` viewer sees everything (no clause), a `public`
- * viewer sees only public or un-audienced rows. Undefined viewer = no clause.
+ * The SQL audience clause for a viewer's access level — the row-set form of
+ * `canViewAudience`, kept exactly equivalent to it (the agreement is pinned by a
+ * test). An un-audienced row (`audience IS NULL`) always passes; otherwise the
+ * row's audience must be one the viewer is entitled to: a `public` viewer sees
+ * only public rows, a `members` viewer sees public + members. An unrecognized
+ * audience is in neither set, so it's excluded — just as `canViewAudience`
+ * returns false for it. Undefined viewer = no clause (see everything).
  */
 function audienceCondition(viewerAccess?: string): SQL | undefined {
-  if (!viewerAccess || viewerAccess === MEMBERS_AUDIENCE) return undefined
-  return or(isNull(events.audience), eq(events.audience, PUBLIC_AUDIENCE))
+  if (!viewerAccess) return undefined
+  const visible =
+    viewerAccess === MEMBERS_AUDIENCE
+      ? [PUBLIC_AUDIENCE, MEMBERS_AUDIENCE]
+      : [PUBLIC_AUDIENCE]
+  return or(isNull(events.audience), inArray(events.audience, visible))
 }
 
 /**

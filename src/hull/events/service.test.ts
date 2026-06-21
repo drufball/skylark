@@ -227,6 +227,35 @@ describe('events service', () => {
     expect(got.map((e) => (e.payload as { i: number }).i)).toEqual([0, 1])
   })
 
+  it('replay audience filtering agrees with canViewAudience on every pair', async () => {
+    // The SQL clause in listEventsSince and the in-memory canViewAudience
+    // predicate (used by the live fan-out) both encode "members ⊇ public". Pin
+    // them together so a future audience tier can't drift the two apart.
+    const audiences = ['public', 'members']
+    for (const eventAudience of audiences) {
+      await appendEvent(db, {
+        type: 't',
+        source: 's',
+        topic: `t:${eventAudience}`,
+        audience: eventAudience,
+        payload: { eventAudience },
+      })
+    }
+
+    for (const viewerAccess of audiences) {
+      const visible = await listEventsSince(db, {
+        topicPatterns: ['t:*'],
+        audience: viewerAccess,
+      })
+      const visibleAudiences = new Set(visible.map((e) => e.audience))
+      for (const eventAudience of audiences) {
+        expect(visibleAudiences.has(eventAudience)).toBe(
+          canViewAudience(eventAudience, viewerAccess),
+        )
+      }
+    }
+  })
+
   it('filters events by audience access (members see public + members)', async () => {
     await appendEvent(db, {
       type: 'chat.message',
