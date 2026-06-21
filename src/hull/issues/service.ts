@@ -5,7 +5,7 @@ import { asc, desc, eq } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
-import { PUBLIC_SCOPE } from '@hull/events/service'
+import { PUBLIC_AUDIENCE } from '@hull/events/service'
 
 import { issueScope } from './scope'
 import {
@@ -23,11 +23,12 @@ import {
  * and learns nothing about other services by reading them — it records ids
  * (authorId, sessionId) and speaks to the world through the ship's log.
  *
- * Every state change and every comment is announced on the ship's log, on TWO
- * scopes: `issue:<id>` (the thread view subscribes here) and `public` (the board
- * subscribes here, and the server-side orchestrator listens here to drive the
- * build lifecycle across processes — an agent's CLI transition in another
- * process is still heard).
+ * Every state change and every comment is announced on the ship's log ONCE,
+ * with topic `issue:<id>` and audience `public`. The thread view subscribes to
+ * the exact topic (`issue:<id>`); the board subscribes to the wildcard
+ * (`issue:*`); the server-side orchestrator listens too, to drive the build
+ * lifecycle across processes — an agent's CLI transition in another process is
+ * still heard. One topic, many subscribers; no dual-emit.
  */
 
 // issueScope lives in ./scope (a node-free leaf — see that file for why).
@@ -53,7 +54,7 @@ async function announce(
     type: input.type,
     source: 'issues',
     topic: issueScope(input.issueId),
-    audience: PUBLIC_SCOPE,
+    audience: PUBLIC_AUDIENCE,
     actorId: input.actorId,
     payload: input.payload,
   })
@@ -223,7 +224,7 @@ export async function listComments(
 }
 
 /**
- * Add a comment and announce it on the ship's log (issue + public scopes). The
+ * Add a comment and announce it on the ship's log (topic issue:<id>). The
  * comment row is the durable truth; the event is the "thread changed" doorbell
  * the views and the orchestrator hear.
  */
@@ -251,7 +252,7 @@ export async function addComment(
 
 /**
  * Move an issue's status through the legal machine, bump updatedAt, and announce
- * the change on the ship's log (issue + public scopes). An illegal move throws
+ * the change on the ship's log (topic issue:<id>). An illegal move throws
  * (IssueTransitionError) before any write or emit, so a rejected transition
  * leaves the row and the log untouched.
  */

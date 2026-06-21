@@ -13,9 +13,6 @@ import { events, type EventRow } from './schema'
  * cursor is how a reconnecting subscriber replays what it missed.
  */
 
-/** The scope everyone can see. */
-export const PUBLIC_SCOPE = 'public'
-
 /**
  * How many events a single replay page returns at most. A reconnect catch-up
  * pages through this - the SSE route loops until a short page comes back - so a
@@ -26,8 +23,6 @@ export const REPLAY_PAGE_SIZE = 500
 export interface AppendEventInput {
   type: string
   source: string
-  /** DEPRECATED: use topic + audience. For backward compat during migration. */
-  scope?: string
   /** The entity stream (e.g. "issue:123", "chat:456"). */
   topic?: string
   /** Who may see this ("public" | "members"). */
@@ -40,8 +35,7 @@ export interface AppendEventInput {
 /**
  * Append one event to the log. The id is a fresh UUIDv7, so it's both the
  * primary key and the stream cursor - later events sort after earlier ones by
- * id alone. Supports both old (scope) and new (topic + audience) schemas during
- * migration. If topic/audience are provided, they take precedence.
+ * id alone.
  */
 export async function appendEvent(
   db: Database,
@@ -53,7 +47,6 @@ export async function appendEvent(
       id: uuidv7(),
       type: input.type,
       source: input.source,
-      scope: input.scope ?? null,
       topic: input.topic ?? null,
       audience: input.audience ?? null,
       actorId: input.actorId ?? null,
@@ -80,13 +73,10 @@ export async function getEventById(
  * Returns at most `limit` matches, defaulting to `REPLAY_PAGE_SIZE`. A caller
  * that pages (the SSE route) relies on that default: a short page (`< REPLAY_
  * PAGE_SIZE`) means the log is exhausted, so keep `limit` unset there.
- *
- * Supports both old (scopes) and new (topicPatterns + audience) APIs during migration.
  */
 export async function listEventsSince(
   db: Database,
   opts: {
-    scopes?: string[]
     topicPatterns?: string[]
     audience?: string
     viewerId?: string
@@ -94,20 +84,7 @@ export async function listEventsSince(
     limit?: number
   },
 ): Promise<EventRow[]> {
-  // Old API: use scopes
-  if (opts.scopes !== undefined) {
-    if (opts.scopes.length === 0) return []
-    const conditions = [inArray(events.scope, opts.scopes)]
-    if (opts.sinceId) conditions.push(gt(events.id, opts.sinceId))
-    return db
-      .select()
-      .from(events)
-      .where(and(...conditions))
-      .orderBy(asc(events.id))
-      .limit(opts.limit ?? REPLAY_PAGE_SIZE)
-  }
-
-  // New API: topic patterns + audience.
+  // Topic patterns + audience.
   //
   // The audience facet is an exact column, so it's pushed into SQL. Topic
   // patterns need wildcard matching, which stays in memory (`matchesTopic` is
@@ -137,7 +114,7 @@ export async function listEventsSince(
 
     for (const event of page) {
       cursor = event.id
-      const topic = event.topic ?? event.scope ?? ''
+      const topic = event.topic ?? ''
       if (patterns.some((pattern) => matchesTopic(topic, pattern))) {
         matched.push(event)
         if (matched.length >= want) return matched
@@ -167,19 +144,6 @@ function audienceCondition(viewerAccess?: string): SQL | undefined {
       ? [PUBLIC_AUDIENCE, MEMBERS_AUDIENCE]
       : [PUBLIC_AUDIENCE]
   return or(isNull(events.audience), inArray(events.audience, visible))
-}
-
-/**
- * May a subscriber watching `visibleScopes` see an event in `scope`? Plain set
- * membership today: you see exactly the scopes you subscribed to (the route
- * decides which scopes an actor is allowed to subscribe to). Kept as its own
- * function so the live fan-out and the replay apply the identical rule.
- */
-export function isScopeVisible(
-  scope: string,
-  visibleScopes: string[],
-): boolean {
-  return visibleScopes.includes(scope)
 }
 
 /**

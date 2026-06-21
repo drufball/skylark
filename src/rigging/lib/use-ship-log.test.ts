@@ -33,7 +33,7 @@ const event = (over: Partial<ShipLogEvent> = {}): ShipLogEvent => ({
   id: '1',
   type: 'agent.message',
   source: 'agent',
-  scope: 'session:s1',
+  topic: 'session:s1',
   payload: {},
   ...over,
 })

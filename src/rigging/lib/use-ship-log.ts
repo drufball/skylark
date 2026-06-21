@@ -25,7 +25,7 @@ export interface EventSourceLike {
 }
 
 /**
- * Subscribe to the ship's log for the given topics (scopes), invoking `onEvent`
+ * Subscribe to the ship's log for the given topic patterns, invoking `onEvent`
  * for each event. Reopens the connection only when the topic set changes, and
  * closes it on unmount. `topics` is joined into the `?topics=` query the SSE
  * route parses; an empty set subscribes to nothing (no connection opened).

@@ -137,7 +137,6 @@ describe('agent runtime', () => {
   let runtime: ReturnType<typeof createAgentRuntime>
   let emitted: {
     type: string
-    scope?: string
     topic?: string
     audience?: string
   }[]
@@ -158,7 +157,6 @@ describe('agent runtime', () => {
       emit: (e) => {
         emitted.push({
           type: e.type,
-          scope: e.scope,
           topic: e.topic,
           audience: e.audience,
         })

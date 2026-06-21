@@ -417,7 +417,7 @@ describe('orchestrator event subscription', () => {
     await orch.handleBusNote({
       id: (await findStatusEventId(db, issue.id)).id,
       type: ISSUE_STATUS_CHANGED,
-      scope: issueScope(issue.id),
+      topic: issueScope(issue.id),
     })
 
     expect(git.added).toHaveLength(1)
@@ -465,7 +465,7 @@ describe('orchestrator event subscription', () => {
     await orch.handleBusNote({
       id: 'x',
       type: 'issue.commented',
-      scope: 'public',
+      topic: 'issue:x',
     })
     expect(git.added).toEqual([])
   })
@@ -476,7 +476,7 @@ describe('orchestrator event subscription', () => {
     await orch.handleBusNote({
       id: 'no-such-event',
       type: ISSUE_STATUS_CHANGED,
-      scope: 'public',
+      topic: 'issue:no-such-event',
     })
     expect(git.added).toEqual([])
   })
@@ -488,13 +488,14 @@ describe('orchestrator event subscription', () => {
     const row = await emitEvent(db, {
       type: ISSUE_STATUS_CHANGED,
       source: 'issues',
-      scope: 'public',
+      topic: 'issue:42',
+      audience: 'public',
       payload: { issueId: 42, from: 'nope', to: 'nope' },
     })
     await orch.handleBusNote({
       id: row.id,
       type: ISSUE_STATUS_CHANGED,
-      scope: 'public',
+      topic: 'issue:42',
     })
     expect(git.added).toEqual([])
   })

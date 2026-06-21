@@ -11,6 +11,7 @@ import {
   getEventById,
   listEventsSince,
   matchesTopic,
+  MEMBERS_AUDIENCE,
   REPLAY_PAGE_SIZE,
 } from '@hull/events/service'
 import { parseTopics, sseFrame, toStreamEvent } from '@hull/events/sse'
@@ -23,16 +24,16 @@ import { currentActor } from '@hull/users/actor'
 //
 // Flow:
 //   1. resolve the actor — the tunnel asks "who are you?" before replaying any
-//      transcript. (Scope-level entitlement — "may THIS actor see session X?" —
+//      transcript. (Per-topic entitlement — "may THIS actor see chat X?" —
 //      waits on the crew-filter primitive; see hull/events/zine.md.)
-//   2. parse the requested topics (scopes) from ?topics=
+//   2. parse the requested topic patterns from ?topics=
 //   3. subscribe to the in-process bus FIRST, buffering, so no event slips
 //      through the gap between the replay query and going live.
-//   4. replay everything newer than Last-Event-ID for those scopes, draining
+//   4. replay everything newer than Last-Event-ID for those topics, draining
 //      past the per-page cap so a long absence loses nothing.
 //   5. flush the buffer (deduped by id) and stream live from then on.
 //
-// This is thin impure wiring (a route); the wire format, scope rule, and replay
+// This is thin impure wiring (a route); the wire format, topic rule, and replay
 // are pure and tested in hull/events (sse.ts, service.ts).
 
 export const Route = createFileRoute('/api/stream')({
@@ -50,7 +51,7 @@ export const Route = createFileRoute('/api/stream')({
         // Parse topics as patterns (e.g., "issue:*", "chat:123")
         const topicPatterns = parseTopics(url.searchParams.get('topics'))
         // For now, all authenticated users see 'members' audience (single-crew)
-        const audience = 'members'
+        const audience = MEMBERS_AUDIENCE
         const lastEventId =
           request.headers.get('Last-Event-ID') ??
           url.searchParams.get('lastEventId') ??
@@ -93,8 +94,8 @@ export const Route = createFileRoute('/api/stream')({
             let lastReplayedId = lastEventId
             const buffer: NotifyPayload[] = []
             const deliver = (note: NotifyPayload) => {
-              // Check topic pattern match (use topic if available, else scope)
-              const noteTopic = note.topic ?? note.scope
+              // Check topic pattern match.
+              const noteTopic = note.topic
               const topicMatch =
                 noteTopic &&
                 topicPatterns.some((pattern) =>
@@ -111,7 +112,6 @@ export const Route = createFileRoute('/api/stream')({
                   sseFrame({
                     id: note.id,
                     type: note.type,
-                    scope: note.scope,
                     topic: note.topic,
                     audience: note.audience,
                     source: note.ephemeral.source,
