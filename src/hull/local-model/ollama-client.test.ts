@@ -62,6 +62,7 @@ describe('pullModel', () => {
       'http://127.0.0.1:11434/api/pull',
       expect.objectContaining({
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'qwen3:8b', stream: false }),
       }),
     )
