@@ -8,6 +8,7 @@ import { createUser } from '@hull/users/service'
 import {
   addMessage,
   createChat,
+  ensureChatVisible,
   getChat,
   listChatSummaries,
   listMembers,
@@ -71,6 +72,16 @@ describe('chat access (RLS)', () => {
 
     const aliceSeesC1 = await asActor(db, alice, (tx) => listMessages(tx, c1))
     expect(aliceSeesC1.map((m) => m.body)).toEqual(['in c1'])
+  })
+
+  it('ensureChatVisible resolves for a member, refuses a non-member', async () => {
+    // alice is in c1 but not c2.
+    await expect(
+      asActor(db, alice, (tx) => ensureChatVisible(tx, c1)),
+    ).resolves.toBeUndefined()
+    await expect(
+      asActor(db, alice, (tx) => ensureChatVisible(tx, c2)),
+    ).rejects.toThrow('not a member')
   })
 
   it('hides a non-member chat row entirely', async () => {
