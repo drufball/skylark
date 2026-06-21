@@ -2,7 +2,8 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 
-import { DEFAULT_DATABASE_URL, type Database } from '@hull/db/client'
+import { type Database } from '@hull/db/client'
+import { resolveDatabaseUrl } from '@hull/db/url'
 import { errorMessage } from '@hull/lib/errors'
 
 import { appendEvent, type AppendEventInput } from './service'
@@ -163,10 +164,10 @@ export function ensureShipLogListener(): void {
   if (listening) return
   listening = true
 
-  const connectionString = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL
-  // A separate connection from the shared query `db`: a LISTEN connection is
-  // occupied by the subscription and can't also run queries.
-  const sql = postgres(connectionString, { max: 1 })
+  // Same target as the query client (incl. the smoke db in test mode) so NOTIFY
+  // and LISTEN never split across databases. A separate connection from the
+  // shared query `db`: a LISTEN connection is occupied and can't also run queries.
+  const sql = postgres(resolveDatabaseUrl(), { max: 1 })
 
   void sql
     .listen(

@@ -5,13 +5,18 @@ import { defineConfig } from '@playwright/test'
 // the PGlite unit suite structurally can't: the routes, the createServerFn
 // doors, actor resolution, and the EventSource ↔ /api/stream path end to end.
 //
-// Deliberately small and hermetic: the server boots with SKYLARK_FAKE_RUNTIME=1
-// (see hull/agent/fake-session.ts) so no pi.dev/Claude call ever fires, and the
-// crew is seeded in global-setup so currentActor() resolves. It needs a local
-// Postgres (npm run db:up) — npm run dev IS production, so smoke runs against the
-// real driver, not PGlite.
+// Deliberately small and hermetic. The server boots with SKYLARK_FAKE_RUNTIME=1,
+// the single switch that makes a smoke run safe on two axes:
+//   - no model: the agent runtime is the deterministic fake (hull/agent/
+//     fake-session.ts), so no pi.dev/Claude call ever fires.
+//   - no real data: the resolver (hull/db/url.ts) points the app at a dedicated
+//     `skylark_smoke` database, so the run can't touch the `skylark` db the dev
+//     server uses — even if DATABASE_URL names it. global-setup creates,
+//     migrates, truncates, and seeds that db before the tests.
 //
-// Not wired into `npm run check` (too slow); run with `npm run smoke`.
+// It needs a local Postgres (npm run db:up) — npm run dev IS production, so smoke
+// runs against the real driver, not PGlite. Not wired into `npm run check` (too
+// slow); run with `npm run smoke`.
 
 const PORT = '3210'
 
