@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { listInstalledModels, pullModel } from './ollama-client'
+import {
+  listInstalledModels,
+  modelPickerOptions,
+  pullModel,
+} from './ollama-client'
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -66,5 +70,24 @@ describe('pullModel', () => {
   it('throws on a failed pull', async () => {
     const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, false, 404)))
     await expect(pullModel('nope:1b', fetchImpl, {})).rejects.toThrow(/404/)
+  })
+})
+
+describe('modelPickerOptions', () => {
+  it('lists the default first, then installed local models as refs', () => {
+    expect(
+      modelPickerOptions('ollama/qwen3:8b', [
+        { name: 'qwen3:8b', sizeBytes: 1 },
+        { name: 'qwen3-coder:30b', sizeBytes: 2 },
+      ]),
+    ).toEqual(['ollama/qwen3:8b', 'ollama/qwen3-coder:30b'])
+  })
+
+  it('keeps a hosted default and dedups it from the installed set', () => {
+    expect(
+      modelPickerOptions('anthropic/claude-sonnet-4-5', [
+        { name: 'qwen3:8b', sizeBytes: 1 },
+      ]),
+    ).toEqual(['anthropic/claude-sonnet-4-5', 'ollama/qwen3:8b'])
   })
 })

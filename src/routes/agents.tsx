@@ -17,7 +17,7 @@ import {
   sendAgentMessage,
 } from '@hull/agent/server'
 import { listLocalModels } from '@hull/local-model/server'
-import { modelPickerOptions } from '@hull/local-model/service'
+import { modelPickerOptions } from '@hull/local-model/ollama-client'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
 import {
   AgentProfiles,
