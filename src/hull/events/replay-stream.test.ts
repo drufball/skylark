@@ -290,6 +290,28 @@ describe('runShipLogStream', () => {
     expect(sentIds(sent)).not.toContain('live-b')
   })
 
+  it('fails closed on a probe error, but re-probes (does not cache the failure)', async () => {
+    // canSee rejects the first time (a DB blip), then succeeds.
+    const canSee = vi
+      .fn<(topic: string) => Promise<boolean>>()
+      .mockRejectedValueOnce(new Error('blip'))
+      .mockResolvedValue(true)
+    const { bus, sent, deps } = harness({
+      getEventById: (id) => Promise.resolve(row({ id })),
+      canSee,
+    })
+    await runShipLogStream(deps, { ...CHATS })
+
+    bus.publish(note({ id: 'first', topic: 'chat:1' })) // probe rejects → dropped
+    await tick()
+    expect(sentIds(sent)).not.toContain('first')
+
+    bus.publish(note({ id: 'second', topic: 'chat:1' })) // re-probes → delivered
+    await tick()
+    expect(sentIds(sent)).toContain('second')
+    expect(canSee).toHaveBeenCalledTimes(2) // the failure was not cached
+  })
+
   it('probes entitlement once per topic, then caches', async () => {
     const canSee = vi.fn().mockResolvedValue(true)
     const { bus, deps } = harness({

@@ -96,11 +96,18 @@ export async function runShipLogStream(
 
   // Entitlement is probed per distinct topic and memoised: a busy chat fires
   // many events on one topic, but the membership check runs once per stream.
+  // A failed probe (a DB blip) fails CLOSED for that one frame but is NOT
+  // cached — we drop the entry so the next event re-probes, rather than denying
+  // the topic for the life of the connection. The `.catch` also means awaiting
+  // canSee never rejects, so the fire-and-forget live path can't leak one.
   const entitlement = new Map<string, Promise<boolean>>()
   const canSee = (topic: string): Promise<boolean> => {
     let allowed = entitlement.get(topic)
     if (!allowed) {
-      allowed = deps.canSee(topic)
+      allowed = deps.canSee(topic).catch(() => {
+        entitlement.delete(topic)
+        return false
+      })
       entitlement.set(topic, allowed)
     }
     return allowed
@@ -140,7 +147,7 @@ export async function runShipLogStream(
   // Subscribe BEFORE replay so nothing lands in the gap; buffer until replay
   // finishes, then deliver the buffer deduped against what replay sent.
   const unsubscribe = deps.subscribe((note) => {
-    if (replayed) void deliver(note)
+    if (replayed) void deliver(note).catch(() => undefined)
     else buffer.push(note)
   })
 

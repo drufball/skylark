@@ -142,7 +142,12 @@ Claude wiring.
   use); `issue:*` is public; `session:*` opens up when the agent service is
   scoped. This is the per-user entitlement the crew-filter promised, applied on
   the read path the durable tables can't cover (live + ephemeral events never
-  hit an RLS-gated query).
+  hit an RLS-gated query). The gate is **memoised per topic for the life of the
+  connection** — a busy chat doesn't re-probe per event — which leaves one known
+  window: a member _removed_ from a chat keeps receiving its events until they
+  reconnect. Accepted for now; the fix when it matters is a short TTL on the
+  memo or invalidating the entry on a `chat.membership_changed` event over the
+  bus.
 - **Agent events are unattributed for now (`actorId` is null).** The runtime
   emits without an actor because a turn is fired server-side without yet
   threading who initiated it. The column and FK exist so attribution can land
