@@ -67,12 +67,14 @@ agent.
   primitive other things will route through, with more planned — so the durable
   core lives in the hull; the _experience_ of it is a rigging view, freely
   customized.
-- **Membership is visibility; events are chat-scoped, never public.** A chat's
-  ship's-log events ride `chat:<id>` so only members' streams receive them, and
-  the doors check membership before returning a transcript. This is the crew
-  invariant applied by construction — though the compile-time crew-filter helper
-  is still deferred (see hull/users/zine.md), so the membership check is
-  explicit in the doors for now.
+- **Membership is visibility, enforced on every read path.** A chat's ship's-log
+  events ride `chat:<id>`, and the SSE stream gates them through `canSeeTopic`
+  (membership) — subscribing to a chat's topic isn't enough to receive it. The
+  transcript doors check membership too. Both consult `chat_members`, the same
+  source of truth the RLS policies (migration 0007) enforce on direct table
+  reads. The remaining piece is wrapping the doors in `withActor` so their reads
+  are RLS-gated too (rather than membership-checked in code) — tracked with the
+  base-connection flip (see hull/users/zine.md).
 - **One backing session per (chat, agent).** An agent's session accumulates the
   conversation, so we feed it only the messages posted since it last spoke. The
   session is recorded on the membership row and reused across turns for

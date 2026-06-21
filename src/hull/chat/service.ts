@@ -24,13 +24,27 @@ import {
  * before returning a transcript.
  */
 
+/** The prefix every chat topic carries — the one home for the chat: grammar. */
+const CHAT_TOPIC_PREFIX = 'chat:'
+
 /**
  * The ship-log **topic** a chat's events ride on; members subscribe to it.
  * Named `*Scope` for historical reasons — the event `scope` field is retired;
  * this returns a topic string.
  */
 export function chatScope(chatId: string): string {
-  return `chat:${chatId}`
+  return `${CHAT_TOPIC_PREFIX}${chatId}`
+}
+
+/**
+ * The chat id a topic refers to, or null if it isn't a chat topic — the inverse
+ * of `chatScope`. So entitlement code asks chat "is this yours, and whose?"
+ * rather than re-deriving the `chat:` format and drifting from it.
+ */
+export function chatIdFromTopic(topic: string): string | null {
+  return topic.startsWith(CHAT_TOPIC_PREFIX)
+    ? topic.slice(CHAT_TOPIC_PREFIX.length)
+    : null
 }
 
 /** The event a posted message announces (one name for emitter + subscriber). */
