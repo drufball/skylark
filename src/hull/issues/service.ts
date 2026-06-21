@@ -7,6 +7,7 @@ import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
 import { PUBLIC_SCOPE } from '@hull/events/service'
 
+import { issueScope } from './scope'
 import {
   issueComments,
   issues,
@@ -29,10 +30,9 @@ import {
  * process is still heard).
  */
 
-/** The scope a single issue's events are published under. */
-export function issueScope(issueId: string): string {
-  return `issue:${issueId}`
-}
+// issueScope lives in ./scope (a node-free leaf — see that file for why).
+// Re-exported here so server callers still reach it through the service.
+export { issueScope }
 
 /** Event types this service emits (one name, used by emitters and subscribers). */
 export const ISSUE_STATUS_CHANGED = 'issue.status_changed'

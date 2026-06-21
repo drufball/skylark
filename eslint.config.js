@@ -13,6 +13,7 @@ export default defineConfig(
       '.output',
       '.nitro',
       '.pgdata',
+      '.stryker-tmp', // transient mutation-test sandbox (gitignored); never lint its instrumented copies
       '.claude/worktrees', // scratch git worktrees from agentic reviews
       'src/routeTree.gen.ts', // generated
     ],

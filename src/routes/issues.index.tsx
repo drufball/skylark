@@ -7,6 +7,7 @@ import {
 import { useCallback, useState } from 'react'
 
 import { listBoard, openIssue } from '@hull/issues/server'
+import { ISSUE_SCOPE_PATTERN } from '@hull/issues/scope'
 import { Dock } from '@rigging/views/dock'
 import { IssueBoardView } from '@rigging/views/issue-board'
 import { useShipLog } from '@rigging/lib/use-ship-log'
@@ -30,7 +31,7 @@ function BoardRoute() {
     void router.invalidate()
   }, [router])
   // Subscribe to all issue events via pattern matching
-  useShipLog(['issue:*'], onEvent)
+  useShipLog([ISSUE_SCOPE_PATTERN], onEvent)
 
   async function open(title: string, body: string) {
     setBusy(true)
