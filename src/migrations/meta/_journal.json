@@ -50,6 +50,13 @@
       "when": 1782032035674,
       "tag": "0006_violet_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782041602570,
+      "tag": "0007_crew_access",
+      "breakpoints": true
     }
   ]
 }

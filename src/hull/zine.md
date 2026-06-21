@@ -37,12 +37,15 @@ action is attributed to), the issues board (and its building agents), and chat
 - **errors util** (`lib/errors.ts`) — `errorMessage()`, the one place that
   renders an unknown thrown value as a string. Importable downward by every
   deck.
-- **crew primitive** — the access invariant "every row knows its crew": crew
-  columns plus a query helper that won't compile without a crew filter. _(Lands
-  in two parts. The data model and actor resolution exist now in the users
-  service ([`users/zine.md`](users/zine.md)); the compile-time crew-filter
-  enforcement is still deferred. The agent service ships single-tenant until
-  that enforcement arrives — a knowingly temporary debt, tracked in its zine.)_
+- **crew primitive** — the access invariant: a resource is visible only to the
+  crew it belongs to. Skylark is single-crew, so access is intra-crew (public,
+  or a specific set of users). Enforced with **Postgres Row-Level Security**,
+  not a compile-time helper: `withActor` (`db/with-actor.ts`) runs a request as
+  the non-superuser `app_user` with an `app.actor` GUC, and policies filter
+  every query in the database itself. The data model + actor resolution live in
+  the users service; the RLS enforcement lands per service (chat first — see
+  [`users/zine.md`](users/zine.md)). The agent service's single-tenant debt is
+  discharged as its sessions come under policy.
 
 ## Structure
 
