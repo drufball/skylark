@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 import { commentOnIssue, openIssue } from './helpers'
 
@@ -15,38 +15,30 @@ interface StreamEvent {
   topic?: string
 }
 
-interface StreamStore {
-  events: StreamEvent[]
-}
-
-const STORE_KEY = '__smokeSSE'
+// The stream events are stashed on the page's window so we can snapshot the
+// count across separate evaluate() calls (open the stream, act, then read).
+type Win = Window & { __smokeSSE?: StreamEvent[] }
 
 /** Open an issue:* stream in the page and stash every event it delivers. */
-async function openIssueStream(page: import('@playwright/test').Page) {
-  await page.evaluate((key) => {
-    const store: StreamStore = { events: [] }
-    ;(globalThis as unknown as Record<string, StreamStore>)[key] = store
+async function openIssueStream(page: Page) {
+  await page.evaluate(() => {
+    const events: StreamEvent[] = []
+    ;(window as Win).__smokeSSE = events
     const es = new EventSource('/api/stream?topics=issue:*')
     es.addEventListener('message', (e: MessageEvent<string>) => {
-      store.events.push(JSON.parse(e.data) as StreamEvent)
+      events.push(JSON.parse(e.data) as StreamEvent)
     })
-  }, STORE_KEY)
+  })
 }
 
-const eventCount = (page: import('@playwright/test').Page) =>
-  page.evaluate(
-    (key) =>
-      (globalThis as unknown as Record<string, StreamStore>)[key].events.length,
-    STORE_KEY,
-  )
+const eventCount = (page: Page) =>
+  page.evaluate(() => (window as Win).__smokeSSE?.length ?? 0)
 
-const lastEvent = (page: import('@playwright/test').Page) =>
-  page.evaluate((key) => {
-    const { events } = (globalThis as unknown as Record<string, StreamStore>)[
-      key
-    ]
+const lastEvent = (page: Page) =>
+  page.evaluate(() => {
+    const events = (window as Win).__smokeSSE ?? []
     return events[events.length - 1]
-  }, STORE_KEY)
+  })
 
 test('an event is delivered live to a separately connected client', async ({
   browser,

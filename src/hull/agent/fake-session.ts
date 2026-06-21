@@ -1,7 +1,15 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
-import { createPiSession, type PiSession, type SessionFactory } from './runtime'
+import type { Database } from '@hull/db/client'
+
+import {
+  type AgentRuntime,
+  createAgentRuntime,
+  createPiSession,
+  type PiSession,
+  type SessionFactory,
+} from './runtime'
 
 // A deterministic stand-in for a pi.dev session: it returns a canned reply and
 // emits the same turn_end/agent_end boundary events the real session does, so
@@ -98,10 +106,18 @@ export const createFakeSession = (): Promise<PiSession> =>
 
 /**
  * The session factory the server should use: the live pi.dev wiring, or the
- * deterministic fake when `SKYLARK_FAKE_RUNTIME` is set. One switch, read once
- * per construction, so the agent door and the chat/issue orchestrators can't
- * drift on which runtime they boot.
+ * deterministic fake when `SKYLARK_FAKE_RUNTIME` is set.
  */
 export function resolveSessionFactory(): SessionFactory {
   return process.env[FAKE_RUNTIME_ENV] ? createFakeSession : createPiSession
+}
+
+/**
+ * The runtime every SERVER construction site boots — the agent door and the
+ * chat + issue orchestrators. Centralised so the factory choice (live vs fake)
+ * has exactly one home and the three sites can't drift. (The CLI builds its own
+ * always-live runtime directly; it's interactive and never part of a smoke run.)
+ */
+export function createServerRuntime(db: Database): AgentRuntime {
+  return createAgentRuntime({ db, factory: resolveSessionFactory() })
 }

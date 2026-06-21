@@ -4,8 +4,8 @@ import { createServerFn } from '@tanstack/react-start'
 import { db } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
 
-import { type AgentRuntime, createAgentRuntime, DEFAULT_MODEL } from './runtime'
-import { resolveSessionFactory } from './fake-session'
+import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
+import { createServerRuntime } from './fake-session'
 import {
   CHAT_PROFILE,
   getProfileByName,
@@ -34,10 +34,7 @@ import { toChatItems } from './transcript'
 // cancelled. Lazy so this server-only wiring never runs in the client bundle.
 let runtimeSingleton: AgentRuntime | undefined
 function runtime(): AgentRuntime {
-  runtimeSingleton ??= createAgentRuntime({
-    db,
-    factory: resolveSessionFactory(),
-  })
+  runtimeSingleton ??= createServerRuntime(db)
   return runtimeSingleton
 }
 

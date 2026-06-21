@@ -9,8 +9,7 @@ import { completeSimple } from '@earendil-works/pi-ai'
 import { db } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
 import { findHostedModel } from '@hull/agent/models'
-import { createAgentRuntime } from '@hull/agent/runtime'
-import { resolveSessionFactory } from '@hull/agent/fake-session'
+import { createServerRuntime, FAKE_RUNTIME_ENV } from '@hull/agent/fake-session'
 import { getUserByHandle } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
 
@@ -119,6 +118,11 @@ export const nodeGitOps: GitOps = {
  * the branch is always valid even with no network.
  */
 export async function generateSlug(issue: IssueRow): Promise<string> {
+  // Hermetic under the fake-runtime flag: skip the LLM entirely so a build-path
+  // smoke test never reaches the network. This is the issues orchestrator's
+  // SECOND model entry point (the runtime factory is the other); the flag means
+  // "no model call, anywhere", not just "no coding-agent session".
+  if (process.env[FAKE_RUNTIME_ENV]) return slugify(issue.title)
   try {
     const model = findHostedModel('anthropic', [
       'claude-haiku-4-5',
@@ -166,7 +170,7 @@ export async function ensureOrchestrator(): Promise<Orchestrator> {
   const builder =
     (await getUserByHandle(db, 'builder')) ??
     (await getUserByHandle(db, 'drufball'))
-  const runtime = createAgentRuntime({ db, factory: resolveSessionFactory() })
+  const runtime = createServerRuntime(db)
 
   const orch = createOrchestrator({
     db,
