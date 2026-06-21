@@ -1,7 +1,7 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { createServerFn } from '@tanstack/react-start'
 
-import { db } from '@hull/db/client'
+import { db, withActor } from '@hull/db/client'
 import { currentActor } from '@hull/users/actor'
 import { listUsers } from '@hull/users/service'
 
@@ -44,36 +44,38 @@ export const listChatCrew = createServerFn({ method: 'GET' }).handler(() =>
 export const listChats = createServerFn({ method: 'GET' }).handler(async () => {
   bootChatOrchestrator()
   const me = await currentActor()
-  const chats = await listChatSummaries(db, me.id)
+  const chats = await withActor(me.id, (tx) => listChatSummaries(tx, me.id))
   return { me: { id: me.id, handle: me.handle }, chats }
 })
 
 /**
- * A chat's members + messages — but only if the current actor is a member
- * (membership is visibility). Returns null when they're not, so the route can
- * fall back rather than leak that the chat exists.
+ * A chat's members + messages — RLS-filtered to the current actor. Reads run
+ * under `withActor`, so a non-member sees no chat row and gets null (the route
+ * falls back rather than leaking that the chat exists) — no in-code membership
+ * check; the policy is the gate.
  */
 export const getChatThread = createServerFn({ method: 'GET' })
   .validator((chatId: string) => chatId)
   .handler(async ({ data: chatId }) => {
     const me = await currentActor()
-    if (!(await isMember(db, chatId, me.id))) return null
-    const chat = await getChat(db, chatId)
-    if (!chat) return null
-    const [members, messages] = await Promise.all([
-      listMembers(db, chatId),
-      listMessages(db, chatId),
-    ])
-    return {
-      chat,
-      members: members.map((m) => ({
-        userId: m.userId,
-        handle: m.handle,
-        type: m.type,
-      })),
-      messages,
-      meId: me.id,
-    }
+    return withActor(me.id, async (tx) => {
+      const chat = await getChat(tx, chatId)
+      if (!chat) return null
+      // Sequential, not Promise.all: a transaction is one connection, so its
+      // queries can't run concurrently the way the pooled `db` could.
+      const members = await listMembers(tx, chatId)
+      const messages = await listMessages(tx, chatId)
+      return {
+        chat,
+        members: members.map((m) => ({
+          userId: m.userId,
+          handle: m.handle,
+          type: m.type,
+        })),
+        messages,
+        meId: me.id,
+      }
+    })
   })
 
 /**

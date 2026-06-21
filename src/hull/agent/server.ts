@@ -2,7 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import { createServerFn } from '@tanstack/react-start'
 
-import { db } from '@hull/db/client'
+import { db, withActor } from '@hull/db/client'
 import { canSeeSession } from '@hull/access/visibility'
 import { errorMessage } from '@hull/lib/errors'
 import { currentActor } from '@hull/users/actor'
@@ -77,11 +77,8 @@ function notAllowed(): never {
 export const listAgentSessions = createServerFn({ method: 'GET' }).handler(
   async () => {
     const actor = await currentActor()
-    const sessions = await listSessions(db)
-    const visible = await Promise.all(
-      sessions.map((s) => canSeeSession(db, actor.id, s.id)),
-    )
-    return sessions.filter((_, i) => visible[i])
+    // RLS filters the list to what this actor may see — no per-session probe.
+    return withActor(actor.id, (tx) => listSessions(tx))
   },
 )
 
@@ -89,11 +86,13 @@ export const listAgentSessions = createServerFn({ method: 'GET' }).handler(
 export const getAgentChat = createServerFn({ method: 'GET' })
   .validator((sessionId: string) => sessionId)
   .handler(async ({ data: sessionId }) => {
-    if (!(await actorCanSeeSession(sessionId))) return null
-    const session = await getSession(db, sessionId)
-    if (!session) return null
-    const messages = await getMessages(db, sessionId)
-    return { session, items: toChatItems(messages.map((m) => m.message)) }
+    const actor = await currentActor()
+    return withActor(actor.id, async (tx) => {
+      const session = await getSession(tx, sessionId)
+      if (!session) return null // RLS hid it (not visible) or it doesn't exist
+      const messages = await getMessages(tx, sessionId)
+      return { session, items: toChatItems(messages.map((m) => m.message)) }
+    })
   })
 
 /**
