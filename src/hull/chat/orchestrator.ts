@@ -2,7 +2,8 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { notifyOnly } from '@hull/events/bus'
-import { MEMBERS_AUDIENCE } from '@hull/events/service'
+import { getEventById, MEMBERS_AUDIENCE } from '@hull/events/service'
+import { errorMessage } from '@hull/lib/errors'
 import { createSession } from '@hull/agent/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
@@ -10,9 +11,13 @@ import { chatProgressLine } from '@hull/agent/progress'
 
 import {
   addMessage,
+  CHAT_MESSAGE_POSTED,
   chatScope,
   formatTranscript,
+  getMessage,
+  listAllChats,
   listMembers,
+  listMessages,
   messagesSinceAgent,
   setMemberSession,
   targetsForMessage,
@@ -23,6 +28,12 @@ import {
  * members should answer (1:1 → the agent always; group → only on @mention) and
  * drives each one's backing agent session to produce a reply, which it posts
  * back as a chat message authored by that agent.
+ *
+ * It reacts to the ship's log, not to an inline call: every posted message emits
+ * a durable `chat.message_posted` event, and `handleBusNote` drives the reply
+ * off the bus — the same path whether the message came from the web door or
+ * (in future) another process, mirroring the issues orchestrator. `reconcile`
+ * re-drives any human message left unanswered by a restart.
  *
  * The clean chat transcript and the agent's full tool-call transcript are two
  * surfaces over one conversation: we feed the agent the chat messages it hasn't
@@ -150,7 +161,79 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     }
   }
 
-  return { respond, reply }
+  /**
+   * The ship-log subscription handler: a `chat.message_posted` note arrived.
+   * Read the full event by id (the note carries only {id,type,topic,audience}),
+   * fetch the message it points at, and drive the reply. An agent-authored
+   * message resolves to no targets (only a human triggers a reply), so the
+   * agent's own reply event can't cascade into a loop. A bad payload or a
+   * vanished message is dropped quietly — another ship's event must not sail
+   * unchecked into the reply flow.
+   */
+  async function handleBusNote(note: {
+    id: string
+    type: string
+  }): Promise<void> {
+    if (note.type !== CHAT_MESSAGE_POSTED) return
+    const event = await getEventById(db, note.id)
+    if (!event) return
+    const payload = event.payload as {
+      chatId?: unknown
+      messageId?: unknown
+      authorId?: unknown
+    }
+    if (
+      typeof payload.chatId !== 'string' ||
+      typeof payload.messageId !== 'string' ||
+      typeof payload.authorId !== 'string'
+    )
+      return
+    const message = await getMessage(db, payload.messageId)
+    if (!message) return
+    await respond({
+      chatId: payload.chatId,
+      authorId: payload.authorId,
+      body: message.body,
+    })
+  }
+
+  /**
+   * Startup reconciliation: a `chat.message_posted` event is only delivered to
+   * the bus subscription live, so a human message posted just before a restart
+   * leaves an agent reply owed but undriven. For every chat, re-drive the reply
+   * to its latest human message — `reply`'s "unseen since the agent" check makes
+   * this idempotent, so a chat that's already caught up is left untouched.
+   */
+  async function reconcile(): Promise<void> {
+    for (const chat of await listAllChats(db)) {
+      await resumeChat(chat.id).catch((err: unknown) => {
+        console.error(
+          `chat reconcile ${chat.id} failed (continuing): ${errorMessage(err)}`,
+        )
+      })
+    }
+  }
+
+  /** Re-drive the reply to a chat's most recent human message, if any. */
+  async function resumeChat(chatId: string): Promise<void> {
+    const [members, messages] = await Promise.all([
+      listMembers(db, chatId),
+      listMessages(db, chatId),
+    ])
+    const humanIds = new Set(
+      members.filter((m) => m.type === 'human').map((m) => m.userId),
+    )
+    // messages are ascending by id, so the last human entry is the latest one.
+    const lastHuman = messages.filter((m) => humanIds.has(m.authorId)).at(-1)
+    if (!lastHuman) return
+    await respond({
+      chatId,
+      authorId: lastHuman.authorId,
+      body: lastHuman.body,
+    })
+  }
+
+  return { respond, reply, handleBusNote, reconcile }
 }
 
 export type ChatOrchestrator = ReturnType<typeof createChatOrchestrator>

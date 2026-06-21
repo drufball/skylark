@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
+import { MEMBERS_AUDIENCE } from '@hull/events/service'
 import { users, type UserRow } from '@hull/users/schema'
 
 import {
@@ -31,6 +32,9 @@ import {
 export function chatScope(chatId: string): string {
   return `chat:${chatId}`
 }
+
+/** The event a posted message announces (one name for emitter + subscriber). */
+export const CHAT_MESSAGE_POSTED = 'chat.message_posted'
 
 // --- Pure decision logic (unit-tested directly) ----------------------------
 
@@ -154,6 +158,11 @@ export async function isMember(
   return rows.length > 0
 }
 
+/** Every chat, newest activity first — what the orchestrator's reconcile scans. */
+export async function listAllChats(db: Database): Promise<ChatRow[]> {
+  return db.select().from(chats).orderBy(desc(chats.lastMessageAt))
+}
+
 /** Chats the user is a member of, newest activity first — the sidebar. */
 export async function listChatsForUser(
   db: Database,
@@ -222,6 +231,18 @@ export async function listMessages(
     .orderBy(asc(chatMessages.id))
 }
 
+/** One message by id — the bus handler reads the body a posted-message note refers to. */
+export async function getMessage(
+  db: Database,
+  messageId: string,
+): Promise<ChatMessageRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.id, messageId))
+  return row
+}
+
 /**
  * Append a message, bump the chat's activity clock, and announce it on the
  * ship's log with topic (chat:<id>) and audience (members). Membership is
@@ -240,10 +261,10 @@ export async function addMessage(
     return message
   })
   await emitEvent(db, {
-    type: 'chat.message_posted',
+    type: CHAT_MESSAGE_POSTED,
     source: 'chat',
     topic: chatScope(input.chatId),
-    audience: 'members',
+    audience: MEMBERS_AUDIENCE,
     actorId: input.authorId,
     payload: {
       chatId: input.chatId,

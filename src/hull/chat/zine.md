@@ -28,21 +28,28 @@ the rigging.
 - **Service logic** (`service.ts`) — pure persistence + the pure response rules
   (`parseMentions`, `targetsForMessage`, `formatTranscript`). Touches only its
   own three tables (plus a read-join onto users for display).
-- **Orchestrator** (`orchestrator.ts`) — the impure shell that turns a posted
-  message into agent replies: who should answer, drive each one's session, lift
-  the assistant text back into the chat. Injected runtime, so it's unit-tested
-  against PGlite with a fake.
+- **Orchestrator** (`orchestrator.ts`) — turns a posted message into agent
+  replies: who should answer, drive each one's session, lift the assistant text
+  back into the chat. `handleBusNote` is its ship-log subscription (a posted
+  message drives the reply); `reconcile` is startup recovery. Injected runtime,
+  so the decisions are unit-tested against PGlite with a fake.
+- **The live shell** (`orchestrator-live.ts`) — the impure wiring:
+  `ensureChatOrchestrator` boots it into the server process with the real
+  runtime, subscribes it to `shipLogBus`, and runs reconciliation. `v8 ignore`d.
 - **Doors** — `server.ts` (the web doors; the front-door route is the chat UI).
 
 ## Structure
 
 **A message, end to end.** A human posts → `postChatMessage` writes the row
-(durable immediately) and emits `chat.message_posted` (scoped to the chat) →
-fires the orchestrator in the background. The orchestrator picks the target
-agents, and for each: ensures a backing session, feeds it the messages it hasn't
-seen, runs a turn (streaming `chat.agent_progress` for the live "working…"
-placeholder), then posts the assistant's text as a new chat message — another
-`chat.message_posted` the browser hears over SSE.
+(durable immediately) and emits `chat.message_posted` (topic `chat:<id>`,
+audience `members`) → the durable row + `pg_notify` reach the server's LISTEN
+connection, which fans onto `shipLogBus` → the orchestrator's `handleBusNote`
+reads the event, picks the target agents, and for each: ensures a backing
+session, feeds it the messages it hasn't seen, runs a turn (streaming
+`chat.agent_progress` for the live "working…" placeholder), then posts the
+assistant's text as a new chat message — another `chat.message_posted` the
+browser hears over SSE. The reply runs **off the bus, not inline**: the same
+handler would hear a message posted from another process.
 
 **Who answers.** Only a human's message triggers a reply (agents never trigger
 agents, so a reply can't cascade into a loop). In a **1:1** (one human + one
@@ -73,12 +80,27 @@ agent.
 - **Only assistant text crosses into the chat.** Thinking and tool calls stay in
   the agent session. The chat is for people; the session monitor (Agents view)
   is for watching the work.
-- **Replies are fire-and-forget.** Posting is durable the instant the row is
-  written; the agent's answer arrives later over the ship's log. A failed reply
-  is logged, never blocks the post.
+- **The reply is event-driven, not inline — and that is the point.** Posting is
+  durable the instant the row is written; the reply is driven off the ship's log
+  by `handleBusNote`, not by an inline call from the web door. Same reasoning as
+  the issues orchestrator: a message that arrives from another process (a future
+  chat CLI, an agent posting elsewhere) is still heard, because the trigger is a
+  durable event, not an in-process call. A failed reply is logged, never blocks
+  the post.
+- **Startup reconciliation recovers an interrupted reply.** A
+  `chat.message_posted` event reaches the subscription only live, so a human
+  message posted just before a restart would leave a reply owed but undriven. On
+  boot, `reconcile` re-drives the reply to each chat's latest human message;
+  `reply`'s "unseen since the agent last spoke" check makes it idempotent, so a
+  caught-up chat is untouched.
 
 ## Changelog
 
+- **#2** — The reply path moves onto the ship's log: a posted message drives the
+  agent reply through the orchestrator's `handleBusNote` subscription (the
+  event-driven path the issues orchestrator uses) instead of an inline call from
+  the web door, and `reconcile` recovers a reply a restart interrupted. A new
+  `orchestrator-live.ts` boots + subscribes it into the server process.
 - **#1** — The chat service: chats, members (= visibility), messages; the
   response rules (1:1 auto, group @mention); backing agent sessions; the
   front-door view with a live working placeholder. The ship's front door is now

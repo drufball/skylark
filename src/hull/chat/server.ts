@@ -5,13 +5,8 @@ import { db } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
 import { currentActor } from '@hull/users/actor'
 import { listUsers } from '@hull/users/service'
-import {
-  createAgentRuntime,
-  createPiSession,
-  type AgentRuntime,
-} from '@hull/agent/runtime'
 
-import { type ChatOrchestrator, createChatOrchestrator } from './orchestrator'
+import { ensureChatOrchestrator } from './orchestrator-live'
 import {
   addMember,
   addMessage,
@@ -26,31 +21,20 @@ import {
 } from './service'
 
 // The web doors onto the chat service. Posting a message is durable immediately
-// (Postgres is the truth); the agent's reply is produced fire-and-forget by the
-// chat orchestrator, and both the message and the agent's live progress reach
+// (Postgres is the truth); the agent's reply is driven off the ship's log by the
+// chat orchestrator (not inline — the same event-driven path the issues
+// orchestrator uses), and both the message and the agent's live progress reach
 // the browser over the ship's log (SSE), scoped to the chat.
 
-// One orchestrator + agent runtime per server process, lazily created. The
-// runtime registry must outlive a request so a chat's backing sessions persist.
-let orchestratorSingleton: ChatOrchestrator | undefined
-function orchestrator(): ChatOrchestrator {
-  if (!orchestratorSingleton) {
-    const runtime: AgentRuntime = createAgentRuntime({
-      db,
-      factory: createPiSession,
-    })
-    orchestratorSingleton = createChatOrchestrator({ db, runtime })
-  }
-  return orchestratorSingleton
-}
-
-/** Run the agent reply in the background; the row + events are the truth. */
-function fireRespond(chatId: string, authorId: string, body: string): void {
-  void orchestrator()
-    .respond({ chatId, authorId, body })
-    .catch((err: unknown) => {
-      console.error(`chat ${chatId} respond failed: ${errorMessage(err)}`)
-    })
+/**
+ * Ensure the chat orchestrator is booted + subscribed to the ship's log in this
+ * process (idempotent). Fire-and-forget for the GET doors: opening the app runs
+ * reconcile, recovering any agent reply a restart interrupted.
+ */
+function bootChatOrchestrator(): void {
+  void ensureChatOrchestrator().catch((err: unknown) => {
+    console.error(`chat orchestrator boot failed: ${errorMessage(err)}`)
+  })
 }
 
 /** Everyone aboard — the picker for who's in a chat. */
@@ -60,6 +44,7 @@ export const listChatCrew = createServerFn({ method: 'GET' }).handler(() =>
 
 /** The current actor's chats, newest first — the sidebar. */
 export const listChats = createServerFn({ method: 'GET' }).handler(async () => {
+  bootChatOrchestrator()
   const me = await currentActor()
   const chats = await listChatSummaries(db, me.id)
   return { me: { id: me.id, handle: me.handle }, chats }
@@ -117,13 +102,16 @@ export const postChatMessage = createServerFn({ method: 'POST' })
     const me = await currentActor()
     if (!(await isMember(db, data.chatId, me.id)))
       throw new Error('not a member of this chat')
+    // Subscribe the orchestrator BEFORE the post, so the message's ship-log
+    // event is heard and drives the reply. The reply runs off the bus, not from
+    // an inline call here — the same path an agent's cross-process post takes.
+    await ensureChatOrchestrator()
     await addMessage(db, {
       id: uuidv7(),
       chatId: data.chatId,
       authorId: me.id,
       body: data.body,
     })
-    fireRespond(data.chatId, me.id, data.body)
     return { ok: true }
   })
 

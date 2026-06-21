@@ -1,6 +1,6 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { appendMessage } from '@hull/agent/service'
@@ -16,11 +16,21 @@ import {
 } from './orchestrator'
 import {
   addMessage,
+  CHAT_MESSAGE_POSTED,
   chatScope,
   createChat,
   listMembers,
   listMessages,
 } from './service'
+
+/** The id of the chat.message_posted event addMessage emitted for a chat. */
+async function postedEventId(db: Database, chatId: string): Promise<string> {
+  const events = await listEventsSince(db, {
+    topicPatterns: [chatScope(chatId)],
+    audience: 'members',
+  })
+  return defined(events.find((e) => e.type === CHAT_MESSAGE_POSTED)).id
+}
 
 describe('assistantTextFrom', () => {
   it('lifts only assistant text out of a transcript tail', () => {
@@ -323,5 +333,163 @@ describe('chat orchestrator', () => {
 
     const messages = await listMessages(db, chatId)
     expect(messages[1].body).toBe('from return value')
+  })
+
+  it('drives a reply when a chat.message_posted note arrives off the bus', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: dru,
+      body: 'hello tilde',
+    })
+
+    const orch = createChatOrchestrator({
+      db,
+      runtime: fakeRuntime(db, 'hi dru'),
+    })
+    await orch.handleBusNote({
+      id: await postedEventId(db, chatId),
+      type: CHAT_MESSAGE_POSTED,
+    })
+
+    expect((await listMessages(db, chatId)).map((m) => m.authorHandle)).toEqual(
+      ['dru', 'tilde'],
+    )
+  })
+
+  it('ignores a bus note that is not a chat message', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.handleBusNote({
+      id: await postedEventId(db, chatId),
+      type: 'issue.status_changed',
+    })
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
+  })
+
+  it('drops a note whose event or message is gone', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.handleBusNote({ id: 'no-such-event', type: CHAT_MESSAGE_POSTED })
+
+    expect(await listMessages(db, chatId)).toHaveLength(0)
+  })
+
+  it('does not cascade on an agent-authored message (no reply loop)', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    // The agent itself posts — its own posted-message event must not trigger a
+    // reply (only a human triggers), so there's no infinite cascade.
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: tilde,
+      body: 'i spoke',
+    })
+
+    const orch = createChatOrchestrator({
+      db,
+      runtime: fakeRuntime(db, 'loop?'),
+    })
+    await orch.handleBusNote({
+      id: await postedEventId(db, chatId),
+      type: CHAT_MESSAGE_POSTED,
+    })
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // the agent's only
+  })
+
+  it('reconcile answers a human message a restart left unanswered, idempotently', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    // A human message landed but the reply never ran (turn interrupted).
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: dru,
+      body: 'still there?',
+    })
+
+    const orch = createChatOrchestrator({
+      db,
+      runtime: fakeRuntime(db, 'here!'),
+    })
+    await orch.reconcile()
+    expect((await listMessages(db, chatId)).map((m) => m.authorHandle)).toEqual(
+      ['dru', 'tilde'],
+    )
+
+    // Running reconcile again must not double-reply — the agent already answered.
+    await orch.reconcile()
+    expect(await listMessages(db, chatId)).toHaveLength(2)
+  })
+
+  it('reconcile leaves an already-answered chat untouched', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'ok') })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+    await orch.respond({ chatId, authorId: dru, body: 'hi' })
+    expect(await listMessages(db, chatId)).toHaveLength(2)
+
+    await orch.reconcile()
+    expect(await listMessages(db, chatId)).toHaveLength(2)
+  })
+
+  it('reconcile is a no-op for a chat with only agent messages', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: tilde, body: 'hi' })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.reconcile()
+
+    expect(await listMessages(db, chatId)).toHaveLength(1)
+  })
+
+  it('drops a posted-message note whose payload is malformed', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    // A real event row, but the payload is missing the string fields the
+    // handler needs — another ship's event must not sail unchecked.
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: CHAT_MESSAGE_POSTED,
+      source: 'chat',
+      topic: chatScope(chatId),
+      audience: 'members',
+      payload: { chatId: 42 },
+    })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
+
+    expect(await listMessages(db, chatId)).toHaveLength(0)
+  })
+
+  it('reconcile keeps going when one chat reply throws', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'boom?' })
+
+    const throwing: ChatAgentRuntime = {
+      runTurn: () => Promise.reject(new Error('turn failed')),
+    }
+    const errSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    const orch = createChatOrchestrator({ db, runtime: throwing })
+    // A per-chat failure is caught and logged, not thrown — reconcile resolves.
+    await expect(orch.reconcile()).resolves.toBeUndefined()
+    expect(errSpy).toHaveBeenCalled()
+    errSpy.mockRestore()
   })
 })
