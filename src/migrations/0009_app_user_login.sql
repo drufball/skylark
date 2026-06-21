@@ -1,0 +1,16 @@
+-- Crew access, part 3: the app connects AS app_user, so RLS is fail-closed.
+--
+-- Until now the app connected as the superuser, which BYPASSES RLS — the
+-- policies only bit inside `withActor` (which does `set local role app_user`).
+-- Every door wraps its reads/writes that way, so access WAS enforced; but a path
+-- that forgot to would silently see everything (fail OPEN). Giving app_user
+-- LOGIN lets the app's normal connection BE app_user, so a forgotten gate sees
+-- nothing (fail CLOSED). The superuser is reserved for system plumbing —
+-- migrations, the agent runtime, the orchestrators' reconcile — reached through
+-- the separate `systemDb` handle, never by anything that serves a request or
+-- runs an agent's instructions.
+--
+-- Local/single-crew credential: app_user / app_user, the same posture as the
+-- committed postgres / postgres. A real deployment overrides it (rotate the
+-- password and point the app at it via APP creds) — see hull/db/url.ts.
+alter role app_user with login password 'app_user';

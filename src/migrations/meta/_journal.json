@@ -64,6 +64,13 @@
       "when": 1782052785099,
       "tag": "0008_agent_session_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782057365852,
+      "tag": "0009_app_user_login",
+      "breakpoints": true
     }
   ]
 }

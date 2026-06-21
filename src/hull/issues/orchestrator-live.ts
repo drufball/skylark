@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 
 import { completeSimple } from '@earendil-works/pi-ai'
 
-import { db } from '@hull/db/client'
+import { systemDb } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
 import { findHostedModel } from '@hull/agent/models'
 import { createServerRuntime } from '@hull/agent/fake-session'
@@ -168,13 +168,16 @@ let started: Orchestrator | undefined
 export async function ensureOrchestrator(): Promise<Orchestrator> {
   if (started) return started
 
+  // systemDb (superuser): the orchestrator is fixed plumbing — reconcile scans
+  // for marooned builds and it drives the builder runtime, which under app_user
+  // with no actor would fail closed. It reacts to events, not requests.
   const builder =
-    (await getUserByHandle(db, 'builder')) ??
-    (await getUserByHandle(db, 'drufball'))
-  const runtime = createServerRuntime(db)
+    (await getUserByHandle(systemDb, 'builder')) ??
+    (await getUserByHandle(systemDb, 'drufball'))
+  const runtime = createServerRuntime(systemDb)
 
   const orch = createOrchestrator({
-    db,
+    db: systemDb,
     git: nodeGitOps,
     runtime,
     builderUserId: builder?.id ?? '',

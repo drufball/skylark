@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 
 import { type Database } from '@hull/db/client'
-import { resolveDatabaseUrl } from '@hull/db/url'
+import { resolveAppUrl } from '@hull/db/url'
 import { errorMessage } from '@hull/lib/errors'
 
 import { appendEvent, type AppendEventInput } from './service'
@@ -165,9 +165,10 @@ export function ensureShipLogListener(): void {
   listening = true
 
   // Same target as the query client (incl. the smoke db in test mode) so NOTIFY
-  // and LISTEN never split across databases. A separate connection from the
-  // shared query `db`: a LISTEN connection is occupied and can't also run queries.
-  const sql = postgres(resolveDatabaseUrl(), { max: 1 })
+  // and LISTEN never split across databases — and as the same app_user role
+  // (LISTEN needs no special privilege). A separate connection from the shared
+  // query `db`: a LISTEN connection is occupied and can't also run queries.
+  const sql = postgres(resolveAppUrl(), { max: 1 })
 
   void sql
     .listen(

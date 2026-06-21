@@ -38,5 +38,37 @@ export default defineConfig(
     plugins: { 'react-hooks': reactHooks },
     rules: reactHooks.configs['recommended-latest'].rules,
   },
+  // `systemDb` (hull/db/client) is the RLS-BYPASSING superuser handle. Crew
+  // access is fail-closed by construction only as long as request/agent paths
+  // go through `db` + `withActor`; handing them `systemDb` silently reopens the
+  // whole leak. So it's import-banned everywhere…
+  {
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@hull/db/client',
+              importNames: ['systemDb'],
+              message:
+                'systemDb bypasses RLS — use `db` + `withActor` (or `withCurrentActor`). Only fixed system plumbing may use it; if this file genuinely needs every row, add it to the allowlist override in eslint.config.js.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // …except the fixed system plumbing that legitimately needs all rows: the
+  // agent runtime (persists transcripts) and the orchestrators (reconcile +
+  // drive the runtime). A fourth importer has to consciously join this list.
+  {
+    files: [
+      'src/hull/agent/server.ts',
+      'src/hull/chat/orchestrator-live.ts',
+      'src/hull/issues/orchestrator-live.ts',
+    ],
+    rules: { 'no-restricted-imports': 'off' },
+  },
   prettier,
 )
