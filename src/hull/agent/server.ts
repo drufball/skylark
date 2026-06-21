@@ -1,9 +1,12 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
+import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import { createServerFn } from '@tanstack/react-start'
 
 import { db } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
 
+import { defaultModelRef } from './models'
+import { isHostedProvider, providersWithStatus } from './providers'
 import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
 import { createServerRuntime } from './fake-session'
 import {
@@ -129,3 +132,46 @@ export const listAgentExtensions = createServerFn({ method: 'GET' }).handler(
 export const saveAgentProfile = createServerFn({ method: 'POST' })
   .validator((input: ProfileInput) => normalizeProfileInput(input))
   .handler(({ data }) => upsertProfile(db, data))
+
+// --- Model providers & keys (the Models surface) ---------------------------
+
+/** The model a new session defaults to (the resolved SKYLARK_DEFAULT_MODEL). */
+export const getDefaultModel = createServerFn({ method: 'GET' }).handler(() =>
+  Promise.resolve({ ref: defaultModelRef() }),
+)
+
+/**
+ * The hosted providers and whether each has a key configured. Auth lives in
+ * pi.dev's own credential store (env var or `~/.pi/agent/auth.json`), the same
+ * store the runtime reads when it boots a session — so a key added here is live
+ * on the next turn.
+ */
+export const listModelProviders = createServerFn({ method: 'GET' }).handler(
+  () => {
+    const auth = AuthStorage.create()
+    return Promise.resolve(
+      providersWithStatus((id) => auth.getAuthStatus(id).configured),
+    )
+  },
+)
+
+/** Store an API key for a hosted provider. Rejects unknown providers / blanks. */
+export const setProviderKey = createServerFn({ method: 'POST' })
+  .validator((input: { provider: string; key: string }) => input)
+  .handler(({ data }) => {
+    if (!isHostedProvider(data.provider)) {
+      throw new Error(`Unknown provider: ${data.provider}`)
+    }
+    const key = data.key.trim()
+    if (!key) throw new Error('API key is empty')
+    AuthStorage.create().set(data.provider, { type: 'api_key', key })
+    return Promise.resolve({ ok: true })
+  })
+
+/** Remove a stored API key for a hosted provider. */
+export const removeProviderKey = createServerFn({ method: 'POST' })
+  .validator((provider: string) => provider)
+  .handler(({ data: provider }) => {
+    AuthStorage.create().remove(provider)
+    return Promise.resolve({ ok: true })
+  })

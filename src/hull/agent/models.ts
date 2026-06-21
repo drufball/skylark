@@ -1,6 +1,12 @@
 import { getModels, getProviders } from '@earendil-works/pi-ai'
 import type { Api, KnownProvider, Model } from '@earendil-works/pi-ai'
 
+import { DEFAULT_OLLAMA_BASE_URL, ollamaBaseUrl } from '@hull/lib/ollama'
+
+// Re-exported: the Ollama URL helpers live in hull/lib (shared with the
+// local-model service) but are part of this module's public surface.
+export { DEFAULT_OLLAMA_BASE_URL, ollamaBaseUrl }
+
 // Provider-aware model resolution. A stored model is a string the runtime hands
 // to pi.dev; this module turns that string into a concrete pi `Model`, picking
 // the provider from a `provider/modelId` prefix. Hosted-provider models come
@@ -31,9 +37,6 @@ export function defaultModelRef(env: NodeJS.ProcessEnv = process.env): string {
   if (configured) return configured
   return FALLBACK_DEFAULT_MODEL
 }
-
-/** Where a local Ollama server exposes its OpenAI-compatible API by default. */
-export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'
 
 /**
  * Default context window assumed for an Ollama model. This is NOT inert
@@ -76,27 +79,6 @@ export function parseModelRef(ref: string): ModelRef {
     throw new Error(`Malformed model ref: "${ref}"`)
   }
   return { provider, modelId }
-}
-
-/**
- * The base URL of the local Ollama OpenAI-compatible endpoint.
- *
- * `OLLAMA_BASE_URL` wins when set (a full `…/v1` URL). Otherwise we accept
- * `OLLAMA_HOST` — Ollama's own env var, which hoist/setup will set — as a
- * host[:port] or bare URL and normalize it to the `/v1` OpenAI path. Falling
- * back to the loopback default keeps a fresh clone working with no config.
- */
-export function ollamaBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = env.OLLAMA_BASE_URL?.trim()
-  if (explicit) return explicit
-
-  const host = env.OLLAMA_HOST?.trim()
-  if (host) {
-    const withScheme = /^https?:\/\//.test(host) ? host : `http://${host}`
-    return `${withScheme.replace(/\/+$/, '')}/v1`
-  }
-
-  return DEFAULT_OLLAMA_BASE_URL
 }
 
 /**

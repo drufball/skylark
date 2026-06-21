@@ -1,14 +1,15 @@
 import type { ComponentType, ReactNode } from 'react'
-import { Anchor, Bot, Hammer, MessageSquare } from 'lucide-react'
+import { Anchor, Bot, Boxes, Hammer, MessageSquare } from 'lucide-react'
 
 import { cn } from '@rigging/lib/utils'
 
 // The dock: the ship's persistent app-shell nav. It switches between the ship's
-// surfaces — Chat (the front door), Issues (the board), and Agents (profiles +
-// the session monitor). Presentational and router-agnostic: the link element is
-// injected so the dock is testable without a router and reusable across routes.
+// surfaces — Chat (the front door), Issues (the board), Agents (profiles + the
+// session monitor), and Models (local + hosted models). Presentational and
+// router-agnostic: the link element is injected so the dock is testable without
+// a router and reusable across routes.
 
-export type DockSection = 'chat' | 'issues' | 'agents'
+export type DockSection = 'chat' | 'issues' | 'agents' | 'models'
 
 /** A navigation link, injected so the dock doesn't depend on a router. */
 export type DockLink = ComponentType<{
@@ -28,6 +29,7 @@ const ITEMS: DockItem[] = [
   { section: 'chat', to: '/', label: 'Chat', Icon: MessageSquare },
   { section: 'issues', to: '/issues', label: 'Issues', Icon: Hammer },
   { section: 'agents', to: '/agents', label: 'Agents', Icon: Bot },
+  { section: 'models', to: '/models', label: 'Models', Icon: Boxes },
 ]
 
 export interface DockProps {
