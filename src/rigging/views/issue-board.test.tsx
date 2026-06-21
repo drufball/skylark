@@ -43,10 +43,31 @@ describe('IssueBoardView', () => {
     expect(screen.getByText(/No issues yet/i)).toBeTruthy()
   })
 
-  it('groups by status with a count, building issues showing the status line', () => {
+  it('groups by status with a count, hiding empty groups', () => {
     renderView({
       issues: [
         issue({ id: 'a', status: 'open', title: 'open one' }),
+        issue({ id: 'b', status: 'building', title: 'build one' }),
+      ],
+    })
+    expect(screen.getByText(/Open · 1/)).toBeTruthy()
+    expect(screen.getByText(/Building · 1/)).toBeTruthy()
+    // Statuses with no issues render no section header (group.length === 0).
+    expect(screen.queryByText(/Done ·/)).toBeNull()
+    expect(screen.queryByText(/Closed ·/)).toBeNull()
+  })
+
+  it('shows the status line only for a building issue', () => {
+    renderView({
+      issues: [
+        // An open issue with a stale status line must not surface it…
+        issue({
+          id: 'a',
+          status: 'open',
+          title: 'open one',
+          statusLine: 'stale',
+        }),
+        // …only the building issue's line shows.
         issue({
           id: 'b',
           status: 'building',
@@ -55,16 +76,20 @@ describe('IssueBoardView', () => {
         }),
       ],
     })
-    expect(screen.getByText(/Open · 1/)).toBeTruthy()
-    expect(screen.getByText(/Building · 1/)).toBeTruthy()
     expect(screen.getByText('running npm run check')).toBeTruthy()
+    expect(screen.queryByText('stale')).toBeNull()
   })
 
-  it('shows a comment count when there are comments', () => {
+  it('shows a comment count only when there are comments', () => {
     renderView({
-      issues: [issue({ id: 'a', title: 'chatty', commentCount: 3 })],
+      issues: [
+        issue({ id: 'a', title: 'chatty', commentCount: 3 }),
+        issue({ id: 'b', title: 'quiet', commentCount: 0 }),
+      ],
     })
     expect(screen.getByText('3')).toBeTruthy()
+    // A zero-comment issue shows no count badge.
+    expect(screen.queryByText('0')).toBeNull()
   })
 
   it('selects an issue on click', () => {

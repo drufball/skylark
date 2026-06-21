@@ -62,6 +62,31 @@ describe('AgentProfiles', () => {
     )
     expect(screen.getByText('chat')).toBeTruthy()
     expect(screen.getByText('read, bash')).toBeTruthy()
+    // Profiles present → the "no profiles yet" placeholder is gone.
+    expect(screen.queryByText(/no profiles yet/i)).toBeNull()
+  })
+
+  it('highlights the profile currently being edited', () => {
+    const profiles: ProfileSummary[] = [
+      { ...PROFILES[0], id: 'p-chat', name: 'chat' },
+      { ...PROFILES[0], id: 'p-research', name: 'research' },
+    ]
+    render(
+      <AgentProfiles
+        profiles={profiles}
+        extensions={EXTENSIONS}
+        saving={false}
+        onSave={vi.fn()}
+      />,
+    )
+    const tokens = (text: string) =>
+      screen.getByText(text).closest('button')?.className.split(/\s+/) ?? []
+    // Nothing is highlighted until a profile is picked.
+    expect(tokens('chat')).not.toContain('bg-accent')
+    fireEvent.click(screen.getByText('chat'))
+    // Now the edited profile is highlighted, and only it.
+    expect(tokens('chat')).toContain('bg-accent')
+    expect(tokens('research')).not.toContain('bg-accent')
   })
 
   it('saves a new profile with parsed tools and selected extensions', () => {

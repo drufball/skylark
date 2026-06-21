@@ -71,10 +71,26 @@ describe('AgentChatView', () => {
       activeId: 'a',
     })
 
+    // Sessions present → the "no conversations yet" placeholder is gone.
+    expect(screen.queryByText(/no conversations yet/i)).toBeNull()
     expect(container.querySelector('.animate-spin')).not.toBeNull()
     expect(screen.getByText('(untitled)')).toBeDefined()
     fireEvent.click(screen.getByText('second'))
     expect(onSelect).toHaveBeenCalledWith('b')
+  })
+
+  it('highlights only the active session in the sidebar', () => {
+    renderView({
+      sessions: [
+        { id: 'a', title: 'first', status: 'idle' },
+        { id: 'b', title: 'second', status: 'idle' },
+      ],
+      activeId: 'a',
+    })
+    const tokens = (text: string) =>
+      screen.getByText(text).closest('button')?.className.split(/\s+/) ?? []
+    expect(tokens('first')).toContain('bg-accent')
+    expect(tokens('second')).not.toContain('bg-accent')
   })
 
   it('marks an errored tool result distinctly', () => {
