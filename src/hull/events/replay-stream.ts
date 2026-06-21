@@ -36,6 +36,15 @@ export interface ShipLogStreamDeps {
   }) => Promise<EventRow[]>
   /** Read one durable event by id (live durable notes carry only an id). */
   getEventById: (id: string) => Promise<EventRow | undefined>
+  /**
+   * May this stream's actor see events on `topic`? The per-actor entitlement
+   * gate that audience (a coarse public/members facet) can't express — e.g. chat
+   * membership. Topic-pattern matching decides what the client *asked* for;
+   * this decides what they're *allowed*, so a member-only chat can't be read by
+   * a non-member who simply subscribes to its topic. Probed per distinct topic
+   * and cached for the life of the stream.
+   */
+  canSee: (topic: string) => Promise<boolean>
   /** Sink for SSE frames and comment lines. */
   send: (text: string) => void
 }
@@ -85,9 +94,23 @@ export async function runShipLogStream(
   let lastReplayedId = opts.lastEventId
   const buffer: NotifyPayload[] = []
 
-  const deliver = (note: NotifyPayload): void => {
+  // Entitlement is probed per distinct topic and memoised: a busy chat fires
+  // many events on one topic, but the membership check runs once per stream.
+  const entitlement = new Map<string, Promise<boolean>>()
+  const canSee = (topic: string): Promise<boolean> => {
+    let allowed = entitlement.get(topic)
+    if (!allowed) {
+      allowed = deps.canSee(topic)
+      entitlement.set(topic, allowed)
+    }
+    return allowed
+  }
+
+  const deliver = async (note: NotifyPayload): Promise<void> => {
     if (!noteIsVisible(note, { topicPatterns, audience, lastReplayedId }))
       return
+    // noteIsVisible guarantees a topic; gate on entitlement before sending.
+    if (!(await canSee(note.topic ?? ''))) return
     if (note.ephemeral) {
       // Ephemeral events never hit the DB — their full data rides the note.
       deps.send(
@@ -117,7 +140,7 @@ export async function runShipLogStream(
   // Subscribe BEFORE replay so nothing lands in the gap; buffer until replay
   // finishes, then deliver the buffer deduped against what replay sent.
   const unsubscribe = deps.subscribe((note) => {
-    if (replayed) deliver(note)
+    if (replayed) void deliver(note)
     else buffer.push(note)
   })
 
@@ -131,13 +154,18 @@ export async function runShipLogStream(
         sinceId: lastReplayedId,
       })
       for (const row of page) {
-        deps.send(sseFrame(toStreamEvent(row)))
+        // Advance the cursor for every scanned row, but only send the ones the
+        // actor is entitled to — replay filters by topic+audience, not by
+        // membership, so a chat the actor isn't in must be dropped here.
         lastReplayedId = row.id
+        if (await canSee(row.topic ?? '')) {
+          deps.send(sseFrame(toStreamEvent(row)))
+        }
       }
       if (page.length < REPLAY_PAGE_SIZE) break
     }
     replayed = true
-    for (const note of buffer) deliver(note)
+    for (const note of buffer) await deliver(note)
     deps.send(': connected\n\n')
     return unsubscribe
   } catch (err) {

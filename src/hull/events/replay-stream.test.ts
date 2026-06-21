@@ -105,6 +105,7 @@ describe('runShipLogStream', () => {
       subscribe: (l) => bus.subscribe(l),
       listEventsSince: vi.fn().mockResolvedValue([]),
       getEventById: vi.fn().mockResolvedValue(undefined),
+      canSee: () => Promise.resolve(true),
       send: (t) => sent.push(t),
       ...over,
     }
@@ -165,6 +166,7 @@ describe('runShipLogStream', () => {
       subscribe: (l) => bus.subscribe(l),
       listEventsSince,
       getEventById: (id) => Promise.resolve(row({ id })),
+      canSee: () => Promise.resolve(true),
       send: (t) => sent.push(t),
     }
 
@@ -193,13 +195,15 @@ describe('runShipLogStream', () => {
     expect(sentIds(sent)).toContain('e0100')
     expect(sentIds(sent)).not.toContain('e0404')
 
-    // Ephemeral live note carries its data → framed inline, no DB read.
+    // Ephemeral live note carries its data → framed without a DB read (but
+    // still gated by entitlement, so delivery is a microtask, not synchronous).
     bus.publish(
       note({
         id: 'e0101',
         ephemeral: { source: 'chat', payload: { line: 'hi' } },
       }),
     )
+    await tick()
     expect(sentIds(sent)).toContain('e0101')
   })
 
@@ -238,6 +242,7 @@ describe('runShipLogStream', () => {
       subscribe: (l) => bus.subscribe(l),
       listEventsSince: () => Promise.reject(new Error('db down')),
       getEventById: vi.fn(),
+      canSee: () => Promise.resolve(true),
       send: vi.fn(),
     }
 
@@ -245,5 +250,60 @@ describe('runShipLogStream', () => {
       'db down',
     )
     expect(bus.live).toBe(false) // cleaned up, no leaked subscription
+  })
+
+  // --- entitlement gate (the chat read-leak fix) ---------------------------
+
+  const CHATS = { topicPatterns: ['chat:*'], audience: 'members' }
+
+  it('drops replayed events the actor is not entitled to see', async () => {
+    // Both rows match the chat:* pattern + members audience, but canSee only
+    // clears chat:1 — chat:2 must not be sent even though it was returned.
+    const { sent, deps } = harness({
+      listEventsSince: vi
+        .fn()
+        .mockResolvedValue([
+          row({ id: 'a', topic: 'chat:1' }),
+          row({ id: 'b', topic: 'chat:2' }),
+        ]),
+      canSee: (topic) => Promise.resolve(topic === 'chat:1'),
+    })
+
+    await runShipLogStream(deps, { ...CHATS })
+
+    expect(sentIds(sent)).toContain('a')
+    expect(sentIds(sent)).not.toContain('b')
+  })
+
+  it('drops a live note the actor is not entitled to see', async () => {
+    const { bus, sent, deps } = harness({
+      getEventById: (id) => Promise.resolve(row({ id })),
+      canSee: (topic) => Promise.resolve(topic === 'chat:1'),
+    })
+    await runShipLogStream(deps, { ...CHATS })
+
+    bus.publish(note({ id: 'live-a', topic: 'chat:1' }))
+    bus.publish(note({ id: 'live-b', topic: 'chat:2' }))
+    await tick()
+
+    expect(sentIds(sent)).toContain('live-a')
+    expect(sentIds(sent)).not.toContain('live-b')
+  })
+
+  it('probes entitlement once per topic, then caches', async () => {
+    const canSee = vi.fn().mockResolvedValue(true)
+    const { bus, deps } = harness({
+      getEventById: (id) => Promise.resolve(row({ id })),
+      canSee,
+    })
+    await runShipLogStream(deps, { ...CHATS })
+
+    bus.publish(note({ id: 'n1', topic: 'chat:1' }))
+    bus.publish(note({ id: 'n2', topic: 'chat:1' }))
+    bus.publish(note({ id: 'n3', topic: 'chat:1' }))
+    await tick()
+
+    expect(canSee).toHaveBeenCalledTimes(1)
+    expect(canSee).toHaveBeenCalledWith('chat:1')
   })
 })

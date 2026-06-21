@@ -130,14 +130,19 @@ Claude wiring.
   filtered by audience access. This retired the dual-emit pattern where issue
   events were emitted twice (once to `issue:<id>`, once to `public`) so both the
   thread and board SSE could see them — now one event, one row.
-- **Audience enforcement is schema-only for now.** The `audience` column is
-  written and `canViewAudience()` implements the access hierarchy (members ⊇
-  public), but the SSE route currently treats all authenticated users as
-  `members` (single-crew). Per-user entitlement — checking that a specific user
-  may access a given topic — rides with the crew-filter primitive. See
-  [`../users/zine.md`](../users/zine.md). Audience gates _what kind_ of events a
-  viewer sees (public vs. members-only); the crew-filter will gate _which
-  specific_ topics they're entitled to.
+- **Audience is the coarse facet; per-topic entitlement is the real gate.** The
+  `audience` column + `canViewAudience()` answer "what _kind_ of events may a
+  member see" (public vs. members-only), and the SSE route treats every
+  authenticated user as `members` (single-crew). That alone isn't enough — a
+  member who isn't in a chat could still subscribe to its topic — so the route
+  also gates every event through **`canSeeTopic`**
+  ([`../access/visibility.ts`](../access/visibility.ts)): topic patterns say
+  what the client _asked_ for, entitlement says what they're _allowed_. For
+  `chat:<id>` that's membership (the same `chat_members` truth the RLS policies
+  use); `issue:*` is public; `session:*` opens up when the agent service is
+  scoped. This is the per-user entitlement the crew-filter promised, applied on
+  the read path the durable tables can't cover (live + ephemeral events never
+  hit an RLS-gated query).
 - **Agent events are unattributed for now (`actorId` is null).** The runtime
   emits without an actor because a turn is fired server-side without yet
   threading who initiated it. The column and FK exist so attribution can land
