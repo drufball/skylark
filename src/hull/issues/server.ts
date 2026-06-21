@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import { db } from '@hull/db/client'
-import { listEventsSince } from '@hull/events/service'
+import { listEventsSince, PUBLIC_AUDIENCE } from '@hull/events/service'
 import { currentActor } from '@hull/users/actor'
 import { handleOf } from '@hull/users/service'
 
@@ -82,7 +82,7 @@ export const getThread = createServerFn({ method: 'GET' })
 
     const events = await listEventsSince(db, {
       topicPatterns: [issueScope(issueId)],
-      audience: 'public',
+      audience: PUBLIC_AUDIENCE,
     })
     const statusChanges: StatusChange[] = await Promise.all(
       events

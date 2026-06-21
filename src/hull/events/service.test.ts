@@ -8,10 +8,8 @@ import {
   appendEvent,
   canViewAudience,
   getEventById,
-  isScopeVisible,
   listEventsSince,
   matchesTopic,
-  PUBLIC_SCOPE,
 } from './service'
 
 describe('events service', () => {
@@ -27,7 +25,8 @@ describe('events service', () => {
     const e = await appendEvent(db, {
       type: 'agent.message',
       source: 'agent',
-      scope: 'session:s1',
+      topic: 'session:s1',
+      audience: 'members',
       payload: { hello: 'world' },
     })
     expect(e.id).toBeTruthy()
@@ -57,7 +56,8 @@ describe('events service', () => {
     const e = await appendEvent(db, {
       type: 'agent.message',
       source: 'agent',
-      scope: 'public',
+      topic: 'session:s1',
+      audience: 'members',
       actorId: actor.id,
       payload: {},
     })
@@ -68,78 +68,66 @@ describe('events service', () => {
     const e = await appendEvent(db, {
       type: 't',
       source: 's',
-      scope: 'public',
+      topic: 'issue:1',
+      audience: 'public',
       payload: { n: 1 },
     })
     expect(await getEventById(db, e.id)).toMatchObject({ id: e.id })
     expect(await getEventById(db, 'nope')).toBeUndefined()
   })
 
-  it('lists events for the given scopes, oldest first', async () => {
-    await appendEvent(db, {
-      type: 't',
-      source: 's',
-      scope: 'session:a',
-      payload: { n: 1 },
-    })
-    await appendEvent(db, {
-      type: 't',
-      source: 's',
-      scope: 'session:b',
-      payload: { n: 2 },
-    })
-    await appendEvent(db, {
-      type: 't',
-      source: 's',
-      scope: 'session:a',
-      payload: { n: 3 },
-    })
-
-    const got = await listEventsSince(db, { scopes: ['session:a'] })
-    expect(got.map((e) => (e.payload as { n: number }).n)).toEqual([1, 3])
-  })
-
   it('replays only events after the cursor', async () => {
     const first = await appendEvent(db, {
       type: 't',
       source: 's',
-      scope: 'session:a',
+      topic: 'session:a',
+      audience: 'members',
       payload: { n: 1 },
     })
     await appendEvent(db, {
       type: 't',
       source: 's',
-      scope: 'session:a',
+      topic: 'session:a',
+      audience: 'members',
       payload: { n: 2 },
     })
 
     const after = await listEventsSince(db, {
-      scopes: ['session:a'],
+      topicPatterns: ['session:a'],
+      audience: 'members',
       sinceId: first.id,
     })
     expect(after.map((e) => (e.payload as { n: number }).n)).toEqual([2])
   })
 
-  it('returns nothing when no scopes are requested', async () => {
+  it('returns nothing when no topic patterns are requested', async () => {
     await appendEvent(db, {
       type: 't',
       source: 's',
-      scope: 'public',
+      topic: 'issue:1',
+      audience: 'public',
       payload: {},
     })
-    expect(await listEventsSince(db, { scopes: [] })).toEqual([])
+    expect(await listEventsSince(db, { topicPatterns: [] })).toEqual([])
   })
 
-  it('caps the replay to a sane limit', async () => {
-    for (let i = 0; i < 5; i++) {
-      await appendEvent(db, {
-        type: 't',
-        source: 's',
-        scope: 'public',
-        payload: { i },
-      })
-    }
-    const got = await listEventsSince(db, { scopes: ['public'], limit: 2 })
+  it('applies no audience filter when no viewer access is given', async () => {
+    await appendEvent(db, {
+      type: 't',
+      source: 's',
+      topic: 'issue:1',
+      audience: 'public',
+      payload: {},
+    })
+    await appendEvent(db, {
+      type: 't',
+      source: 's',
+      topic: 'issue:2',
+      audience: 'members',
+      payload: {},
+    })
+    // No `audience` in opts → see every matching topic regardless of audience.
+    const got = await listEventsSince(db, { topicPatterns: ['issue:*'] })
     expect(got).toHaveLength(2)
   })
 
@@ -290,20 +278,6 @@ describe('events service', () => {
   })
 })
 
-describe('isScopeVisible', () => {
-  it('lets a subscriber see a scope they explicitly subscribed to', () => {
-    expect(isScopeVisible('session:a', ['session:a'])).toBe(true)
-  })
-
-  it('hides a scope the subscriber did not ask for', () => {
-    expect(isScopeVisible('session:b', ['session:a'])).toBe(false)
-  })
-
-  it('always lets the public scope through to a public subscriber', () => {
-    expect(isScopeVisible(PUBLIC_SCOPE, [PUBLIC_SCOPE])).toBe(true)
-  })
-})
-
 describe('topic pattern matching', () => {
   it('matches exact topic strings', () => {
     expect(matchesTopic('issue:123', 'issue:123')).toBe(true)
@@ -337,6 +311,11 @@ describe('audience filtering', () => {
   it('restricts members-only events to members', () => {
     expect(canViewAudience('members', 'members')).toBe(true)
     expect(canViewAudience('members', 'public')).toBe(false)
+  })
+
+  it('denies an unrecognized audience to everyone', () => {
+    expect(canViewAudience('secret', 'members')).toBe(false)
+    expect(canViewAudience('secret', 'public')).toBe(false)
   })
 
   it('members can see both public and members-only events', () => {

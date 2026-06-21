@@ -1,4 +1,3 @@
-import { PUBLIC_SCOPE } from './service'
 import type { EventRow } from './schema'
 
 // The wire-format half of the SSE endpoint, kept pure so it's unit-tested
@@ -10,8 +9,6 @@ export interface StreamEvent {
   id: string
   type: string
   source: string
-  /** DEPRECATED: use topic. For backward compat. */
-  scope?: string
   /** The entity stream (e.g. "issue:123"). */
   topic?: string
   /** Who may see this ("public" | "members"). */
@@ -27,7 +24,6 @@ export function toStreamEvent(row: EventRow): StreamEvent {
     id: row.id,
     type: row.type,
     source: row.source,
-    scope: row.scope ?? undefined,
     topic: row.topic ?? undefined,
     audience: row.audience ?? undefined,
     payload: row.payload,
@@ -47,15 +43,14 @@ export function sseFrame(event: StreamEvent): string {
 }
 
 /**
- * Which scopes does this connection want? The `topics` query param is a
- * comma-separated list of scopes (e.g. "public,session:s1"). Empty or missing
- * falls back to the public scope, so a bare connection still gets the open
- * channel and never the empty set.
+ * Which topic patterns does this connection want? The `topics` query param is a
+ * comma-separated list of patterns (e.g. "issue:*,chat:123"). Empty or missing
+ * yields the empty set — a bare connection subscribes to nothing until it names
+ * a topic, rather than silently matching some catch-all.
  */
 export function parseTopics(topics: string | null): string[] {
-  const parsed = (topics ?? '')
+  return (topics ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  return parsed.length ? parsed : [PUBLIC_SCOPE]
 }

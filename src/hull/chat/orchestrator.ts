@@ -2,6 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { notifyOnly } from '@hull/events/bus'
+import { MEMBERS_AUDIENCE } from '@hull/events/service'
 import { createSession } from '@hull/agent/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
@@ -80,12 +81,14 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     agentUserId: string,
     line: string,
   ): void {
-    // Progress is transient UI — notify-only, not durable, not replayed.
-    // Using scope (not topic/audience) since notifyOnly doesn't persist.
+    // Progress is transient UI — notify-only, not durable, not replayed. It
+    // still carries the chat's topic + members audience so the SSE route gates
+    // it exactly like a durable chat event (members-only, this chat's topic).
     notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',
-      scope: chatScope(chatId),
+      topic: chatScope(chatId),
+      audience: MEMBERS_AUDIENCE,
       payload: { chatId, agentUserId, line },
     })
   }

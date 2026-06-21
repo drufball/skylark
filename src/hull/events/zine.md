@@ -105,10 +105,10 @@ and the `EventSource` construction are the only genuinely live wiring, marked
   process should hear it, or you'd want it in a transcript dump → durable. If
   it's live-only UI scaffolding that goes stale the moment it renders →
   ephemeral.
-- **NOTIFY carries only `{id,type,topic,audience}` (or `scope` for old events);
-  the payload lives in the row.** Postgres caps a notification near 8KB, and a
-  payload can be anything. The subscriber reads the full row by id, so the
-  doorbell stays tiny by construction.
+- **NOTIFY carries only `{id,type,topic,audience}`; the payload lives in the
+  row.** Postgres caps a notification near 8KB, and a payload can be anything.
+  The subscriber reads the full row by id, so the doorbell stays tiny by
+  construction.
 - **One dedicated LISTEN connection, separate from the shared query `db`.** A
   connection holding a `LISTEN` is occupied by the subscription and can't also
   serve queries, so the bus opens its own. Sending a NOTIFY needs no dedicated
@@ -139,6 +139,14 @@ and the `EventSource` construction are the only genuinely live wiring, marked
 
 ## Changelog
 
+- **#kg43** — Retire the legacy `scope` field entirely, finishing #kg42. The
+  `scope` column, its index, the `scopes` replay API, and `isScopeVisible` are
+  gone; migration 0006 drops the column. `notifyOnly` now carries `topic` +
+  `audience` like a durable emit, so the SSE route gates ephemeral events (chat
+  progress) by the same topic-match + audience rules — an ephemeral note can no
+  longer slip past an access check just because it isn't persisted. A bare SSE
+  connection (no `?topics=`) now subscribes to nothing rather than a `public`
+  catch-all.
 - **#2** — Ephemeral notify-only path (`notifyOnly`) for transient UI: publishes
   to the in-process bus (live SSE delivery) without persisting a row or firing
   `pg_notify`. In-process only, never replayed. Chat orchestrator uses it for

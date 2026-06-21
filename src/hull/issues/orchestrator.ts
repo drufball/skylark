@@ -175,8 +175,6 @@ export interface OrchestratorDeps {
 export interface BusNote {
   id: string
   type: string
-  /** DEPRECATED: use topic. For backward compat. */
-  scope?: string
   /** The entity stream (e.g. "issue:123"). */
   topic?: string
   /** Who may see this ("public" | "members"). */

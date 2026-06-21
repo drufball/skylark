@@ -16,8 +16,8 @@ import type { EventRow } from './schema'
 // query `db`, because a LISTEN connection is occupied and can't also serve
 // queries). On each notification it publishes to the InProcessBus, which fans
 // out to every connected SSE stream. The NOTIFY payload is deliberately TINY —
-// just {id,type,scope} — because Postgres caps a notification near 8KB; the full
-// event lives in the row, which the SSE route reads by id.
+// just {id,type,topic,audience} — because Postgres caps a notification near 8KB;
+// the full event lives in the row, which the SSE route reads by id.
 //
 // notifyOnly is in-process only: it publishes to the in-process bus (so live SSE
 // subscribers receive it) without firing pg_notify or persisting a row. For
@@ -30,8 +30,6 @@ export const SHIP_LOG_CHANNEL = 'ship_log'
 export interface NotifyPayload {
   id: string
   type: string
-  /** DEPRECATED: use topic. For backward compat. */
-  scope?: string
   /** The entity stream (e.g. "issue:123"). */
   topic?: string
   /** Who may see this ("public" | "members"). */
@@ -74,9 +72,9 @@ export class InProcessBus {
 /**
  * Emit an event: append the durable row, then announce it on the ship_log
  * channel so other processes (and this one's SSE clients) hear it. The NOTIFY
- * carries only {id,type,topic,audience} (or scope for old events); subscribers
- * read the full row by id. This is the one true "emit" services call — the row
- * is the source of truth, the notify is just the doorbell.
+ * carries only {id,type,topic,audience}; subscribers read the full row by id.
+ * This is the one true "emit" services call — the row is the source of truth,
+ * the notify is just the doorbell.
  */
 export async function emitEvent(
   db: Database,
@@ -86,7 +84,6 @@ export async function emitEvent(
   const note: NotifyPayload = {
     id: row.id,
     type: row.type,
-    scope: row.scope ?? undefined,
     topic: row.topic ?? undefined,
     audience: row.audience ?? undefined,
   }
@@ -104,16 +101,24 @@ export async function emitEvent(
  * that shouldn't clutter the log, replay on reconnect, or cross processes. Live
  * SSE subscribers in this process receive it; other processes and reconnecting
  * clients don't. Returns the ephemeral id.
+ *
+ * Carries the same topic + audience facets as a durable emit, so the SSE
+ * route's topic-match and audience gates apply identically — an ephemeral note
+ * must not slip past an access check just because it isn't persisted.
  */
 export function notifyOnly(
   _db: Database,
-  input: Pick<AppendEventInput, 'type' | 'source' | 'scope' | 'payload'>,
+  input: Pick<
+    AppendEventInput,
+    'type' | 'source' | 'topic' | 'audience' | 'payload'
+  >,
 ): string {
   const id = uuidv7()
   shipLogBus.publish({
     id,
     type: input.type,
-    scope: input.scope,
+    topic: input.topic,
+    audience: input.audience,
     ephemeral: {
       source: input.source,
       payload: input.payload,

@@ -41,9 +41,10 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   transitions to itself. Every door (web, CLI, orchestrator) routes through it,
   so the rules live in exactly one place.
 - **Events** — `issue.status_changed` on every transition and `issue.commented`
-  on every comment, each emitted on **two scopes**: `issue:<id>` (the thread
-  view subscribes here) and `public` (the board view, and the orchestrator,
-  subscribe here).
+  on every comment, each emitted **once** with topic `issue:<id>` and audience
+  `public`. The thread view subscribes to the exact topic (`issue:<id>`); the
+  board subscribes to the wildcard (`issue:*`); the orchestrator listens too.
+  One topic, many subscribers — no dual-emit.
 - **The orchestrator** (`orchestrator.ts`) — the build-lifecycle brain. Pure of
   I/O by injection: it takes a `GitOps` (worktree/git/fs), an agent runtime, and
   a slug generator as dependencies, so its decisions are unit-tested against
@@ -70,15 +71,15 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
 
 **A build, end to end.** A human clicks "Build it" (or an agent runs
 `npm run issue building <id>`) → `transitionIssue` moves the row through
-`nextStatus` and emits `issue.status_changed` on `issue:<id>` and `public` → the
-durable row + `pg_notify` reach the server's one LISTEN connection, which fans
-onto `shipLogBus` → the orchestrator's subscription reads the full event by id
-and calls `onStatusChanged`. On `→ building` it generates a slug (LLM, cheap)
-into `<slug>-<nano>`, creates the worktree if absent, copies the
-`.worktreeinclude` files in, boots (or reuses) a builder session with `cwd` =
-the worktree and `agentUserId` = the builder, and fires a turn seeded with the
-issue + the ship-feature contract. The turn's live events become the issue's
-`statusLine`.
+`nextStatus` and emits `issue.status_changed` once on topic `issue:<id>`
+(audience `public`) → the durable row + `pg_notify` reach the server's one
+LISTEN connection, which fans onto `shipLogBus` → the orchestrator's
+subscription reads the full event by id and calls `onStatusChanged`. On
+`→ building` it generates a slug (LLM, cheap) into `<slug>-<nano>`, creates the
+worktree if absent, copies the `.worktreeinclude` files in, boots (or reuses) a
+builder session with `cwd` = the worktree and `agentUserId` = the builder, and
+fires a turn seeded with the issue + the ship-feature contract. The turn's live
+events become the issue's `statusLine`.
 
 **Why event-driven, not inline.** The builder runs `npm run issue done <id>`
 from its bash tool — a separate CLI process. That transition is only a durable

@@ -39,7 +39,11 @@ import {
  */
 export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
 
-/** The scope every event for a session is published under. */
+/**
+ * The ship-log **topic** every event for a session is published under. Named
+ * `*Scope` for historical reasons — the event `scope` field is retired; this
+ * returns a topic string.
+ */
 export function sessionScope(sessionId: string): string {
   return `session:${sessionId}`
 }

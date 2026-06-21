@@ -9,7 +9,8 @@ import { listEventsSince } from './service'
 const note = (over: Partial<NotifyPayload> = {}): NotifyPayload => ({
   id: '1',
   type: 't',
-  scope: 'public',
+  topic: 'issue:1',
+  audience: 'public',
   ...over,
 })
 
@@ -77,13 +78,27 @@ describe('emitEvent', () => {
     const row = await emitEvent(db, {
       type: 'agent.message',
       source: 'agent',
-      scope: 'session:s1',
+      topic: 'session:s1',
+      audience: 'members',
       payload: { text: 'hi' },
     })
 
     expect(row.id).toBeTruthy()
-    const replayed = await listEventsSince(db, { scopes: ['session:s1'] })
+    const replayed = await listEventsSince(db, {
+      topicPatterns: ['session:s1'],
+      audience: 'members',
+    })
     expect(replayed.map((e) => e.id)).toEqual([row.id])
+  })
+
+  it('appends a system event with no topic or audience', async () => {
+    const row = await emitEvent(db, {
+      type: 'system.tick',
+      source: 'system',
+      payload: {},
+    })
+    expect(row.topic).toBeNull()
+    expect(row.audience).toBeNull()
   })
 })
 
@@ -102,16 +117,20 @@ describe('notifyOnly', () => {
     notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',
-      scope: 'session:s1',
+      topic: 'chat:c1',
+      audience: 'members',
       payload: { line: 'thinking…' },
     })
 
     // Should NOT be in the database
-    const replayed = await listEventsSince(db, { scopes: ['session:s1'] })
+    const replayed = await listEventsSince(db, {
+      topicPatterns: ['chat:c1'],
+      audience: 'members',
+    })
     expect(replayed).toHaveLength(0)
   })
 
-  it('publishes ephemeral event data to the in-process bus', async () => {
+  it('publishes ephemeral data with its topic + audience to the in-process bus', async () => {
     const { notifyOnly, shipLogBus } = await import('./bus')
     const received: NotifyPayload[] = []
     shipLogBus.subscribe((n) => {
@@ -121,12 +140,15 @@ describe('notifyOnly', () => {
     notifyOnly(db, {
       type: 'chat.agent_progress',
       source: 'chat',
-      scope: 'session:s1',
+      topic: 'chat:c1',
+      audience: 'members',
       payload: { line: 'thinking…' },
     })
 
-    // The in-process bus should receive the full ephemeral data.
+    // The note carries the topic + audience facets so the SSE route can gate
+    // it exactly like a durable event, plus the full ephemeral data.
     expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({ topic: 'chat:c1', audience: 'members' })
     expect(received[0].ephemeral).toMatchObject({
       source: 'chat',
       payload: { line: 'thinking…' },

@@ -14,9 +14,8 @@ const row = (over: Partial<EventRow> = {}): EventRow => ({
   id: '01',
   type: 'agent.message',
   source: 'agent',
-  scope: 'session:s1',
-  topic: null,
-  audience: null,
+  topic: 'session:s1',
+  audience: 'members',
   actorId: null,
   payload: { text: 'hi' },
   createdAt: new Date(0),
@@ -27,7 +26,7 @@ const event = (over: Partial<StreamEvent> = {}): StreamEvent => ({
   id: '01',
   type: 'agent.message',
   source: 'agent',
-  scope: 'session:s1',
+  topic: 'session:s1',
   payload: { text: 'hi' },
   ...over,
 })
@@ -39,6 +38,12 @@ describe('toStreamEvent', () => {
     // actorId and createdAt are NOT in StreamEvent — clients don't see them.
     expect('actorId' in e).toBe(false)
     expect('createdAt' in e).toBe(false)
+  })
+
+  it('maps a null topic/audience to undefined', () => {
+    const e = toStreamEvent(row({ topic: null, audience: null }))
+    expect(e.topic).toBeUndefined()
+    expect(e.audience).toBeUndefined()
   })
 })
 
@@ -59,32 +64,29 @@ describe('sseFrame', () => {
     expect(frame.endsWith('\n\n')).toBe(true)
   })
 
-  it('carries the scope and payload in the data JSON', () => {
-    const frame = sseFrame(event({ scope: 'public', payload: { n: 7 } }))
+  it('carries the topic and payload in the data JSON', () => {
+    const frame = sseFrame(event({ topic: 'issue:7', payload: { n: 7 } }))
     const dataLine = dataLineOf(frame)
     const parsed = JSON.parse(dataLine.slice('data: '.length)) as {
-      scope: string
+      topic: string
       payload: { n: number }
     }
-    expect(parsed.scope).toBe('public')
+    expect(parsed.topic).toBe('issue:7')
     expect(parsed.payload.n).toBe(7)
   })
 })
 
 describe('parseTopics', () => {
   it('splits a comma-separated topics param', () => {
-    expect(parseTopics('public,session:s1')).toEqual(['public', 'session:s1'])
+    expect(parseTopics('issue:*,chat:c1')).toEqual(['issue:*', 'chat:c1'])
   })
 
   it('trims whitespace and drops empties', () => {
-    expect(parseTopics(' public , , session:s1 ')).toEqual([
-      'public',
-      'session:s1',
-    ])
+    expect(parseTopics(' issue:* , , chat:c1 ')).toEqual(['issue:*', 'chat:c1'])
   })
 
-  it('returns the public scope when nothing is requested', () => {
-    expect(parseTopics(null)).toEqual(['public'])
-    expect(parseTopics('')).toEqual(['public'])
+  it('returns the empty set when nothing is requested', () => {
+    expect(parseTopics(null)).toEqual([])
+    expect(parseTopics('')).toEqual([])
   })
 })

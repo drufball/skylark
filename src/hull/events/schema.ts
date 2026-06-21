@@ -23,13 +23,6 @@ export const events = pgTable(
     /** Which service emitted it, e.g. "agent". */
     source: text('source').notNull(),
     /**
-     * DEPRECATED: Use topic + audience instead. Kept for backward compat during migration.
-     * Visibility key. A subscriber sees an event only if its scope is in the
-     * set they're allowed to see — e.g. "session:<id>" (that conversation) or
-     * "public" (everyone). The crew-aware widening of this lives with the actor.
-     */
-    scope: text('scope'),
-    /**
      * The entity stream this event belongs to (e.g. "issue:123", "chat:456").
      * Subscribers express interest via topic patterns ("issue:*", "chat:123").
      * Separated from audience so an event is emitted once and pattern-matched.
@@ -52,10 +45,8 @@ export const events = pgTable(
       .defaultNow(),
   },
   (table) => [
-    // The stream replays by id range within a topic pattern; index both.
+    // The stream replays by id range within a topic pattern.
     index('events_topic_id_idx').on(table.topic, table.id),
-    // Keep the old index for backward compat during migration
-    index('events_scope_id_idx').on(table.scope, table.id),
   ],
 )
 

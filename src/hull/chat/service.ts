@@ -23,7 +23,11 @@ import {
  * before returning a transcript.
  */
 
-/** The ship's-log scope a chat's events ride on. Members subscribe to this. */
+/**
+ * The ship-log **topic** a chat's events ride on; members subscribe to it.
+ * Named `*Scope` for historical reasons — the event `scope` field is retired;
+ * this returns a topic string.
+ */
 export function chatScope(chatId: string): string {
   return `chat:${chatId}`
 }
