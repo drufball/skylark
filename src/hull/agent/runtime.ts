@@ -7,8 +7,6 @@ import {
   SessionManager,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent'
-import { getModels } from '@earendil-works/pi-ai'
-
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
 import type { AppendEventInput } from '@hull/events/service'
@@ -16,6 +14,7 @@ import { errorMessage } from '@hull/lib/errors'
 
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
+import { resolveModel } from './models'
 import { getProfileById, resolveProfileExtensionPaths } from './profiles'
 import { resolveSessionOptions, type ResolvedProfile } from './session-config'
 import {
@@ -48,7 +47,12 @@ export function sessionScope(sessionId: string): string {
   return `session:${sessionId}`
 }
 
-/** Default model when a session doesn't pin one. Anthropic only, for now. */
+/**
+ * Default model when a session doesn't pin one. A bare id (no `provider/`
+ * prefix) resolves to Anthropic — see `resolveModel` in ./models. Resolution
+ * is provider-aware (Anthropic + Ollama today); the local-first default switch
+ * lands with the Ollama bring-up.
+ */
 export const DEFAULT_MODEL = 'claude-sonnet-4-5'
 
 /**
@@ -112,13 +116,6 @@ export type SessionFactory = (
 ) => Promise<PiSession>
 
 /* v8 ignore start -- live pi.dev/Claude wiring, exercised by the CLI not units */
-/** Resolve an Anthropic model id to a pi.dev model, or throw if unknown. */
-function resolveModel(modelId: string) {
-  const model = getModels('anthropic').find((m) => m.id === modelId)
-  if (!model) throw new Error(`Unknown Anthropic model: ${modelId}`)
-  return model
-}
-
 /**
  * The real session factory: a live pi.dev agent talking to Claude, configured
  * by a profile. The pure profile→options mapping lives in session-config.ts
