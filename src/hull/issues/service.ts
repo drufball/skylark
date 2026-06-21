@@ -30,9 +30,7 @@ import {
  * process is still heard).
  */
 
-// The scope a single issue's events are published under lives in ./scope — a
-// leaf free of this file's server-only deps (node:crypto, pi-agent-core), so the
-// browser-side thread view can import it without dragging node into the bundle.
+// issueScope lives in ./scope (a node-free leaf — see that file for why).
 // Re-exported here so server callers still reach it through the service.
 export { issueScope }
 
