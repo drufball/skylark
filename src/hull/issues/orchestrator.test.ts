@@ -9,8 +9,11 @@ import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
 import { createSession, getSession, listSessions } from '@hull/agent/service'
 
 import {
+  branchNameFor,
+  buildPrompt,
   createOrchestrator,
   parseWorktreeInclude,
+  slugify,
   type GitOps,
   type OrchestratorDeps,
 } from './orchestrator'
@@ -161,6 +164,89 @@ describe('parseWorktreeInclude', () => {
 
   it('is empty for an all-comment/blank file', () => {
     expect(parseWorktreeInclude('# nothing\n\n')).toEqual([])
+  })
+})
+
+describe('slugify', () => {
+  it('lowercases and joins non-alnum runs into single hyphens', () => {
+    expect(slugify('Fix the   Bug!! Now')).toBe('fix-the-bug-now')
+  })
+
+  it('trims leading and trailing hyphens', () => {
+    expect(slugify('!!Hello, World!!')).toBe('hello-world')
+  })
+
+  it('caps at max and strips a hyphen left dangling by the cut', () => {
+    // 'abcdefghij-klmnopqrst-...' sliced at 11 lands on the separator;
+    // the trailing-hyphen pass must remove it.
+    expect(slugify('abcdefghij klmnopqrst uvwxyz', 11)).toBe('abcdefghij')
+    expect(slugify('a'.repeat(60)).length).toBeLessThanOrEqual(40)
+  })
+
+  it('falls back to "build" when the input reduces to nothing', () => {
+    expect(slugify('!!!')).toBe('build')
+    expect(slugify('')).toBe('build')
+  })
+})
+
+describe('branchNameFor', () => {
+  it('joins a slugified title with the issue nano', () => {
+    expect(branchNameFor('My Cool Feature', 'ab12')).toBe(
+      'my-cool-feature-ab12',
+    )
+  })
+})
+
+describe('buildPrompt', () => {
+  it('includes the title, body, thread, and actor-prefixed done command', async () => {
+    const issue = await createIssue(db, {
+      title: 'Make it fast',
+      body: 'The board feels sluggish.',
+      authorId,
+      nano: 'pp01',
+    })
+    const prompt = buildPrompt(
+      issue,
+      [
+        { authorHandle: 'dru', body: 'start with the query' },
+        { authorHandle: 'bix', body: 'mind the empty case' },
+      ],
+      'builder-1',
+    )
+    expect(prompt).toContain('#pp01')
+    expect(prompt).toContain('Title: Make it fast')
+    expect(prompt).toContain('The board feels sluggish.')
+    expect(prompt).toContain('Thread so far:')
+    // Each comment on its own line — pins the '\n' join between them.
+    expect(prompt).toContain(
+      '- @dru: start with the query\n- @bix: mind the empty case',
+    )
+    expect(prompt).toContain(
+      'SKYLARK_ACTOR=builder-1 npm run issue -- done pp01',
+    )
+  })
+
+  it('omits the "Thread so far" block when there are no comments', async () => {
+    const issue = await createIssue(db, {
+      title: 'No discussion yet',
+      body: 'body text',
+      authorId,
+      nano: 'pp02',
+    })
+    const prompt = buildPrompt(issue, [], 'builder-1')
+    expect(prompt).not.toContain('Thread so far')
+  })
+
+  it('omits the body block (and never prints null) when the issue has no body', async () => {
+    const issue = await createIssue(db, {
+      title: 'Just a title',
+      authorId,
+      nano: 'pp03',
+    })
+    const prompt = buildPrompt(issue, [], 'builder-1')
+    expect(prompt).toContain('Title: Just a title')
+    expect(prompt).not.toContain('null')
+    expect(prompt).not.toContain('undefined')
   })
 })
 
