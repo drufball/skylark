@@ -9,6 +9,8 @@
 // PR review in .github/workflows/mutation-review.yml). Reports land in reports/
 // and are gitignored.
 
+import { SHARED_EXCLUDES, STRYKER_ONLY_EXCLUDES } from './test-excludes.mjs'
+
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 export default {
   packageManager: 'npm',
@@ -18,25 +20,18 @@ export default {
   reporters: ['html', 'json', 'clear-text', 'progress'],
   coverageAnalysis: 'perTest',
 
+  // What's left after the excludes — services, lib, views — is where the logic
+  // and the tests live, so that's where a mutation score means something. The
+  // exclude list is shared with vitest.config.ts (see test-excludes.mjs) so the
+  // two gates can't drift; the `!`-prefix is the only transform. Note this only
+  // mirrors coverage for files ignored in their ENTIRETY — partially `v8
+  // ignore`d files still have their ignored regions mutated here, since Stryker
+  // can't read the pragma.
   mutate: [
     'src/**/*.ts',
     'src/**/*.tsx',
-    '!src/**/*.test.ts',
-    '!src/**/*.test.tsx',
-
-    // Skip the thin wiring the zine calls deliberately untested: schemas
-    // (declarative table defs), doors (server.ts — createServerFn), the DB
-    // client (driver setup), routes/router (thin routing), generated code, and
-    // vendored shadcn. What's left — services, lib, views — is where the logic
-    // and the tests actually live, so that's where a mutation score means
-    // something.
-    '!src/**/schema.ts',
-    '!src/**/server.ts',
-    '!src/hull/db/client.ts',
-    '!src/router.tsx',
-    '!src/routes/**',
-    '!src/routeTree.gen.ts',
-    '!src/rigging/components/ui/**',
+    ...SHARED_EXCLUDES.map((p) => `!${p}`),
+    ...STRYKER_ONLY_EXCLUDES.map((p) => `!${p}`),
   ],
 
   // Advisory only. high/low colour the report; break is null so Stryker never
