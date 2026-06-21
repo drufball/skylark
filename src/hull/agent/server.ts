@@ -33,6 +33,13 @@ import { toChatItems } from './transcript'
 // the server; the client polls the transcript and status. This works because
 // Postgres is the source of truth — the request that starts a turn doesn't have
 // to wait for it, and any later request reads the same durable state.
+//
+// Two access patterns live here on purpose, not as an unfinished migration:
+// the READ doors (listAgentSessions/getAgentChat) run under `withCurrentActor`
+// and let RLS filter — the policy is the gate. The ACTION doors (send/cancel)
+// instead probe with `canSeeSession` (itself an RLS probe) and then act,
+// because the effect they guard is a RUNTIME call (fire/cancel a turn), not a
+// DB write — so there's no insert for a WITH CHECK policy to gate.
 
 // One runtime per server process, created lazily on first server-side use. The
 // registry must outlive individual requests so a turn can be queued into or

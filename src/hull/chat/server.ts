@@ -10,6 +10,7 @@ import {
   addMember,
   addMessage,
   createChat,
+  ensureChatVisible,
   getChat,
   listChatSummaries,
   listMembers,
@@ -104,10 +105,9 @@ export const postChatMessage = createServerFn({ method: 'POST' })
     // event is heard and drives the reply — off the bus, not inline here.
     bootChatOrchestrator()
     return withCurrentActor(async (tx, me) => {
-      // A non-member can't see the chat → clean refusal (and the chat_messages
+      // A non-member can't see the chat → clean refusal (the chat_messages
       // WITH CHECK policy would reject the insert regardless).
-      if (!(await getChat(tx, data.chatId)))
-        throw new Error('not a member of this chat')
+      await ensureChatVisible(tx, data.chatId)
       await addMessage(tx, {
         id: uuidv7(),
         chatId: data.chatId,
@@ -130,8 +130,7 @@ export const updateChat = createServerFn({ method: 'POST' })
   )
   .handler(({ data }) =>
     withCurrentActor(async (tx) => {
-      if (!(await getChat(tx, data.chatId)))
-        throw new Error('not a member of this chat')
+      await ensureChatVisible(tx, data.chatId)
       if (data.addMemberId) await addMember(tx, data.chatId, data.addMemberId)
       if (data.removeMemberId)
         await removeMember(tx, data.chatId, data.removeMemberId)

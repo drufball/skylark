@@ -130,6 +130,19 @@ export async function getChat(
   return row
 }
 
+/**
+ * Throw a clean refusal if the actor can't see this chat. Run under `withActor`,
+ * `getChat` returns undefined when RLS hides the row (non-member) — which the
+ * mutating doors surface as a friendly "not a member" rather than letting the
+ * WITH CHECK policy reject the write with a raw error (or leaking existence).
+ */
+export async function ensureChatVisible(
+  db: Database,
+  chatId: string,
+): Promise<void> {
+  if (!(await getChat(db, chatId))) throw new Error('not a member of this chat')
+}
+
 /** A member joined with the user it points at — what the views and rules need. */
 export interface ChatMemberView {
   userId: string
