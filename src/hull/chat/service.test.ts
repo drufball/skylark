@@ -14,7 +14,6 @@ import {
   createChat,
   formatTranscript,
   getChat,
-  isMember,
   listChatSummaries,
   listChatsForUser,
   listMembers,
@@ -27,6 +26,15 @@ import {
   targetsForMessage,
   type MemberView,
 } from './service'
+
+/** Did `userId` end up a member of `chatId`? (membership state, via the roster). */
+async function isMemberOf(
+  db: Database,
+  chatId: string,
+  userId: string,
+): Promise<boolean> {
+  return (await listMembers(db, chatId)).some((m) => m.userId === userId)
+}
 
 describe('parseMentions', () => {
   it('extracts @handles, lowercased and deduped', () => {
@@ -130,7 +138,7 @@ describe('chat persistence', () => {
 
     const members = await listMembers(db, id)
     expect(members.map((m) => m.handle).sort()).toEqual(['dru', 'tilde'])
-    expect(await isMember(db, id, dru)).toBe(true)
+    expect(await isMemberOf(db, id, dru)).toBe(true)
 
     const forDru = await listChatsForUser(db, dru)
     expect(forDru.map((c) => c.id)).toContain(id)
@@ -218,10 +226,10 @@ describe('chat persistence', () => {
       type: 'human',
     })
     await addMember(db, id, sam)
-    expect(await isMember(db, id, sam)).toBe(true)
+    expect(await isMemberOf(db, id, sam)).toBe(true)
     await addMember(db, id, sam) // idempotent
     await removeMember(db, id, sam)
-    expect(await isMember(db, id, sam)).toBe(false)
+    expect(await isMemberOf(db, id, sam)).toBe(false)
 
     await setTitle(db, id, 'new')
     expect(defined(await getChat(db, id)).title).toBe('new')
