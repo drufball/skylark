@@ -3,11 +3,13 @@ import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import { createServerFn } from '@tanstack/react-start'
 
 import { db } from '@hull/db/client'
+import { canSeeTopic } from '@hull/access/visibility'
 import { errorMessage } from '@hull/lib/errors'
+import { currentActor } from '@hull/users/actor'
 
 import { defaultModelRef } from './models'
 import { isHostedProvider, providersWithStatus } from './providers'
-import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
+import { type AgentRuntime, DEFAULT_MODEL, sessionScope } from './runtime'
 import { createServerRuntime } from './fake-session'
 import {
   CHAT_PROFILE,
@@ -54,15 +56,35 @@ function fireTurn(sessionId: string, text: string): void {
     })
 }
 
-/** All sessions, newest activity first — the sidebar. */
-export const listAgentSessions = createServerFn({ method: 'GET' }).handler(() =>
-  listSessions(db),
+/**
+ * May the current actor see this session? A session inherits its origin's
+ * visibility (an issue's builder session is public; a chat's backing session
+ * follows that chat's membership; a bare/monitor session is crew-visible) —
+ * resolved by the same `canSeeTopic` gate the SSE stream uses, so the Agents
+ * monitor can't read a private chat's transcript the stream already hides.
+ */
+async function actorCanSeeSession(sessionId: string): Promise<boolean> {
+  const actor = await currentActor()
+  return canSeeTopic(db, actor.id, sessionScope(sessionId))
+}
+
+/** Sessions the current actor may see, newest activity first — the sidebar. */
+export const listAgentSessions = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    const actor = await currentActor()
+    const sessions = await listSessions(db)
+    const visible = await Promise.all(
+      sessions.map((s) => canSeeTopic(db, actor.id, sessionScope(s.id))),
+    )
+    return sessions.filter((_, i) => visible[i])
+  },
 )
 
-/** A session's status plus its transcript as flat, view-ready items. */
+/** A session's status plus its transcript — null if the actor may not see it. */
 export const getAgentChat = createServerFn({ method: 'GET' })
   .validator((sessionId: string) => sessionId)
   .handler(async ({ data: sessionId }) => {
+    if (!(await actorCanSeeSession(sessionId))) return null
     const session = await getSession(db, sessionId)
     if (!session) return null
     const messages = await getMessages(db, sessionId)
@@ -98,19 +120,22 @@ export const startAgentChat = createServerFn({ method: 'POST' })
 /** Send a message to an existing session (queued if a turn is in flight). */
 export const sendAgentMessage = createServerFn({ method: 'POST' })
   .validator((input: { sessionId: string; text: string }) => input)
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
+    // Can't poke a session you can't see — e.g. a private chat's backing agent.
+    if (!(await actorCanSeeSession(data.sessionId)))
+      throw new Error('not allowed')
     fireTurn(data.sessionId, data.text)
-    return Promise.resolve({ ok: true })
+    return { ok: true }
   })
 
 /** Cancel a running turn and force the session back to idle. */
 export const cancelAgentChat = createServerFn({ method: 'POST' })
   .validator((sessionId: string) => sessionId)
-  .handler(({ data: sessionId }) =>
-    runtime()
-      .cancel(sessionId)
-      .then(() => ({ ok: true })),
-  )
+  .handler(async ({ data: sessionId }) => {
+    if (!(await actorCanSeeSession(sessionId))) throw new Error('not allowed')
+    await runtime().cancel(sessionId)
+    return { ok: true }
+  })
 
 // --- Agent management (the Agents surface) ---------------------------------
 
