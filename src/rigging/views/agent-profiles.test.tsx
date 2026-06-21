@@ -57,6 +57,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={PROFILES}
         extensions={EXTENSIONS}
+        modelOptions={[]}
         saving={false}
         onSave={vi.fn()}
       />,
@@ -76,6 +77,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={profiles}
         extensions={EXTENSIONS}
+        modelOptions={[]}
         saving={false}
         onSave={vi.fn()}
       />,
@@ -94,6 +96,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={PROFILES}
         extensions={EXTENSIONS}
+        modelOptions={[]}
         saving={false}
         onSave={onSave}
       />,
@@ -128,6 +131,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={[]}
         extensions={[]}
+        modelOptions={[]}
         saving={false}
         onSave={onSave}
       />,
@@ -142,6 +146,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={PROFILES}
         extensions={EXTENSIONS}
+        modelOptions={[]}
         saving={false}
         onSave={onSave}
       />,
@@ -156,7 +161,7 @@ describe('AgentProfiles', () => {
     fireEvent.change(screen.getByPlaceholderText('You pilot a Skylark ship…'), {
       target: { value: 'do research' },
     })
-    fireEvent.change(screen.getByPlaceholderText('claude-sonnet-4-5'), {
+    fireEvent.change(screen.getByPlaceholderText('ollama/qwen3-coder:30b'), {
       target: { value: 'claude-opus-4-5' },
     })
     const checkboxes = screen.getAllByRole('checkbox')
@@ -180,6 +185,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={[]}
         extensions={[]}
+        modelOptions={[]}
         saving={false}
         onSave={vi.fn()}
       />,
@@ -192,6 +198,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={[]}
         extensions={[]}
+        modelOptions={[]}
         saving={true}
         onSave={vi.fn()}
       />,
@@ -204,6 +211,7 @@ describe('AgentProfiles', () => {
       <AgentProfiles
         profiles={PROFILES}
         extensions={EXTENSIONS}
+        modelOptions={[]}
         saving={false}
         onSave={vi.fn()}
       />,
@@ -212,5 +220,21 @@ describe('AgentProfiles', () => {
     expect(screen.getByText('Edit chat')).toBeTruthy()
     // The system prompt seeded into the editable textarea.
     expect(screen.getByDisplayValue('pilot the ship')).toBeTruthy()
+  })
+
+  it('offers the available models as picker suggestions', () => {
+    const { container } = render(
+      <AgentProfiles
+        profiles={[]}
+        extensions={[]}
+        modelOptions={['ollama/qwen3-coder:30b', 'ollama/qwen3:0.6b']}
+        saving={false}
+        onSave={vi.fn()}
+      />,
+    )
+    const options = [...container.querySelectorAll('datalist option')].map(
+      (o) => o.getAttribute('value'),
+    )
+    expect(options).toEqual(['ollama/qwen3-coder:30b', 'ollama/qwen3:0.6b'])
   })
 })

@@ -9,12 +9,15 @@ import { useCallback, useState } from 'react'
 import {
   cancelAgentChat,
   getAgentChat,
+  getDefaultModel,
   listAgentExtensions,
   listAgentProfiles,
   listAgentSessions,
   saveAgentProfile,
   sendAgentMessage,
 } from '@hull/agent/server'
+import { listLocalModels } from '@hull/local-model/server'
+import { modelPickerOptions } from '@hull/local-model/service'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
 import {
   AgentProfiles,
@@ -46,22 +49,26 @@ export const Route = createFileRoute('/agents')({
   }),
   loaderDeps: ({ search }) => ({ session: search.session }),
   loader: async ({ deps }) => {
-    const [sessions, profiles, extensions] = await Promise.all([
+    const [sessions, profiles, extensions, local, def] = await Promise.all([
       listAgentSessions(),
       listAgentProfiles(),
       listAgentExtensions(),
+      listLocalModels(),
+      getDefaultModel(),
     ])
+    const modelOptions = modelPickerOptions(def.ref, local.installed)
     const chat = deps.session
       ? await getAgentChat({ data: deps.session })
       : null
-    return { sessions, profiles, extensions, chat }
+    return { sessions, profiles, extensions, modelOptions, chat }
   },
   component: AgentsRoute,
 })
 
 function AgentsRoute() {
   const { tab = 'sessions', session: activeId } = Route.useSearch()
-  const { sessions, profiles, extensions, chat } = Route.useLoaderData()
+  const { sessions, profiles, extensions, modelOptions, chat } =
+    Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
 
@@ -152,6 +159,7 @@ function AgentsRoute() {
             <AgentProfiles
               profiles={profileSummaries}
               extensions={extensionSummaries}
+              modelOptions={modelOptions}
               saving={saving}
               onSave={(value) => {
                 void saveProfile(value)

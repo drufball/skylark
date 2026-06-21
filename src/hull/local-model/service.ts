@@ -3,6 +3,7 @@ import { arch as osArch, cpus, platform as osPlatform, totalmem } from 'node:os'
 import { promisify } from 'node:util'
 
 import { LOCAL_MODEL_CATALOG, type LocalModelSpec } from './catalog'
+import { localModelRef, type InstalledModel } from './ollama-client'
 
 // Pick a local model that fits the machine. The logic splits in two: the
 // impure `detectHardware` reads the OS (RAM, arch) and probes the GPU, while
@@ -130,6 +131,18 @@ export async function detectHardware(
     isUnifiedMemory,
     cpuCount: d.cpus().length,
   }
+}
+
+/**
+ * Model refs to suggest in a picker: the ship default first, then the installed
+ * local models (as `ollama/…` refs), deduped. Pure so the order/dedup rule is
+ * tested directly rather than buried in a route loader.
+ */
+export function modelPickerOptions(
+  defaultRef: string,
+  installed: InstalledModel[],
+): string[] {
+  return [...new Set([defaultRef, ...installed.map(localModelRef)])]
 }
 
 /* v8 ignore start -- live OS/GPU probing; the pure selection logic is unit-tested */
