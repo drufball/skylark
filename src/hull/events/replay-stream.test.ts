@@ -203,6 +203,21 @@ describe('runShipLogStream', () => {
     expect(sentIds(sent)).toContain('e0101')
   })
 
+  it('survives a durable fetch that rejects (dropped frame, no crash)', async () => {
+    const { bus, sent, deps } = harness({
+      getEventById: () => Promise.reject(new Error('db blip')),
+    })
+    await runShipLogStream(deps, { ...TOPICS })
+    const before = sent.length
+
+    // A live durable note whose row read fails must not surface an unhandled
+    // rejection or send a frame — the next reconnect replays it.
+    bus.publish(note({ id: 'e0300' }))
+    await tick()
+
+    expect(sent.length).toBe(before)
+  })
+
   it('ignores live notes that fail the topic/audience gate', async () => {
     const { bus, sent, deps } = harness({
       getEventById: (id) => Promise.resolve(row({ id })),

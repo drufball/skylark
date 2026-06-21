@@ -21,7 +21,14 @@ import { sseFrame, toStreamEvent } from './sse'
 export interface ShipLogStreamDeps {
   /** Subscribe to the live in-process bus; returns an unsubscribe. */
   subscribe: (listener: (note: NotifyPayload) => void) => () => void
-  /** A page of durable events newer than `sinceId` for these topics/audience. */
+  /**
+   * A page of durable events newer than `sinceId` for these topics/audience.
+   *
+   * Paging contract: returns a FULL `REPLAY_PAGE_SIZE` page iff more may remain
+   * — the coordinator keeps fetching until a short (or empty) page signals the
+   * log is drained. (A fake simulating "there's more" must return exactly
+   * `REPLAY_PAGE_SIZE` rows.) This mirrors `service.ts`'s `listEventsSince` cap.
+   */
   listEventsSince: (opts: {
     topicPatterns: string[]
     audience: string
@@ -95,9 +102,15 @@ export async function runShipLogStream(
       )
     } else {
       // Durable live notes carry only an id; read the full row to frame it.
-      void deps.getEventById(note.id).then((row) => {
-        if (row) deps.send(sseFrame(toStreamEvent(row)))
-      })
+      // A DB blip that drops one live frame is recoverable — the next reconnect
+      // replays from Last-Event-ID and catches it up — so swallow the rejection
+      // rather than letting it surface as an unhandled one.
+      void deps
+        .getEventById(note.id)
+        .then((row) => {
+          if (row) deps.send(sseFrame(toStreamEvent(row)))
+        })
+        .catch(() => undefined)
     }
   }
 

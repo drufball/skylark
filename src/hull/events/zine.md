@@ -50,10 +50,18 @@ automatic.
 - **Service logic** (`service.ts`) — pure, database-agnostic: append an event,
   read one by id, list events matching topic patterns and audience since a
   cursor. Touches only `events`.
-- **The SSE endpoint** (`src/routes/api/stream.ts`) — a server route returning a
-  `text/event-stream`. On connect it replays everything past `Last-Event-ID` for
-  the requested topic patterns (with audience filtering), then forwards live
-  events (durable and ephemeral) whose topic matches and audience is accessible.
+- **The stream coordinator** (`runShipLogStream`, in `replay-stream.ts`) — the
+  pure-ish core of the SSE endpoint: the order-sensitive subscribe-before-replay
+  → buffer → flush-deduped → go-live handshake, plus the topic/audience gate
+  (`noteIsVisible`) and the ephemeral-inline-vs-durable-fetch decision. Driven
+  through injected boundaries (`subscribe`, `listEventsSince`, `getEventById`,
+  `send`) so it's unit-tested with a fake bus + fake DB — no socket, no
+  Postgres.
+- **The SSE endpoint** (`src/routes/api/stream.ts`) — a thin server route
+  returning a `text/event-stream`. It resolves the actor, parses topics, and
+  wires `runShipLogStream` to a `ReadableStream` controller; what remains is the
+  genuinely impure shell (controller, encoder, heartbeat, abort + dead-socket
+  teardown), `v8 ignore`d.
 - **The client hook** (`useShipLog`, in rigging) — opens an `EventSource`, calls
   back per matching event. This is what **replaces polling**.
 
@@ -75,23 +83,25 @@ subjects, AMQP topic exchanges, Redis PSUBSCRIBE): publish once, subscribe by
 pattern, authorize separately.
 
 **Reconnect loses nothing.** The id is the cursor. On reconnect the browser
-sends `Last-Event-ID` (the last id it saw); the route replays `events` with
-`id > lastSeen` for the subscribed topic patterns (filtered by audience)
+sends `Last-Event-ID` (the last id it saw); `runShipLogStream` replays `events`
+with `id > lastSeen` for the subscribed topic patterns (filtered by audience)
 straight from the table, then resumes the live feed (including ephemeral
-events). To make "loses nothing" literally true the route does two things: it
-**subscribes to the live bus before running the replay** (buffering, then
+events). To make "loses nothing" literally true the coordinator does two things:
+it **subscribes to the live bus before running the replay** (buffering, then
 flushing deduped by id) so an event landing in the gap between query and go-live
 isn't dropped; and it **pages the replay** — `listEventsSince` caps each call at
-`REPLAY_PAGE_SIZE`, so the route loops, advancing the cursor, until a short page
-comes back. A long absence drains fully; the cap only bounds one round-trip,
-never the catch-up. Ephemeral events are never replayed (they're transient UI),
-so a reconnect after missing them sees only durable state.
+`REPLAY_PAGE_SIZE`, so it loops, advancing the cursor, until a short page comes
+back. A long absence drains fully; the cap only bounds one round-trip, never the
+catch-up. Ephemeral events are never replayed (they're transient UI), so a
+reconnect after missing them sees only durable state.
 
 **Pure core, thin impure shell.** The wire format (`sse.ts`), the topic pattern
-matching, the audience access logic, and the persistence (`service.ts`) are pure
-and unit-tested on PGlite — even `pg_notify` runs there. The `LISTEN` connection
-and the `EventSource` construction are the only genuinely live wiring, marked
-`v8 ignore` like the agent runtime's Claude wiring.
+matching + audience logic + persistence (`service.ts`), and the stream
+coordination (`replay-stream.ts`) are pure and unit-tested on PGlite (or with
+fakes) — even `pg_notify` runs there. The `LISTEN` connection, the
+`ReadableStream` lifecycle in the route, and the `EventSource` construction are
+the only genuinely live wiring, marked `v8 ignore` like the agent runtime's
+Claude wiring.
 
 ## Decisions
 
@@ -139,6 +149,14 @@ and the `EventSource` construction are the only genuinely live wiring, marked
 
 ## Changelog
 
+- **#39** — Extract the SSE stream coordination into `replay-stream.ts`
+  (`runShipLogStream` + the pure `noteIsVisible` gate). The order-sensitive
+  subscribe-before-replay → buffer → flush-deduped → go-live handshake was
+  welded to the route's `ReadableStream`, so it could only be exercised against
+  a live socket + Postgres; behind injected boundaries it's now unit-tested with
+  a fake bus + fake DB. Behaviour-preserving; the route keeps only the impure
+  shell. Live durable delivery now swallows a failed row-read (recovered by the
+  next reconnect) instead of risking an unhandled rejection.
 - **#kg43** — Retire the legacy `scope` field entirely, finishing #kg42. The
   `scope` column, its index, the `scopes` replay API, and `isScopeVisible` are
   gone; migration 0006 drops the column. `notifyOnly` now carries `topic` +
