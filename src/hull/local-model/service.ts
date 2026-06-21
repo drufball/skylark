@@ -66,7 +66,8 @@ function round1(gb: number): number {
  */
 export function usableMemoryGB(hw: Hardware): number {
   if (hw.isUnifiedMemory) return round1(hw.totalMemGB * UNIFIED_MEMORY_FRACTION)
-  if (hw.vramGB && hw.vramGB > 0) return hw.vramGB
+  // Detection yields undefined or a positive number, so a truthy check is enough.
+  if (hw.vramGB) return hw.vramGB
   return round1(hw.totalMemGB * CPU_MEMORY_FRACTION)
 }
 
