@@ -40,13 +40,27 @@ import {
  */
 export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
 
+/** The prefix every session topic carries — the one home for the session: grammar. */
+const SESSION_TOPIC_PREFIX = 'session:'
+
 /**
  * The ship-log **topic** every event for a session is published under. Named
  * `*Scope` for historical reasons — the event `scope` field is retired; this
  * returns a topic string.
  */
 export function sessionScope(sessionId: string): string {
-  return `session:${sessionId}`
+  return `${SESSION_TOPIC_PREFIX}${sessionId}`
+}
+
+/**
+ * The session id a topic refers to, or null if it isn't a session topic — the
+ * inverse of `sessionScope`, so entitlement code asks the agent service "whose
+ * session is this?" rather than re-deriving the `session:` format.
+ */
+export function sessionIdFromTopic(topic: string): string | null {
+  return topic.startsWith(SESSION_TOPIC_PREFIX)
+    ? topic.slice(SESSION_TOPIC_PREFIX.length)
+    : null
 }
 
 /**
