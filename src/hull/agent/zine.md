@@ -159,13 +159,16 @@ idle session, because the truth is in the database, not the registry.
   place the ship knowingly defers that invariant; when crew lands (in the hull,
   per [`hull/zine.md`](../zine.md)), these tables get crew columns and queries
   get crew filters. Tracked here so the deferral is honest, not silent.
-- **Model resolution is provider-aware; the default is still Anthropic.** A
-  stored model is a `provider/modelId` string resolved by
-  [`models.ts`](models.ts): a bare id is Anthropic (back-compat with pre-prefix
-  rows), `ollama/…` builds a local OpenAI-compatible model pointed at the local
-  Ollama server. So `resolveModel` can build an Ollama model today — only the
-  default (`claude-sonnet-4-5`) stays Anthropic until the Ollama bring-up flips
-  it. Pinned per session and overridable per profile.
+- **Model resolution is provider-aware; the default is local-first.** A stored
+  model is a `provider/modelId` string resolved by [`models.ts`](models.ts): a
+  bare id is Anthropic (back-compat with pre-prefix rows), `ollama/…` builds a
+  local OpenAI-compatible model pointed at the local Ollama server. The default
+  (`DEFAULT_MODEL`) comes from `defaultModelRef()` reading
+  `SKYLARK_DEFAULT_MODEL` — set by the hoist bring-up to the Ollama model that
+  fits the machine, or by a crew member to a hosted model (e.g.
+  `anthropic/claude-sonnet-4-5`) — and falls back to a small local model so a
+  fresh clone runs with no API key. Pinned per session and overridable per
+  profile.
 - **A profile decides how an agent boots; the runtime is one engine.** Tools,
   prompt, context, skills, extensions, model — all data on a profile row, not
   hardcoded. One runtime drives a read-only chat pilot and a full builder alike.

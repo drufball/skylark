@@ -48,9 +48,14 @@ if ! ready; then
   ready || { warn "Ollama daemon didn't come up (see /tmp/ollama-serve.log) — skipping local model"; exit 0; }
 fi
 
-# 3. Auto-select a model that fits this machine (bare Ollama tag).
-TAG="$(npm run -s local-model select --quiet 2>/dev/null | tail -n1)"
-[ -n "$TAG" ] || { warn "couldn't determine a model for this machine — skipping pull"; exit 0; }
+# 3. Auto-select a model that fits this machine. `--quiet` is the bare Ollama
+#    tag for `ollama pull`; `--ref` is the provider-prefixed model ref for the
+#    agent runtime — both come from the local-model service, so the `ollama/`
+#    prefix has one home, not a copy rebuilt here.
+# `npm run … -- …` so the flags reach the CLI instead of being eaten by npm.
+TAG="$(npm run -s local-model -- select --quiet 2>/dev/null | tail -n1)"
+REF="$(npm run -s local-model -- select --ref 2>/dev/null | tail -n1)"
+[ -n "$TAG" ] && [ -n "$REF" ] || { warn "couldn't determine a model for this machine — skipping pull"; exit 0; }
 
 # 4. Pull it if absent. (ollama pull is idempotent; the check just skips a
 #    needless network round-trip when the model is already local.)
@@ -62,7 +67,6 @@ else
 fi
 
 # 5. Record the ship's default so every door (web + CLI) agrees on it.
-REF="ollama/$TAG"
 ENV_FILE=".env"
 touch "$ENV_FILE"
 if grep -q '^SKYLARK_DEFAULT_MODEL=' "$ENV_FILE" 2>/dev/null; then
