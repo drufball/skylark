@@ -74,6 +74,8 @@ const BLANK: ProfileSummary = {
 export interface AgentProfilesProps {
   profiles: ProfileSummary[]
   extensions: ExtensionSummary[]
+  /** Suggested model refs for the picker (installed local + the default). */
+  modelOptions: string[]
   /** A save is in flight — the form is disabled. */
   saving: boolean
   onSave: (value: ProfileFormValue) => void
@@ -82,6 +84,7 @@ export interface AgentProfilesProps {
 export function AgentProfiles({
   profiles,
   extensions,
+  modelOptions,
   saving,
   onSave,
 }: AgentProfilesProps) {
@@ -142,6 +145,7 @@ export function AgentProfiles({
           key={selected.id || 'new'}
           profile={selected}
           extensions={extensions}
+          modelOptions={modelOptions}
           saving={saving}
           onSave={onSave}
         />
@@ -153,11 +157,13 @@ export function AgentProfiles({
 function ProfileForm({
   profile,
   extensions,
+  modelOptions,
   saving,
   onSave,
 }: {
   profile: ProfileSummary
   extensions: ExtensionSummary[]
+  modelOptions: string[]
   saving: boolean
   onSave: (value: ProfileFormValue) => void
 }) {
@@ -284,15 +290,24 @@ function ProfileForm({
         )}
       </Field>
 
-      <Field label="Model" hint="Override the default model. Blank = default.">
+      <Field
+        label="Model"
+        hint="Which model runs this profile. Blank = the ship default. Pick an installed local model or type any ref, e.g. anthropic/claude-sonnet-4-5."
+      >
         <input
           className={inputClass}
           value={model}
+          list="profile-model-options"
           onChange={(e) => {
             setModel(e.target.value)
           }}
-          placeholder="claude-sonnet-4-5"
+          placeholder="ollama/qwen3-coder:30b"
         />
+        <datalist id="profile-model-options">
+          {modelOptions.map((ref) => (
+            <option key={ref} value={ref} />
+          ))}
+        </datalist>
       </Field>
 
       <div>
