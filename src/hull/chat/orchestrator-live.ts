@@ -1,6 +1,6 @@
 import { db } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
-import { createAgentRuntime, createPiSession } from '@hull/agent/runtime'
+import { createServerRuntime } from '@hull/agent/fake-session'
 
 import { type ChatOrchestrator, createChatOrchestrator } from './orchestrator'
 
@@ -21,7 +21,7 @@ let started: ChatOrchestrator | undefined
  */
 export function ensureChatOrchestrator(): ChatOrchestrator {
   if (started) return started
-  const runtime = createAgentRuntime({ db, factory: createPiSession })
+  const runtime = createServerRuntime(db)
   started = createChatOrchestrator({ db, runtime })
   subscribeToShipLog(started, 'chat orchestrator')
   return started
