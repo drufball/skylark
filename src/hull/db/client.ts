@@ -3,12 +3,11 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
 import { runAsActor } from './with-actor'
+import { resolveDatabaseUrl } from './url'
 
-/** Local default. Override with DATABASE_URL (see .env / .env.example). */
-export const DEFAULT_DATABASE_URL =
-  'postgres://postgres:postgres@localhost:5432/skylark'
-
-const connectionString = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL
+// The connection target — DATABASE_URL, the local default, or (in smoke/test
+// mode) the dedicated skylark_smoke db. See url.ts for the one-place rule.
+const connectionString = resolveDatabaseUrl()
 
 // One shared connection for the whole ship. postgres-js connects lazily — on
 // the first query, not at import — so importing this never throws when Postgres

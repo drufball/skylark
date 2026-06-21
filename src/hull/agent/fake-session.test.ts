@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { freshDb } from '@hull/db/test-db'
+import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
 
 import {
   createFakeSession,
-  FAKE_RUNTIME_ENV,
   fakeReply,
   resolveSessionFactory,
 } from './fake-session'
