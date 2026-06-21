@@ -64,16 +64,16 @@ survives a re-seed. Run it from a migration's data step or `npm run users seed`.
 
 - **Enforcement is Postgres RLS, not a compile-time helper.** The original plan
   named a "compile-time crew-filter helper"; we landed on **Row-Level Security**
-  instead. Reasons: it lives in the database (the lowest layer — so once the app
-  connects as a non-superuser, a service that forgets to filter still can't
-  leak), it keeps membership **normalized** (policies join to `chat_members`; no
-  per-row ACL to denormalize and re-sync), and the same rule that filters table
-  reads will gate the event stream (via a `canSee` probe) once that's wired. The
-  cost is real and accepted: the app must run as the non-superuser `app_user`
-  (the superuser bypasses RLS). Until the base connection is flipped to
-  `app_user` (a tracked follow-up), enforcement is by convention — every door
-  must remember `withActor` — rather than truly fail-closed; flipping it is what
-  makes a forgotten `withActor` see no rows.
+  instead. Reasons: it lives in the database (the lowest layer — a service that
+  forgets to filter still can't leak), it keeps membership **normalized**
+  (policies join to `chat_members`; no per-row ACL to denormalize and re-sync),
+  and the same probe gates the event stream that table reads can't cover. The
+  cost is real and accepted: the app connects as the non-superuser `app_user`
+  (migration 0009), and a separate superuser `systemDb` handle serves the few
+  fixed system paths that need all rows (migrations, the agent runtime, the
+  orchestrators' reconcile). Because the base connection is `app_user`, a door
+  that forgets `withActor` sees **nothing** (NULL actor → the policy matches no
+  rows) — fail-closed by construction, not by every door remembering.
 - **`withActor` is the one place identity meets the database.** A door resolves
   who's acting and wraps its work in `withActor`; the services it calls receive
   a transaction-scoped db and stay oblivious to access. Kept short by design —

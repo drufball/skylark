@@ -2,7 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import { createServerFn } from '@tanstack/react-start'
 
-import { db } from '@hull/db/client'
+import { db, systemDb } from '@hull/db/client'
 import { canSeeTopic } from '@hull/access/visibility'
 import { errorMessage } from '@hull/lib/errors'
 import { currentActor, withCurrentActor } from '@hull/users/actor'
@@ -45,9 +45,13 @@ import { toChatItems } from './transcript'
 // One runtime per server process, created lazily on first server-side use. The
 // registry must outlive individual requests so a turn can be queued into or
 // cancelled. Lazy so this server-only wiring never runs in the client bundle.
+// It runs on `systemDb`: persisting a turn's transcript is fixed plumbing (it
+// writes the one session it's running), not an LLM-driven read of arbitrary
+// rows — and a chat-backing session's writes would otherwise fail closed under
+// app_user with no actor.
 let runtimeSingleton: AgentRuntime | undefined
 function runtime(): AgentRuntime {
-  runtimeSingleton ??= createServerRuntime(db)
+  runtimeSingleton ??= createServerRuntime(systemDb)
   return runtimeSingleton
 }
 

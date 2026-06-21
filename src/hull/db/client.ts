@@ -3,22 +3,32 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
 import { runAsActor } from './with-actor'
-import { resolveDatabaseUrl } from './url'
+import { resolveAppUrl, resolveDatabaseUrl } from './url'
 
-// The connection target — DATABASE_URL, the local default, or (in smoke/test
-// mode) the dedicated skylark_smoke db. See url.ts for the one-place rule.
-const connectionString = resolveDatabaseUrl()
+// Two connections, two roles. The ship runs as the non-superuser `app_user`, so
+// Row-Level Security applies to every query by default — a path that forgets
+// `withActor` sees NOTHING, not everything (fail closed). The superuser is
+// reserved for fixed system plumbing that legitimately needs every row
+// (`systemDb`); nothing that serves a request or runs an agent's instructions
+// touches it. postgres-js connects lazily, so importing this never throws when
+// Postgres is asleep.
 
-// One shared connection for the whole ship. postgres-js connects lazily — on
-// the first query, not at import — so importing this never throws when Postgres
-// is asleep.
-const client = postgres(connectionString, { max: 10 })
+// The shared handle every service + door uses: RLS-scoped, as `app_user`.
+const appClient = postgres(resolveAppUrl(), { max: 10 })
 
 // The shared database handle every service uses: `db.select().from(yourTable)`.
 // No aggregated schema is attached here on purpose — services pass their own
 // tables explicitly, which keeps the hull from ever needing to import upward
 // into rigging/home. (drizzle-kit finds tables by globbing src/**/schema.ts.)
-export const db: PostgresJsDatabase = drizzle(client)
+export const db: PostgresJsDatabase = drizzle(appClient)
+
+// The superuser handle for FIXED system plumbing only: the agent runtime
+// (persists transcripts), the orchestrators' reconcile/reply (scan + act across
+// chats), and seeding. It BYPASSES RLS, so it must never be handed to a door or
+// an LLM-driven path — that's the "ask the agent to read it for you" gap. Lives
+// here so the one-way rule (callers reach down to db/client) is preserved.
+const systemClient = postgres(resolveDatabaseUrl(), { max: 5 })
+export const systemDb: PostgresJsDatabase = drizzle(systemClient)
 
 // The database type service logic should accept. The live `db` above and the
 // in-memory PGlite client used in tests both satisfy it, and it exposes the full

@@ -18,6 +18,41 @@ export function withDbName(url: string, name: string): string {
   return u.toString()
 }
 
+/** The non-superuser role the app connects as, so RLS applies by default. */
+export const APP_ROLE = 'app_user'
+
+/** Swap the credentials in a connection URL, keeping host/port/database. */
+export function withCredentials(
+  url: string,
+  user: string,
+  password: string,
+): string {
+  const u = new URL(url)
+  u.username = user
+  u.password = password
+  return u.toString()
+}
+
+/**
+ * The URL the APP connects on — the same server/database as
+ * `resolveDatabaseUrl`, but as the non-superuser `app_user` so Row-Level
+ * Security applies to every query by default (a forgotten `withActor` sees
+ * nothing, not everything). `APP_DATABASE_URL` overrides it outright for a
+ * deployment with rotated credentials; otherwise the superuser URL is reused
+ * with the app_user credential (`app_user` / `app_user` — see migration 0009).
+ * The smoke-db swap rides along, so a smoke run connects as app_user too.
+ */
+export function resolveAppUrl(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (env.APP_DATABASE_URL) {
+    return env[FAKE_RUNTIME_ENV]
+      ? withDbName(env.APP_DATABASE_URL, SMOKE_DB_NAME)
+      : env.APP_DATABASE_URL
+  }
+  return withCredentials(resolveDatabaseUrl(env), APP_ROLE, APP_ROLE)
+}
+
 /**
  * Smoke/test mode (`SKYLARK_FAKE_RUNTIME` set) is FORCED onto a dedicated
  * `skylark_smoke` database — same server as DATABASE_URL/default, never the base

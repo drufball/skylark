@@ -1,4 +1,4 @@
-import { db } from '@hull/db/client'
+import { systemDb } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
 import { createServerRuntime } from '@hull/agent/fake-session'
 
@@ -21,8 +21,12 @@ let started: ChatOrchestrator | undefined
  */
 export function ensureChatOrchestrator(): ChatOrchestrator {
   if (started) return started
-  const runtime = createServerRuntime(db)
-  started = createChatOrchestrator({ db, runtime })
+  // systemDb (superuser): the orchestrator is fixed plumbing — it scans all
+  // chats to recover work (reconcile) and posts the agent's reply, which under
+  // app_user with no actor would fail closed. It reacts to events, it doesn't
+  // serve a request, so RLS-bypass is safe here.
+  const runtime = createServerRuntime(systemDb)
+  started = createChatOrchestrator({ db: systemDb, runtime })
   subscribeToShipLog(started, 'chat orchestrator')
   return started
 }
