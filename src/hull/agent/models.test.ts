@@ -5,7 +5,7 @@ import {
   DEFAULT_OLLAMA_BASE_URL,
   defaultModelRef,
   FALLBACK_DEFAULT_MODEL,
-  findAnthropicModel,
+  findHostedModel,
   ollamaBaseUrl,
   parseModelRef,
   resolveModel,
@@ -166,14 +166,25 @@ describe('resolveModel', () => {
     ).toBe(32768)
   })
 
-  it('throws on an unknown Anthropic model', () => {
+  it('resolves models from other hosted providers (OpenAI, Google) by prefix', () => {
+    const openai = getModels('openai')[0]
+    expect(resolveModel(`openai/${openai.id}`)).toEqual(openai)
+    const google = getModels('google')[0]
+    expect(resolveModel(`google/${google.id}`)).toEqual(google)
+  })
+
+  it('throws on an unknown model for a known provider', () => {
     expect(() => resolveModel('anthropic/not-a-real-model')).toThrow(
       /unknown anthropic model/i,
     )
   })
 
-  it('throws on an unknown provider', () => {
+  it('throws on an unknown provider, naming what was typed', () => {
     expect(() => resolveModel('weirdprovider/foo')).toThrow(/provider/i)
+    // The error keeps the original ref so a bad SKYLARK_DEFAULT_MODEL is debuggable.
+    expect(() => resolveModel('weirdprovider/foo')).toThrow(
+      /weirdprovider\/foo/,
+    )
   })
 })
 
@@ -204,14 +215,18 @@ describe('defaultModelRef', () => {
   })
 })
 
-describe('findAnthropicModel', () => {
+describe('findHostedModel', () => {
   it('returns the first candidate id that exists, in order', () => {
     const known = getModels('anthropic')[0]
-    expect(findAnthropicModel(['not-real', known.id])).toEqual(known)
+    expect(findHostedModel('anthropic', ['not-real', known.id])).toEqual(known)
   })
 
   it('returns undefined when no candidate matches (tolerant callers degrade)', () => {
-    expect(findAnthropicModel(['nope', 'also-nope'])).toBeUndefined()
-    expect(findAnthropicModel([])).toBeUndefined()
+    expect(findHostedModel('anthropic', ['nope', 'also-nope'])).toBeUndefined()
+    expect(findHostedModel('anthropic', [])).toBeUndefined()
+  })
+
+  it('returns undefined for an unknown provider', () => {
+    expect(findHostedModel('weirdprovider', ['anything'])).toBeUndefined()
   })
 })
