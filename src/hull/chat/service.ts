@@ -159,19 +159,6 @@ export async function listMembers(
     .orderBy(asc(chatMembers.createdAt))
 }
 
-export async function isMember(
-  db: Database,
-  chatId: string,
-  userId: string,
-): Promise<boolean> {
-  const rows = await db
-    .select({ userId: chatMembers.userId })
-    .from(chatMembers)
-    .where(and(eq(chatMembers.chatId, chatId), eq(chatMembers.userId, userId)))
-    .limit(1)
-  return rows.length > 0
-}
-
 /** Every chat, newest activity first — what the orchestrator's reconcile scans. */
 export async function listAllChats(db: Database): Promise<ChatRow[]> {
   return db.select().from(chats).orderBy(desc(chats.lastMessageAt))

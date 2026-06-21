@@ -1,6 +1,6 @@
 import { getCookie } from '@tanstack/react-start/server'
 
-import { db } from '@hull/db/client'
+import { type Database, db, withActor } from '@hull/db/client'
 
 import { getUserByHandle, getUserById, resolveActorHandle } from './service'
 import type { UserRow } from './schema'
@@ -56,5 +56,21 @@ export async function cliActor(): Promise<UserRow | undefined> {
     operator: operatorHandle(),
   })
   return getUserByHandle(db, handle)
+}
+
+/**
+ * Run a web door's work as the current actor, under RLS. Resolves who's acting,
+ * then opens a `withActor` transaction and hands the callback the
+ * actor-scoped db + the actor row — so a door is one line and can't pass the
+ * wrong id. The single sink for the `currentActor()` + `withActor` preamble
+ * every RLS-scoped door shares. Lives here (not in db/client) so the db
+ * foundation never imports the web request context — `users/actor → db/client`
+ * stays one-way.
+ */
+export async function withCurrentActor<T>(
+  fn: (db: Database, me: UserRow) => Promise<T>,
+): Promise<T> {
+  const me = await currentActor()
+  return withActor(me.id, (tx) => fn(tx, me))
 }
 /* v8 ignore stop */
