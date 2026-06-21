@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { ChatView, type ChatViewProps, chatName } from './chat'
+import { classTokensOf } from './test-support'
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
@@ -50,11 +51,38 @@ describe('ChatView', () => {
     const { onSelect } = renderView({
       chats: [{ id: 'c1', title: null, memberHandles: ['tilde'] }],
     })
+    // With chats present the "no chats yet" sidebar placeholder is gone.
+    expect(screen.queryByText(/no chats yet/i)).toBeNull()
     fireEvent.click(screen.getByText('@tilde'))
     expect(onSelect).toHaveBeenCalledWith('c1')
   })
 
-  it('renders messages, attributing only others', () => {
+  it('highlights only the active chat in the list', () => {
+    renderView({
+      activeId: 'c1',
+      chats: [
+        { id: 'c1', title: null, memberHandles: ['tilde'] },
+        { id: 'c2', title: null, memberHandles: ['bix'] },
+      ],
+    })
+    // The active row carries the accent class; the inactive one does not.
+    expect(classTokensOf('@tilde')).toContain('bg-accent')
+    expect(classTokensOf('@bix')).not.toContain('bg-accent')
+  })
+
+  it('does not highlight any chat while composing a new one', () => {
+    // composing wins over activeId: the list shows no selection. (zara is only
+    // in the chat list, never the crew picker, so the lookup is unambiguous.)
+    renderView({
+      activeId: 'c1',
+      composing: true,
+      chats: [{ id: 'c1', title: null, memberHandles: ['zara'] }],
+      crew: [{ id: 'a', handle: 'tilde', displayName: 'Tilde', type: 'agent' }],
+    })
+    expect(classTokensOf('@zara')).not.toContain('bg-accent')
+  })
+
+  it('renders messages, attributing only others (not mine)', () => {
     renderView({
       activeId: 'c1',
       members: [{ userId: 'a', handle: 'tilde', type: 'agent' }],
@@ -65,8 +93,10 @@ describe('ChatView', () => {
     })
     expect(screen.getByText('hi')).toBeTruthy()
     expect(screen.getByText('hello')).toBeTruthy()
-    // The other party is labelled (header chip + the message author line).
+    // The other party is labelled (header chip + the message author line)…
     expect(screen.getAllByText('@tilde').length).toBeGreaterThan(0)
+    // …but my own message is not prefixed with my handle.
+    expect(screen.queryByText('@dru')).toBeNull()
   })
 
   it('shows a working placeholder for a mid-reply agent', () => {

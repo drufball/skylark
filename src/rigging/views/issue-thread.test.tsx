@@ -88,10 +88,23 @@ describe('IssueThreadView', () => {
     expect(onSetStatus).toHaveBeenCalledWith('open')
   })
 
-  it('hides the composer and controls for a terminal issue', () => {
-    renderView({ thread: thread({ status: 'done' }) })
-    expect(screen.queryByPlaceholderText(/Comment/)).toBeNull()
-    expect(screen.queryByText('Build it')).toBeNull()
+  it('hides the composer and controls for a terminal issue (done or closed)', () => {
+    for (const status of ['done', 'closed'] as const) {
+      const { unmount } = renderView({ thread: thread({ status }) })
+      expect(screen.queryByPlaceholderText(/Comment/)).toBeNull()
+      expect(screen.queryByText('Build it')).toBeNull()
+      expect(screen.queryByText('Close')).toBeNull()
+      unmount()
+    }
+  })
+
+  it('surfaces the status line only while building, not for an open issue', () => {
+    // An open issue carrying a stale status line must not render it; the gate
+    // is status === 'building', not just "a line exists".
+    renderView({
+      thread: thread({ status: 'open', statusLine: '🔧 stale line' }),
+    })
+    expect(screen.queryByText('🔧 stale line')).toBeNull()
   })
 
   it('comments via the composer', () => {

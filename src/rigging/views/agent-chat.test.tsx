@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ChatItem } from '@hull/agent/transcript'
 
 import { AgentChatView, type AgentChatViewProps } from './agent-chat'
+import { classTokensOf } from './test-support'
 
 // jsdom has no layout engine, so the transcript's auto-scroll call is a no-op.
 beforeAll(() => {
@@ -71,10 +72,24 @@ describe('AgentChatView', () => {
       activeId: 'a',
     })
 
+    // Sessions present → the "no conversations yet" placeholder is gone.
+    expect(screen.queryByText(/no conversations yet/i)).toBeNull()
     expect(container.querySelector('.animate-spin')).not.toBeNull()
     expect(screen.getByText('(untitled)')).toBeDefined()
     fireEvent.click(screen.getByText('second'))
     expect(onSelect).toHaveBeenCalledWith('b')
+  })
+
+  it('highlights only the active session in the sidebar', () => {
+    renderView({
+      sessions: [
+        { id: 'a', title: 'first', status: 'idle' },
+        { id: 'b', title: 'second', status: 'idle' },
+      ],
+      activeId: 'a',
+    })
+    expect(classTokensOf('first', 'button')).toContain('bg-accent')
+    expect(classTokensOf('second', 'button')).not.toContain('bg-accent')
   })
 
   it('marks an errored tool result distinctly', () => {
