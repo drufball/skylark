@@ -27,7 +27,9 @@ Start here:
 
 ```
 ./scripts/setup          bootstrap a fresh clone/worktree/session (idempotent)
-./scripts/hoist          setup + Postgres + dev — the "go live" one move
+./scripts/hoist          setup + Postgres + local model + dev — the "go live" one move
+./scripts/ensure-ollama  install/start Ollama, auto-pick & pull a model that fits (best-effort)
+npm run local-model      detect|select|catalog — what model fits this machine
 npm run dev              start the ship (port 3000)
 npm run check            format:check + lint + typecheck + test — "is the ship sound"
 npm test                 vitest — runs on PGlite, needs no database
@@ -45,7 +47,11 @@ npm run mutate:diff      mutation-test only the files this branch changed vs mai
 ```
 
 Ollama and pi.dev run **natively** (Docker can't reach the Mac GPU); only
-Postgres is containerized.
+Postgres is containerized. Skylark is **local-first**: `hoist` brings up Ollama
+and a hardware-fitted model, so a fresh clone runs with no API key. The default
+model is `SKYLARK_DEFAULT_MODEL` (provider-prefixed, e.g.
+`ollama/qwen3-coder:30b` or `anthropic/claude-sonnet-4-5`); add a provider key
+to `.env` only to use a hosted model.
 
 ## Skills
 

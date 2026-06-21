@@ -6,6 +6,7 @@ import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
 import { createUser } from '@hull/users/service'
 import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
+import { DEFAULT_MODEL } from '@hull/agent/runtime'
 import { createSession, getSession, listSessions } from '@hull/agent/service'
 
 import {
@@ -278,6 +279,7 @@ describe('orchestrator → building (from open)', () => {
     expect(session.profileId).toBe(builderProfile.id)
     expect(session.cwd).toBe('/wt/add-widget-aa11')
     expect(session.agentUserId).toBe(builderId)
+    expect(session.model).toBe(DEFAULT_MODEL)
 
     // A turn was seeded with a prompt that carries the issue + the CLI contract.
     expect(runtime.turns).toHaveLength(1)

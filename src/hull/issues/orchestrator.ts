@@ -2,7 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { getProfileByName } from '@hull/agent/profiles'
-import type { RunsTurns } from '@hull/agent/runtime'
+import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { createSession } from '@hull/agent/service'
 import type { NotifyPayload } from '@hull/events/bus'
 import { getEventById } from '@hull/events/service'
@@ -278,7 +278,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       const builder = await getProfileByName(db, 'builder')
       await createSession(db, {
         id: sessionId,
-        model: 'claude-sonnet-4-5',
+        model: DEFAULT_MODEL,
         title: issue.title,
         profileId: builder?.id ?? null,
         cwd: worktreePath,

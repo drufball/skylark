@@ -14,7 +14,7 @@ import { errorMessage } from '@hull/lib/errors'
 
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
-import { resolveModel } from './models'
+import { defaultModelRef, resolveModel } from './models'
 import { getProfileById, resolveProfileExtensionPaths } from './profiles'
 import { resolveSessionOptions, type ResolvedProfile } from './session-config'
 import {
@@ -48,12 +48,14 @@ export function sessionScope(sessionId: string): string {
 }
 
 /**
- * Default model when a session doesn't pin one. A bare id (no `provider/`
- * prefix) resolves to Anthropic — see `resolveModel` in ./models. Resolution
- * is provider-aware (Anthropic + Ollama today); the local-first default switch
- * lands with the Ollama bring-up.
+ * Default model when a session doesn't pin one — local-first. Resolved from
+ * `SKYLARK_DEFAULT_MODEL` (set by the hoist bring-up to the machine's
+ * auto-selected Ollama model, or by a crew member to a hosted model), falling
+ * back to a local model so the ship runs with no key. Read once at boot; hoist
+ * sets the env before `npm run dev` starts. Pin per session / per profile to
+ * override (e.g. `anthropic/claude-sonnet-4-5`).
  */
-export const DEFAULT_MODEL = 'claude-sonnet-4-5'
+export const DEFAULT_MODEL = defaultModelRef()
 
 /**
  * The profile a session boots with when it has no profileId — the pre-profiles

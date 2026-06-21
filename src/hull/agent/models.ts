@@ -11,6 +11,27 @@ import type { Api, Model } from '@earendil-works/pi-ai'
 /** Provider assumed when a model string carries no `provider/` prefix. */
 export const DEFAULT_PROVIDER = 'anthropic'
 
+/**
+ * The default when nothing is configured: a small, broadly-runnable local model
+ * (fits ~16GB). Skylark is local-first — a fresh clone runs on Ollama with no
+ * API key. The hoist bring-up replaces this with the model it auto-selects for
+ * the actual machine (writing `SKYLARK_DEFAULT_MODEL`); a crew member can also
+ * point that env at a hosted model (e.g. `anthropic/claude-sonnet-4-5`).
+ */
+export const FALLBACK_DEFAULT_MODEL = 'ollama/qwen3:8b'
+
+/**
+ * The model a session boots with when it doesn't pin one. Reads
+ * `SKYLARK_DEFAULT_MODEL` (set by hoist after hardware-aware selection, or by a
+ * crew member to choose a hosted default), falling back to a local model so the
+ * ship works with no configuration and no key.
+ */
+export function defaultModelRef(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.SKYLARK_DEFAULT_MODEL?.trim()
+  if (configured) return configured
+  return FALLBACK_DEFAULT_MODEL
+}
+
 /** Where a local Ollama server exposes its OpenAI-compatible API by default. */
 export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'
 
@@ -78,16 +99,18 @@ export function ollamaBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   return DEFAULT_OLLAMA_BASE_URL
 }
 
-/** Read a positive integer from `env`, falling back when unset or invalid. */
+/**
+ * Read a positive integer from `env`, falling back when unset or invalid.
+ * `parseInt` already skips surrounding whitespace and yields NaN for unset or
+ * non-numeric values, so the `> 0` filter is the only guard needed.
+ */
 function envInt(
   env: NodeJS.ProcessEnv,
   name: string,
   fallback: number,
 ): number {
-  const raw = env[name]?.trim()
-  if (!raw) return fallback
-  const n = Number.parseInt(raw, 10)
-  return Number.isFinite(n) && n > 0 ? n : fallback
+  const n = Number.parseInt(env[name] ?? '', 10)
+  return n > 0 ? n : fallback
 }
 
 /**
