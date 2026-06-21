@@ -16,7 +16,7 @@ const FakeLink: DockLink = ({ to, className, children }) => (
 )
 
 describe('Dock', () => {
-  it('renders the chat, issues, and agents links and the children', () => {
+  it('renders the chat, issues, agents, and models links and the children', () => {
     render(
       <Dock active="issues" Link={FakeLink}>
         <p>surface</p>
@@ -30,6 +30,9 @@ describe('Dock', () => {
     )
     expect(screen.getByText('Agents').closest('a')?.getAttribute('href')).toBe(
       '/agents',
+    )
+    expect(screen.getByText('Models').closest('a')?.getAttribute('href')).toBe(
+      '/models',
     )
     expect(screen.getByText('surface')).toBeTruthy()
   })
