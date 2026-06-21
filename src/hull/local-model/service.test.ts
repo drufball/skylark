@@ -125,6 +125,22 @@ describe('detectHardware', () => {
     expect(detected.isUnifiedMemory).toBe(false)
   })
 
+  it('does NOT treat an ARM Linux box (e.g. AWS Graviton) as unified memory', async () => {
+    // Only Apple Silicon (darwin AND arm64) is unified — an ARM server still
+    // has discrete VRAM to probe.
+    const detectVramGB = vi.fn(() => Promise.resolve(16))
+    const detected = await detectHardware({
+      platform: () => 'linux',
+      arch: () => 'arm64',
+      totalmem: () => 32 * 1e9,
+      cpus: () => Array.from({ length: 16 }),
+      detectVramGB,
+    })
+    expect(detected.isUnifiedMemory).toBe(false)
+    expect(detectVramGB).toHaveBeenCalled()
+    expect(detected.vramGB).toBe(16)
+  })
+
   it('probes VRAM on a discrete-GPU Linux box', async () => {
     const detected = await detectHardware({
       platform: () => 'linux',
