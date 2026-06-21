@@ -177,6 +177,24 @@ export async function listAllChats(db: Database): Promise<ChatRow[]> {
   return db.select().from(chats).orderBy(desc(chats.lastMessageAt))
 }
 
+/**
+ * The chat a backing agent session belongs to, or null if no chat does. An
+ * agent member's session speaks for it in one chat (`chatMembers.sessionId`),
+ * so that session's events are visible to that chat's members — the ship's-log
+ * entitlement gate uses this to scope a `session:<id>` topic.
+ */
+export async function chatIdForSession(
+  db: Database,
+  sessionId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ chatId: chatMembers.chatId })
+    .from(chatMembers)
+    .where(eq(chatMembers.sessionId, sessionId))
+    .limit(1)
+  return rows.length > 0 ? rows[0].chatId : null
+}
+
 /** Chats the user is a member of, newest activity first — the sidebar. */
 export async function listChatsForUser(
   db: Database,

@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { freshDb } from '@hull/db/test-db'
-import { createChat } from '@hull/chat/service'
+import { createChat, setMemberSession } from '@hull/chat/service'
+import { createSession } from '@hull/agent/service'
+import { createIssue, setBuildContext } from '@hull/issues/service'
 import { createUser } from '@hull/users/service'
 
 import { canSeeTopic } from './visibility'
@@ -44,8 +46,33 @@ describe('canSeeTopic', () => {
     expect(await canSeeTopic(db, bob, `chat:${chat}`)).toBe(false)
   })
 
-  it('allows non-chat topics (issues public; sessions until scoped)', async () => {
+  it('allows issue topics (the board is public)', async () => {
     expect(await canSeeTopic(db, bob, 'issue:123')).toBe(true)
-    expect(await canSeeTopic(db, bob, 'session:abc')).toBe(true)
+  })
+
+  it('makes an issue-owned session public', async () => {
+    const sid = uuidv7()
+    await createSession(db, { id: sid, model: 'm' })
+    const issue = await createIssue(db, { title: 'build it', authorId: alice })
+    await setBuildContext(db, issue.id, { sessionId: sid })
+
+    // bob is in no chat, but an issue's builder session is public.
+    expect(await canSeeTopic(db, bob, `session:${sid}`)).toBe(true)
+  })
+
+  it('scopes a chat-backing session to that chat’s members', async () => {
+    const sid = uuidv7()
+    await createSession(db, { id: sid, model: 'm' })
+    // The session backs an agent member of `chat` (members: alice only).
+    await setMemberSession(db, chat, alice, sid)
+
+    expect(await canSeeTopic(db, alice, `session:${sid}`)).toBe(true)
+    expect(await canSeeTopic(db, bob, `session:${sid}`)).toBe(false)
+  })
+
+  it('leaves a bare session (no issue, no chat) visible to the crew', async () => {
+    const sid = uuidv7()
+    await createSession(db, { id: sid, model: 'm' })
+    expect(await canSeeTopic(db, bob, `session:${sid}`)).toBe(true)
   })
 })
