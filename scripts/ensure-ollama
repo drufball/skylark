@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# scripts/ensure-ollama — make a local model ready, best-effort.
+#
+# Skylark is local-first: a fresh clone should talk to a model with no API key.
+# This installs Ollama if missing, starts its daemon, auto-selects a model that
+# fits THIS machine (`npm run local-model`), pulls it, and records it as the
+# ship's default (SKYLARK_DEFAULT_MODEL in .env). Every step degrades like the
+# rest of hoist — on any failure we warn and let the ship sail; the agent just
+# can't take a turn until a model is reachable. Always exits 0.
+#
+# macOS + Linux only. Ollama runs NATIVELY (Docker can't reach the Mac GPU), so
+# unlike Postgres it isn't containerized.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
+case "$HOST" in
+  http://* | https://*) BASE="$HOST" ;;
+  *) BASE="http://$HOST" ;;
+esac
+
+warn() { echo "⚠ $*" >&2; }
+ready() { curl -fsS "$BASE/api/tags" >/dev/null 2>&1; }
+
+# 1. Ensure the ollama binary.
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "→ installing Ollama"
+  if command -v brew >/dev/null 2>&1; then
+    brew install ollama ||
+      { warn "brew install ollama failed — install from https://ollama.com; skipping local model"; exit 0; }
+  elif [ "$(uname -s)" = "Linux" ]; then
+    curl -fsSL https://ollama.com/install.sh | sh ||
+      { warn "Ollama install script failed — install from https://ollama.com; skipping local model"; exit 0; }
+  else
+    warn "no Homebrew and not Linux — install Ollama from https://ollama.com; skipping local model"
+    exit 0
+  fi
+fi
+
+# 2. Ensure the daemon. If not reachable, start it detached and wait for ready.
+if ! ready; then
+  echo "→ starting Ollama daemon"
+  nohup ollama serve >/tmp/ollama-serve.log 2>&1 &
+  for _ in $(seq 1 30); do
+    ready && break
+    sleep 1
+  done
+  ready || { warn "Ollama daemon didn't come up (see /tmp/ollama-serve.log) — skipping local model"; exit 0; }
+fi
+
+# 3. Auto-select a model that fits this machine (bare Ollama tag).
+TAG="$(npm run -s local-model select --quiet 2>/dev/null | tail -n1)"
+[ -n "$TAG" ] || { warn "couldn't determine a model for this machine — skipping pull"; exit 0; }
+
+# 4. Pull it if absent. (ollama pull is idempotent; the check just skips a
+#    needless network round-trip when the model is already local.)
+if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$TAG"; then
+  echo "→ $TAG already pulled"
+else
+  echo "→ pulling $TAG (first run downloads several GB; later boots are instant)"
+  ollama pull "$TAG" || { warn "couldn't pull $TAG — skipping default"; exit 0; }
+fi
+
+# 5. Record the ship's default so every door (web + CLI) agrees on it.
+REF="ollama/$TAG"
+ENV_FILE=".env"
+touch "$ENV_FILE"
+if grep -q '^SKYLARK_DEFAULT_MODEL=' "$ENV_FILE" 2>/dev/null; then
+  grep -v '^SKYLARK_DEFAULT_MODEL=' "$ENV_FILE" >"$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
+fi
+echo "SKYLARK_DEFAULT_MODEL=$REF" >>"$ENV_FILE"
+
+echo "✓ local model ready: $REF"

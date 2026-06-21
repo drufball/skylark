@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DEFAULT_OLLAMA_BASE_URL,
+  defaultModelRef,
+  FALLBACK_DEFAULT_MODEL,
   findAnthropicModel,
   ollamaBaseUrl,
   parseModelRef,
@@ -142,11 +144,26 @@ describe('resolveModel', () => {
     expect(model.maxTokens).toBe(16384)
   })
 
-  it('ignores a non-positive or junk context-window override', () => {
+  it('trims whitespace around a context-window override', () => {
     const model = resolveModel('ollama/qwen3:8b', {
-      OLLAMA_CONTEXT_WINDOW: 'lots',
+      OLLAMA_CONTEXT_WINDOW: '  65536  ',
     })
-    expect(model.contextWindow).toBe(32768)
+    expect(model.contextWindow).toBe(65536)
+  })
+
+  it('ignores a junk, zero, or negative context-window override', () => {
+    expect(
+      resolveModel('ollama/qwen3:8b', { OLLAMA_CONTEXT_WINDOW: 'lots' })
+        .contextWindow,
+    ).toBe(32768)
+    expect(
+      resolveModel('ollama/qwen3:8b', { OLLAMA_CONTEXT_WINDOW: '0' })
+        .contextWindow,
+    ).toBe(32768)
+    expect(
+      resolveModel('ollama/qwen3:8b', { OLLAMA_CONTEXT_WINDOW: '-5' })
+        .contextWindow,
+    ).toBe(32768)
   })
 
   it('throws on an unknown Anthropic model', () => {
@@ -157,6 +174,33 @@ describe('resolveModel', () => {
 
   it('throws on an unknown provider', () => {
     expect(() => resolveModel('weirdprovider/foo')).toThrow(/provider/i)
+  })
+})
+
+describe('defaultModelRef', () => {
+  it('falls back to a broadly-runnable local model when unset (local-first)', () => {
+    expect(defaultModelRef({})).toBe(FALLBACK_DEFAULT_MODEL)
+    expect(FALLBACK_DEFAULT_MODEL.startsWith('ollama/')).toBe(true)
+  })
+
+  it('honors SKYLARK_DEFAULT_MODEL (what hoist writes after selection)', () => {
+    expect(
+      defaultModelRef({ SKYLARK_DEFAULT_MODEL: 'ollama/qwen3-coder:30b' }),
+    ).toBe('ollama/qwen3-coder:30b')
+  })
+
+  it('lets a crew member opt into a hosted model as their default', () => {
+    expect(
+      defaultModelRef({
+        SKYLARK_DEFAULT_MODEL: '  anthropic/claude-sonnet-4-5  ',
+      }),
+    ).toBe('anthropic/claude-sonnet-4-5')
+  })
+
+  it('falls back when the override is blank', () => {
+    expect(defaultModelRef({ SKYLARK_DEFAULT_MODEL: '   ' })).toBe(
+      FALLBACK_DEFAULT_MODEL,
+    )
   })
 })
 

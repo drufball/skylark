@@ -22,4 +22,15 @@ else
   echo "⚠ couldn't start Postgres — is Docker running? continuing anyway"
 fi
 
+# Bring up a local model so the ship is useful with no API key (local-first).
+# Best-effort, like Postgres: a failure here never blocks `npm run dev`.
+./scripts/ensure-ollama || echo "⚠ couldn't ready a local model — continuing anyway"
+
+# Load the default model ensure-ollama just selected so the dev server inherits
+# it (a child script can't set its parent's env). Other .env vars reach the dev
+# server through the framework's own .env loading.
+if [ -f .env ] && grep -q '^SKYLARK_DEFAULT_MODEL=' .env; then
+  export "$(grep '^SKYLARK_DEFAULT_MODEL=' .env | tail -n1)"
+fi
+
 exec npm run dev
