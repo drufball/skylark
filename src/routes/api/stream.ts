@@ -1,20 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { db } from '@hull/db/client'
+import { ensureShipLogListener, shipLogBus } from '@hull/events/bus'
 import {
-  ensureShipLogListener,
-  shipLogBus,
-  type NotifyPayload,
-} from '@hull/events/bus'
-import {
-  canViewAudience,
   getEventById,
   listEventsSince,
-  matchesTopic,
   MEMBERS_AUDIENCE,
-  REPLAY_PAGE_SIZE,
 } from '@hull/events/service'
-import { parseTopics, sseFrame, toStreamEvent } from '@hull/events/sse'
+import { runShipLogStream } from '@hull/events/replay-stream'
+import { parseTopics } from '@hull/events/sse'
 import { currentActor } from '@hull/users/actor'
 
 // The ship's log, streamed. A GET here is a Server-Sent-Events connection: the
@@ -60,9 +54,14 @@ export const Route = createFileRoute('/api/stream')({
         const encoder = new TextEncoder()
 
         const stream = new ReadableStream<Uint8Array>({
+          /* v8 ignore start -- impure ReadableStream lifecycle: controller,
+             encoder, heartbeat timer, abort + dead-socket teardown. The
+             subscribe/replay/flush coordination it drives is runShipLogStream,
+             unit-tested in replay-stream.test.ts. */
           async start(controller) {
             let open = true
             let heartbeat: ReturnType<typeof setInterval> | undefined
+            let unsubscribe: () => void = () => undefined
 
             const close = () => {
               if (!open) return
@@ -87,71 +86,21 @@ export const Route = createFileRoute('/api/stream')({
               }
             }
 
-            // Subscribe BEFORE replay so nothing lands in the gap. Until replay
-            // finishes we buffer; the highest id we replay becomes the cutoff
-            // that dedupes the buffer against the replayed page.
-            let replayed = false
-            let lastReplayedId = lastEventId
-            const buffer: NotifyPayload[] = []
-            const deliver = (note: NotifyPayload) => {
-              // Check topic pattern match.
-              const noteTopic = note.topic
-              const topicMatch =
-                noteTopic &&
-                topicPatterns.some((pattern) =>
-                  matchesTopic(noteTopic, pattern),
-                )
-              if (!topicMatch) return
-              // Check audience access (members can see public + members)
-              if (note.audience && !canViewAudience(note.audience, audience))
-                return
-              if (lastReplayedId && note.id <= lastReplayedId) return
-              // Ephemeral events carry their full data; durable events fetch from DB.
-              if (note.ephemeral) {
-                send(
-                  sseFrame({
-                    id: note.id,
-                    type: note.type,
-                    topic: note.topic,
-                    audience: note.audience,
-                    source: note.ephemeral.source,
-                    payload: note.ephemeral.payload,
-                  }),
-                )
-              } else {
-                void getEventById(db, note.id).then((row) => {
-                  if (row) send(sseFrame(toStreamEvent(row)))
-                })
-              }
-            }
-            const unsubscribe = shipLogBus.subscribe((note) => {
-              if (replayed) deliver(note)
-              else buffer.push(note)
-            })
-
             try {
-              // Drain the durable replay in pages so a long absence (more than
-              // one page of missed events) still loses nothing.
-              for (;;) {
-                const page = await listEventsSince(db, {
-                  topicPatterns,
-                  audience,
-                  sinceId: lastReplayedId,
-                })
-                for (const row of page) {
-                  send(sseFrame(toStreamEvent(row)))
-                  lastReplayedId = row.id
-                }
-                if (page.length < REPLAY_PAGE_SIZE) break
-              }
-              replayed = true
-              for (const note of buffer) deliver(note)
+              unsubscribe = await runShipLogStream(
+                {
+                  subscribe: (listener) => shipLogBus.subscribe(listener),
+                  listEventsSince: (opts) => listEventsSince(db, opts),
+                  getEventById: (id) => getEventById(db, id),
+                  send,
+                },
+                { topicPatterns, audience, lastEventId },
+              )
 
-              // A comment line confirms the stream is open, and a recurring
-              // heartbeat keeps it warm — and, if the connection has silently
-              // died, eventually trips the browser's EventSource auto-reconnect
-              // (which re-runs replay from Last-Event-ID and re-arms a listener).
-              send(': connected\n\n')
+              // A recurring heartbeat keeps the stream warm — and, if the
+              // connection has silently died, eventually trips the browser's
+              // EventSource auto-reconnect (which re-runs replay from
+              // Last-Event-ID and re-arms a listener).
               heartbeat = setInterval(() => {
                 send(': ping\n\n')
               }, HEARTBEAT_MS)
@@ -161,6 +110,7 @@ export const Route = createFileRoute('/api/stream')({
               close()
             }
           },
+          /* v8 ignore stop */
         })
 
         return new Response(stream, {
