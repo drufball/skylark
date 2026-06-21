@@ -2,6 +2,7 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import type { Database } from '@hull/db/client'
+import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
 
 import {
   type AgentRuntime,
@@ -17,13 +18,11 @@ import {
 // touches the network. This exists so the REAL server can boot and drive chat /
 // build flows end to end in a smoke test without pi.dev or Claude.
 //
-// The env flag is the only switch: `SKYLARK_FAKE_RUNTIME` set → fake; unset →
-// the live wiring. `resolveSessionFactory` is the single place the choice is
-// made, so every runtime construction site (agent door, chat + issue
-// orchestrators) stays in lockstep.
-
-/** Env var that swaps the live session factory for the deterministic fake. */
-export const FAKE_RUNTIME_ENV = 'SKYLARK_FAKE_RUNTIME'
+// The env flag is the only switch: `FAKE_RUNTIME_ENV` set → fake; unset → the
+// live wiring. `resolveSessionFactory` is the single place the choice is made,
+// so every runtime construction site (agent door, chat + issue orchestrators)
+// stays in lockstep. The flag name lives in hull/lib/env so the db isolation
+// (hull/db/url.ts) reads the exact same constant.
 
 function textMessage(role: string, text: string): AgentMessage {
   return {

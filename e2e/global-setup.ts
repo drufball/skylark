@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process'
 
 import postgres from 'postgres'
 
+import { FAKE_RUNTIME_ENV } from '../src/hull/lib/env'
 import {
   resolveDatabaseUrl,
   SMOKE_DB_NAME,
@@ -17,7 +18,7 @@ import {
 // Steps: ensure the smoke db exists → migrate it → truncate (clean slate) →
 // seed the crew (currentActor would otherwise refuse the stream).
 export default async function globalSetup(): Promise<void> {
-  const smokeEnv = { ...process.env, SKYLARK_FAKE_RUNTIME: '1' }
+  const smokeEnv = { ...process.env, [FAKE_RUNTIME_ENV]: '1' }
   const smokeUrl = resolveDatabaseUrl(smokeEnv)
 
   // 1. Ensure the smoke database exists. CREATE DATABASE can't run from inside

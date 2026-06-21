@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
+import { FAKE_RUNTIME_ENV } from './src/hull/lib/env'
+
 // Smoke tests — Phase 1. A handful of critical happy paths driven through the
 // REAL running app (the boot + the live SSE stream), catching wiring regressions
 // the PGlite unit suite structurally can't: the routes, the createServerFn
@@ -42,6 +44,6 @@ export default defineConfig({
     url: `http://localhost:${PORT}/status`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    env: { SKYLARK_FAKE_RUNTIME: '1' },
+    env: { [FAKE_RUNTIME_ENV]: '1' },
   },
 })

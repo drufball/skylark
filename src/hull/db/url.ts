@@ -1,3 +1,5 @@
+import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
+
 // Which Postgres the process connects to. One resolver so every entry point —
 // the query client, the LISTEN connection, drizzle-kit, the CLIs — agrees, and
 // so the smoke/test switch lives in exactly one place.
@@ -30,5 +32,5 @@ export function resolveDatabaseUrl(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const base = env.DATABASE_URL ?? DEFAULT_DATABASE_URL
-  return env.SKYLARK_FAKE_RUNTIME ? withDbName(base, SMOKE_DB_NAME) : base
+  return env[FAKE_RUNTIME_ENV] ? withDbName(base, SMOKE_DB_NAME) : base
 }
