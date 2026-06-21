@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { appendMessage } from '@hull/agent/service'
+import { shipLogBus } from '@hull/events/bus'
 import { listEventsSince } from '@hull/events/service'
 import { defined, freshDb } from '@hull/db/test-db'
 import { createUser } from '@hull/users/service'
@@ -28,6 +29,32 @@ describe('assistantTextFrom', () => {
       { role: 'toolResult', toolName: 'read', content: 'file contents' },
     ]
     expect(assistantTextFrom(messages)).toBe('hello there')
+  })
+
+  it('joins multiple assistant turns with a blank line, dropping tool steps between', () => {
+    // Pins the '\n\n' separator and the assistant-only filter: a tool result
+    // sandwiched between two assistant texts must not appear, and the two texts
+    // must be separated by a blank line (not concatenated).
+    const messages = [
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }] },
+      { role: 'toolResult', toolName: 'read', content: 'ignored' },
+      { role: 'assistant', content: [{ type: 'text', text: 'second' }] },
+    ]
+    expect(assistantTextFrom(messages)).toBe('first\n\nsecond')
+  })
+
+  it('trims surrounding whitespace off the lifted text', () => {
+    const messages = [
+      { role: 'assistant', content: [{ type: 'text', text: '  spaced  ' }] },
+    ]
+    expect(assistantTextFrom(messages)).toBe('spaced')
+  })
+
+  it('is empty when the tail has no assistant text', () => {
+    const messages = [
+      { role: 'toolResult', toolName: 'read', content: 'only a tool result' },
+    ]
+    expect(assistantTextFrom(messages)).toBe('')
   })
 })
 
@@ -138,6 +165,53 @@ describe('chat orchestrator', () => {
       audience: 'members',
     })
     expect(events.map((e) => e.type)).not.toContain('chat.agent_progress')
+  })
+
+  it('emits one progress line per distinct step, deduping consecutive repeats', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'go' })
+
+    // Capture the transient progress lines off the in-process bus.
+    const lines: string[] = []
+    const unsubscribe = shipLogBus.subscribe((note) => {
+      if (note.type === 'chat.agent_progress') {
+        lines.push((note.ephemeral?.payload as { line: string }).line)
+      }
+    })
+
+    // A turn that streams: two identical tool steps (the second is a repeat),
+    // a turn-boundary event chat maps to no line, then a different tool step.
+    const tool = (toolName: string) =>
+      ({
+        type: 'tool_execution_start',
+        toolName,
+      }) as unknown as AgentSessionEvent
+    const streaming: ChatAgentRuntime = {
+      async runTurn(sessionId, _text, onEvent) {
+        onEvent?.(tool('read'))
+        onEvent?.(tool('read')) // consecutive duplicate → must be dropped
+        onEvent?.({ type: 'turn_end' } as unknown as AgentSessionEvent) // no line
+        onEvent?.(tool('write'))
+        const message = {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'done' }],
+        }
+        await appendMessage(db, { sessionId, role: 'assistant', message })
+        return [message as never]
+      },
+    }
+
+    const orch = createChatOrchestrator({ db, runtime: streaming })
+    try {
+      await orch.respond({ chatId, authorId: dru, body: 'go' })
+    } finally {
+      unsubscribe()
+    }
+
+    // The leading "thinking…", then one line per *distinct* step: the repeated
+    // 'read' collapses, and the line-less turn boundary adds nothing.
+    expect(lines).toEqual(['thinking…', 'using read…', 'using write…'])
   })
 
   it('reuses the backing session across turns', async () => {
