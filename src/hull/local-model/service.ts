@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process'
 import { arch as osArch, cpus, platform as osPlatform, totalmem } from 'node:os'
 import { promisify } from 'node:util'
 
+import { OLLAMA_PROVIDER } from '@hull/lib/ollama'
+
 import { LOCAL_MODEL_CATALOG, type LocalModelSpec } from './catalog'
 
 // Pick a local model that fits the machine. The logic splits in two: the
@@ -9,9 +11,6 @@ import { LOCAL_MODEL_CATALOG, type LocalModelSpec } from './catalog'
 // the pure `usableMemoryGB`/`selectModel` map a `Hardware` snapshot to a model.
 // The pure half is unit-tested across every memory tier; the probe is injected
 // so tests never shell out.
-
-/** The provider prefix `resolveModel` (hull/agent/models) uses for Ollama. */
-export const OLLAMA_PROVIDER = 'ollama'
 
 /**
  * Apple Silicon shares one memory pool between CPU and GPU; Metal will hand the
