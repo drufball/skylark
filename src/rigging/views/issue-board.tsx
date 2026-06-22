@@ -1,12 +1,5 @@
 import { useState } from 'react'
-import {
-  CheckCircle2,
-  CircleDot,
-  Hammer,
-  MessageSquare,
-  Plus,
-  XCircle,
-} from 'lucide-react'
+import { MessageSquare, Plus } from 'lucide-react'
 
 import type { BoardIssue } from '@hull/issues/server'
 import type { IssueStatus } from '@hull/issues/schema'
@@ -14,6 +7,11 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
+import {
+  STATUS_ICON,
+  STATUS_LABEL,
+  STATUS_TINT,
+} from '@rigging/views/issue-status'
 
 // The board: issues grouped by status, forum-like — open discussions up top,
 // then building, then the closed-out ones. Presentational and routing-agnostic;
@@ -28,26 +26,7 @@ export interface IssueBoardViewProps {
 }
 
 /** The display order of the status groups — discussions first, archive last. */
-const GROUPS: { status: IssueStatus; label: string }[] = [
-  { status: 'open', label: 'Open' },
-  { status: 'building', label: 'Building' },
-  { status: 'done', label: 'Done' },
-  { status: 'closed', label: 'Closed' },
-]
-
-const STATUS_ICON: Record<IssueStatus, typeof CircleDot> = {
-  open: CircleDot,
-  building: Hammer,
-  done: CheckCircle2,
-  closed: XCircle,
-}
-
-const STATUS_TINT: Record<IssueStatus, string> = {
-  open: 'text-sky-500',
-  building: 'text-amber-500',
-  done: 'text-emerald-500',
-  closed: 'text-muted-foreground',
-}
+const STATUS_ORDER: IssueStatus[] = ['open', 'building', 'done', 'closed']
 
 export function IssueBoardView({
   issues,
@@ -71,13 +50,13 @@ export function IssueBoardView({
               No issues yet. Open the first one above.
             </p>
           ) : (
-            GROUPS.map(({ status, label }) => {
+            STATUS_ORDER.map((status) => {
               const group = issues.filter((i) => i.status === status)
               if (group.length === 0) return null
               return (
                 <section key={status} className="mt-8 first:mt-6">
                   <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {label} · {group.length}
+                    {STATUS_LABEL[status]} · {group.length}
                   </h2>
                   <div className="flex flex-col gap-2">
                     {group.map((issue) => (

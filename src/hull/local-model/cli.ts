@@ -1,4 +1,4 @@
-import { isMain, runCli } from '@hull/lib/cli'
+import { DIM, isMain, RESET, runCli } from '@hull/lib/cli'
 
 import { LOCAL_MODEL_CATALOG } from './catalog'
 import { detectHardware, selectModel } from './service'
@@ -9,9 +9,6 @@ import { detectHardware, selectModel } from './service'
 // it only reads the OS:
 //   node --import tsx src/hull/local-model/cli.ts <detect|select|catalog>
 // (or `npm run local-model -- <command>`).
-
-const DIM = '\x1b[2m'
-const RESET = '\x1b[0m'
 
 async function cmdDetect(): Promise<void> {
   const hw = await detectHardware()

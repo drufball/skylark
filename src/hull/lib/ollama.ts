@@ -7,6 +7,14 @@
 export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'
 
 /**
+ * The provider prefix every Ollama model ref carries (e.g. `ollama/qwen3:8b`).
+ * One home for the prefix so the model-selecting service and the model-listing
+ * client build the same ref — and it lives here, free of node-only imports, so
+ * the browser-safe client can reuse it without dragging `node:*` into the bundle.
+ */
+export const OLLAMA_PROVIDER = 'ollama'
+
+/**
  * The root URL of the local Ollama server (no path).
  *
  * `OLLAMA_BASE_URL` wins when set — a full `…/v1` URL — with its `/v1` stripped.

@@ -1,4 +1,4 @@
-import { ollamaApiRoot } from '@hull/lib/ollama'
+import { ollamaApiRoot, OLLAMA_PROVIDER } from '@hull/lib/ollama'
 
 // A thin client for Ollama's native `/api/*` admin endpoints — listing and
 // pulling models, which the OpenAI-compatible `/v1` surface doesn't cover. The
@@ -14,7 +14,7 @@ export interface InstalledModel {
 
 /** The provider-prefixed runtime ref for an installed Ollama model. */
 export function localModelRef(model: InstalledModel): string {
-  return `ollama/${model.name}`
+  return `${OLLAMA_PROVIDER}/${model.name}`
 }
 
 /**
