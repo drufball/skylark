@@ -7,6 +7,7 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
+import { STATUS_BADGE_TINT, STATUS_LABEL } from '@rigging/views/issue-status'
 
 // The issue thread: body, the merged comment + status-change timeline, a
 // composer, and the status controls. Presentational and routing-agnostic; the
@@ -18,13 +19,6 @@ export interface IssueThreadViewProps {
   onBack: () => void
   onComment: (body: string) => void
   onSetStatus: (status: string) => void
-}
-
-const STATUS_LABEL: Record<IssueStatus, string> = {
-  open: 'Open',
-  building: 'Building',
-  done: 'Done',
-  closed: 'Closed',
 }
 
 export function IssueThreadView({
@@ -96,14 +90,13 @@ export function IssueThreadView({
 }
 
 function StatusBadge({ status }: { status: IssueStatus }) {
-  const tint: Record<IssueStatus, string> = {
-    open: 'bg-sky-500/15 text-sky-600',
-    building: 'bg-amber-500/15 text-amber-600',
-    done: 'bg-emerald-500/15 text-emerald-600',
-    closed: 'bg-muted text-muted-foreground',
-  }
   return (
-    <span className={cn('rounded-full px-2 py-0.5 font-medium', tint[status])}>
+    <span
+      className={cn(
+        'rounded-full px-2 py-0.5 font-medium',
+        STATUS_BADGE_TINT[status],
+      )}
+    >
       {STATUS_LABEL[status]}
     </span>
   )
