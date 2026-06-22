@@ -1,4 +1,4 @@
-import { isMain, runCli } from '@hull/lib/cli'
+import { DIM, isMain, RESET, runCli } from '@hull/lib/cli'
 import { withCliActor } from '@hull/users/actor'
 import { getUserById } from '@hull/users/service'
 
@@ -23,9 +23,6 @@ import type { IssueStatus } from './schema'
 // tool environment, so the agent's comments and transitions show as the agent),
 // else the operator. This is the door a building agent drives to report back —
 // `issue comment <id> "…"`, `issue done <id>`, `issue open <id>`.
-
-const DIM = '\x1b[2m'
-const RESET = '\x1b[0m'
 
 const STATUS_MARK: Record<IssueStatus, string> = {
   open: '○',

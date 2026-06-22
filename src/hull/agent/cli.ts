@@ -2,7 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
 import { systemDb } from '@hull/db/client'
-import { isMain, runCli } from '@hull/lib/cli'
+import { CYAN, DIM, isMain, RESET, runCli } from '@hull/lib/cli'
 import { withCliActor } from '@hull/users/actor'
 
 import {
@@ -26,10 +26,6 @@ import {
 //   node --env-file=.env --import tsx src/hull/agent/cli.ts <command> …
 // (or `npm run agent -- <command> …`). Needs Postgres up (`npm run db:up`) and
 // ANTHROPIC_API_KEY in .env.
-
-const DIM = '\x1b[2m'
-const CYAN = '\x1b[36m'
-const RESET = '\x1b[0m'
 
 /** Render live agent events to the terminal as they stream. */
 function renderEvent(event: AgentSessionEvent): void {
