@@ -12,16 +12,16 @@ import {
   createIssue,
   getIssue,
   ISSUE_STATUS_CHANGED,
-  issueScope,
+  issueTopic,
   listComments,
   listIssues,
   resolveStatusWord,
   toBoardCard,
   transitionIssue,
+  type IssueStatusChangedPayload,
   type IssueThread,
   type StatusChange,
 } from './service'
-import type { IssueStatus } from './schema'
 
 // The web doors onto the issues service — the message board. Issues are created
 // by currentActor() (the operator) and comments by the current actor, so the UI
@@ -81,14 +81,14 @@ export const getThread = createServerFn({ method: 'GET' })
     )
 
     const events = await listEventsSince(db, {
-      topicPatterns: [issueScope(issueId)],
+      topicPatterns: [issueTopic(issueId)],
       audience: PUBLIC_AUDIENCE,
     })
     const statusChanges: StatusChange[] = await Promise.all(
       events
         .filter((e) => e.type === ISSUE_STATUS_CHANGED)
         .map(async (e) => {
-          const p = e.payload as { from: IssueStatus; to: IssueStatus }
+          const p = e.payload as IssueStatusChangedPayload
           return {
             id: e.id,
             authorHandle: await handleOf(db, e.actorId),

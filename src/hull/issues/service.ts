@@ -7,7 +7,7 @@ import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
 import { PUBLIC_AUDIENCE } from '@hull/events/service'
 
-import { issueScope } from './scope'
+import { issueTopic } from './topic'
 import {
   issueComments,
   issues,
@@ -28,23 +28,30 @@ import {
  * the exact topic (`issue:<id>`); the board subscribes to the wildcard
  * (`issue:*`); the server-side orchestrator listens too, to drive the build
  * lifecycle across processes — an agent's CLI transition in another process is
- * still heard. One topic, many subscribers; no dual-emit.
+ * still heard. One topic, many subscribers; one durable row per logical event.
  */
 
-// issueScope lives in ./scope (a node-free leaf — see that file for why).
+// issueTopic lives in ./topic (a node-free leaf — see that file for why).
 // Re-exported here so server callers still reach it through the service.
-export { issueScope }
+export { issueTopic }
 
 /** Event types this service emits (one name, used by emitters and subscribers). */
 export const ISSUE_STATUS_CHANGED = 'issue.status_changed'
 export const ISSUE_COMMENTED = 'issue.commented'
 
+/** The payload an `issue.status_changed` event carries on the ship's log. */
+export interface IssueStatusChangedPayload {
+  issueId: string
+  from: IssueStatus
+  to: IssueStatus
+}
+
 /**
  * Announce an issue event ONCE with topic (issue:<id>) and audience (public).
  * The topic lets the thread view subscribe ("issue:123"); the audience lets the
  * board view subscribe ("issue:*" with audience=public). Subscribers express
- * interest via topic patterns; access is enforced via audience. This retires the
- * dual-emit pattern — one durable row per logical event, not two.
+ * interest via topic patterns; access is enforced via audience. One durable row
+ * per logical event.
  */
 async function announce(
   db: Database,
@@ -53,7 +60,7 @@ async function announce(
   await emitEvent(db, {
     type: input.type,
     source: 'issues',
-    topic: issueScope(input.issueId),
+    topic: issueTopic(input.issueId),
     audience: PUBLIC_AUDIENCE,
     actorId: input.actorId,
     payload: input.payload,
@@ -270,11 +277,16 @@ export async function transitionIssue(
     .where(eq(issues.id, input.issueId))
     .returning()
 
+  const payload: IssueStatusChangedPayload = {
+    issueId: input.issueId,
+    from: current.status,
+    to,
+  }
   await announce(db, {
     type: ISSUE_STATUS_CHANGED,
     issueId: input.issueId,
     actorId: input.actorId,
-    payload: { issueId: input.issueId, from: current.status, to },
+    payload,
   })
   return row
 }

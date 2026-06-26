@@ -10,7 +10,7 @@ import { createSession } from '@hull/agent/service'
 import {
   addMember,
   addMessage,
-  chatScope,
+  chatTopic,
   createChat,
   formatTranscript,
   getChat,
@@ -158,7 +158,7 @@ describe('chat persistence', () => {
     expect(messages[0].authorHandle).toBe('dru')
 
     const events = await listEventsSince(db, {
-      topicPatterns: [chatScope(id)],
+      topicPatterns: [chatTopic(id)],
       audience: 'members',
     })
     expect(events.map((e) => e.type)).toContain('chat.message_posted')
@@ -167,7 +167,7 @@ describe('chat persistence', () => {
       topicPatterns: ['*'],
       audience: 'public',
     })
-    expect(pub.filter((e) => e.topic === chatScope(id))).toHaveLength(0)
+    expect(pub.filter((e) => e.topic === chatTopic(id))).toHaveLength(0)
   })
 
   it('orders the sidebar by most recent activity', async () => {

@@ -17,7 +17,7 @@ import {
 import {
   addMessage,
   CHAT_MESSAGE_POSTED,
-  chatScope,
+  chatTopic,
   createChat,
   listMembers,
   listMessages,
@@ -26,7 +26,7 @@ import {
 /** The id of the chat.message_posted event addMessage emitted for a chat. */
 async function postedEventId(db: Database, chatId: string): Promise<string> {
   const events = await listEventsSince(db, {
-    topicPatterns: [chatScope(chatId)],
+    topicPatterns: [chatTopic(chatId)],
     audience: 'members',
   })
   return defined(events.find((e) => e.type === CHAT_MESSAGE_POSTED)).id
@@ -171,7 +171,7 @@ describe('chat orchestrator', () => {
 
     // Progress events should NOT be in the durable log.
     const events = await listEventsSince(db, {
-      topicPatterns: [chatScope(chatId)],
+      topicPatterns: [chatTopic(chatId)],
       audience: 'members',
     })
     expect(events.map((e) => e.type)).not.toContain('chat.agent_progress')
@@ -464,7 +464,7 @@ describe('chat orchestrator', () => {
     const row = await emitEvent(db, {
       type: CHAT_MESSAGE_POSTED,
       source: 'chat',
-      topic: chatScope(chatId),
+      topic: chatTopic(chatId),
       audience: 'members',
       payload: { chatId: 42 },
     })

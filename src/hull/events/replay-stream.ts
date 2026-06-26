@@ -100,15 +100,15 @@ export async function runShipLogStream(
   // cached — we drop the entry so the next event re-probes, rather than denying
   // the topic for the life of the connection. The `.catch` also means awaiting
   // canSee never rejects, so the fire-and-forget live path can't leak one.
-  const entitlement = new Map<string, Promise<boolean>>()
+  const entitlementByTopic = new Map<string, Promise<boolean>>()
   const canSee = (topic: string): Promise<boolean> => {
-    let allowed = entitlement.get(topic)
+    let allowed = entitlementByTopic.get(topic)
     if (!allowed) {
       allowed = deps.canSee(topic).catch(() => {
-        entitlement.delete(topic)
+        entitlementByTopic.delete(topic)
         return false
       })
-      entitlement.set(topic, allowed)
+      entitlementByTopic.set(topic, allowed)
     }
     return allowed
   }

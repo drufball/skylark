@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
-import { addMessage, chatScope, createChat } from '../src/hull/chat/service'
+import { addMessage, chatTopic, createChat } from '../src/hull/chat/service'
 import type { Database } from '../src/hull/db/client'
 import { resolveDatabaseUrl } from '../src/hull/db/url'
 import { FAKE_RUNTIME_ENV } from '../src/hull/lib/env'
@@ -44,7 +44,7 @@ function collectFrames(
   )
 }
 
-let chatTopic: string
+let privateChatTopic: string
 
 test.beforeAll(async () => {
   // Plant the fixture as the superuser, on the same smoke db the app uses.
@@ -72,7 +72,7 @@ test.beforeAll(async () => {
       authorId: sam,
       body: 'private to sam + tilde',
     })
-    chatTopic = chatScope(chatId)
+    privateChatTopic = chatTopic(chatId)
   } finally {
     await sql.end()
   }
@@ -84,7 +84,7 @@ test('the live stream hides a private chat from a non-member', async ({
   // Default web actor is drufball, who is NOT in the chat.
   const page = await browser.newPage()
   await page.goto('/')
-  const frames = await collectFrames(page, chatTopic, 2500)
+  const frames = await collectFrames(page, privateChatTopic, 2500)
   expect(frames).toHaveLength(0) // RLS, as app_user, hides every event
   await page.close()
 })
@@ -99,7 +99,7 @@ test('the live stream delivers a private chat to a member', async ({
   ])
   const page = await ctx.newPage()
   await page.goto('/')
-  const frames = await collectFrames(page, chatTopic, 2500)
+  const frames = await collectFrames(page, privateChatTopic, 2500)
   expect(frames.some((f) => f.type === 'chat.message_posted')).toBe(true)
   await ctx.close()
 })

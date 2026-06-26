@@ -7,13 +7,13 @@ import {
 import { useCallback, useState } from 'react'
 
 import { commentOnIssue, getThread, setIssueStatus } from '@hull/issues/server'
-import { issueScope } from '@hull/issues/scope'
+import { issueTopic } from '@hull/issues/topic'
 import { Dock } from '@rigging/views/dock'
 import { IssueThreadView } from '@rigging/views/issue-thread'
 import { useShipLog } from '@rigging/lib/use-ship-log'
 
 // The thread route: a thin mount binding /issues/$id to the thread view. Live
-// updates subscribe to the issue's own scope, so comments, status changes, and
+// updates subscribe to the issue's own topic, so comments, status changes, and
 // the builder's progress line stream in without a refresh.
 export const Route = createFileRoute('/issues/$id')({
   component: ThreadRoute,
@@ -30,7 +30,7 @@ function ThreadRoute() {
   const onEvent = useCallback(() => {
     void router.invalidate()
   }, [router])
-  useShipLog([issueScope(id)], onEvent)
+  useShipLog([issueTopic(id)], onEvent)
 
   async function comment(body: string) {
     setBusy(true)

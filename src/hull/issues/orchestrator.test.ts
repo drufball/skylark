@@ -23,7 +23,7 @@ import {
   createIssue,
   getIssue,
   ISSUE_STATUS_CHANGED,
-  issueScope,
+  issueTopic,
   setBuildContext,
   transitionIssue,
 } from './service'
@@ -505,7 +505,7 @@ describe('orchestrator event subscription', () => {
     await orch.handleBusNote({
       id: (await findStatusEventId(db, issue.id)).id,
       type: ISSUE_STATUS_CHANGED,
-      topic: issueScope(issue.id),
+      topic: issueTopic(issue.id),
     })
 
     expect(git.added).toHaveLength(1)
