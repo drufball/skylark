@@ -59,15 +59,14 @@ to `.env` only to use a hosted model.
 - **ship-feature** — the build loop: red-green TDD → `npm run check` → commit →
   push → shepherd the PR through CI and reviews → merge. **Follow it whenever
   you build or change a feature.**
-- **architecture-review** — review structure & boundaries of a diff, module, or
-  the whole ship (also run per-PR and weekly in CI).
 - **create-service** — adding a service: folder shape, which deck, wiring,
   tests.
 - **author-zine** — writing or updating a zine: sections + principles.
+- **mutation-review** — reviews a PR's test quality via mutation testing (runs
+  in CI via `tessl launch skill --cloud`).
 
-`ship-feature` and `architecture-review` live in `.claude/skills/`; the
-service-tree skills live under `src/.claude/skills/` and surface when you work
-in the source tree.
+All skills live in the `skylark-builder` plugin (`plugins/skylark-builder/`) and
+are installed via `tessl install`.
 
 ## Testing
 
@@ -78,8 +77,11 @@ PGlite — no external database (example: `src/hull/health/service.test.ts`). Wo
 Two coverage gates (`npm run coverage`, `npm run coverage:diff`) and mutation
 testing (`npm run mutate:diff`) run both locally and in CI — scope and rationale
 live in `vitest.config.ts` and `stryker.config.mjs`. Every PR also draws
-advisory **agentic reviews** (architecture + mutation); the weekly sweeps and
-their secrets are documented in `.github/workflows/`.
+advisory **agentic reviews**: a **change review** (five `tessl/code-review`
+lenses via `tessl change review`) and a **mutation review** (via
+`tessl launch skill --cloud`). Comment `@tessl-change-review` or
+`@mutation-review` on a PR to re-run either. The weekly sweeps and their secrets
+are documented in `.github/workflows/`.
 
 ## Working notes
 
