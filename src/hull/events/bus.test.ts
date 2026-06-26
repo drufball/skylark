@@ -114,7 +114,7 @@ describe('notifyOnly', () => {
   it('does NOT persist to the database', async () => {
     const { notifyOnly } = await import('./bus')
 
-    notifyOnly(db, {
+    notifyOnly({
       type: 'chat.agent_progress',
       source: 'chat',
       topic: 'chat:c1',
@@ -137,7 +137,7 @@ describe('notifyOnly', () => {
       received.push(n)
     })
 
-    notifyOnly(db, {
+    notifyOnly({
       type: 'chat.agent_progress',
       source: 'chat',
       topic: 'chat:c1',

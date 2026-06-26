@@ -119,7 +119,6 @@ export async function emitEvent(
  * must not slip past an access check just because it isn't persisted.
  */
 export function notifyOnly(
-  _db: Database,
   input: Pick<
     AppendEventInput,
     'type' | 'source' | 'topic' | 'audience' | 'payload'

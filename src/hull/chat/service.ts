@@ -27,18 +27,14 @@ import {
 /** The prefix every chat topic carries — the one home for the chat: grammar. */
 const CHAT_TOPIC_PREFIX = 'chat:'
 
-/**
- * The ship-log **topic** a chat's events ride on; members subscribe to it.
- * Named `*Scope` for historical reasons — the event `scope` field is retired;
- * this returns a topic string.
- */
-export function chatScope(chatId: string): string {
+/** The ship-log topic a chat's events ride on; members subscribe to it. */
+export function chatTopic(chatId: string): string {
   return `${CHAT_TOPIC_PREFIX}${chatId}`
 }
 
 /**
  * The chat id a topic refers to, or null if it isn't a chat topic — the inverse
- * of `chatScope`. So entitlement code asks chat "is this yours, and whose?"
+ * of `chatTopic`. So entitlement code asks chat "is this yours, and whose?"
  * rather than re-deriving the `chat:` format and drifting from it.
  */
 export function chatIdFromTopic(topic: string): string | null {
@@ -277,7 +273,7 @@ export async function addMessage(
   await emitEvent(db, {
     type: CHAT_MESSAGE_POSTED,
     source: 'chat',
-    topic: chatScope(input.chatId),
+    topic: chatTopic(input.chatId),
     audience: MEMBERS_AUDIENCE,
     actorId: input.authorId,
     payload: {

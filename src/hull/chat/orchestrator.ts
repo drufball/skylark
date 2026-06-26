@@ -12,7 +12,7 @@ import { chatProgressLine } from '@hull/agent/progress'
 import {
   addMessage,
   CHAT_MESSAGE_POSTED,
-  chatScope,
+  chatTopic,
   formatTranscript,
   getMessage,
   listAllChats,
@@ -95,10 +95,10 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     // Progress is transient UI — notify-only, not durable, not replayed. It
     // still carries the chat's topic + members audience so the SSE route gates
     // it exactly like a durable chat event (members-only, this chat's topic).
-    notifyOnly(db, {
+    notifyOnly({
       type: 'chat.agent_progress',
       source: 'chat',
-      topic: chatScope(chatId),
+      topic: chatTopic(chatId),
       audience: MEMBERS_AUDIENCE,
       payload: { chatId, agentUserId, line },
     })

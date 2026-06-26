@@ -7,15 +7,16 @@ import {
 import { useCallback, useState } from 'react'
 
 import { listBoard, openIssue } from '@hull/issues/server'
-import { ISSUE_SCOPE_PATTERN } from '@hull/issues/scope'
+import { ISSUE_TOPIC_PATTERN } from '@hull/issues/topic'
 import { Dock } from '@rigging/views/dock'
 import { IssueBoardView } from '@rigging/views/issue-board'
 import { useShipLog } from '@rigging/lib/use-ship-log'
 
 // The board route: a thin mount binding /issues to the board view and the issues
-// service. Live updates ride the ship's log — the board subscribes to the public
-// scope (where every issue.* event is mirrored) and re-runs the loader when one
-// lands, so a status change or a new comment anywhere updates the board live.
+// service. Live updates ride the ship's log — the board subscribes to the
+// issue:* topic pattern (every issue.* event rides it) and re-runs the loader
+// when one lands, so a status change or a new comment anywhere updates the board
+// live.
 export const Route = createFileRoute('/issues/')({
   component: BoardRoute,
   loader: () => listBoard(),
@@ -31,7 +32,7 @@ function BoardRoute() {
     void router.invalidate()
   }, [router])
   // Subscribe to all issue events via pattern matching
-  useShipLog([ISSUE_SCOPE_PATTERN], onEvent)
+  useShipLog([ISSUE_TOPIC_PATTERN], onEvent)
 
   async function open(title: string, body: string) {
     setBusy(true)
