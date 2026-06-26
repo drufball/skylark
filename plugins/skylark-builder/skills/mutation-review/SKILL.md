@@ -13,10 +13,11 @@ files and triaging the survivors.
 
 ## Inputs
 
-The workflow sets these environment variables before launching the skill:
+The workflow forwards these as environment variables via `--env-file`:
 
 - **`PR`** — the pull request number
 - **`REPO`** — the repository as `owner/name`
+- **`GH_TOKEN`** — GitHub token for posting comments and inline annotations
 
 ## Workflow
 

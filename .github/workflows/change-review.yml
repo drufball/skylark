@@ -56,7 +56,7 @@ jobs:
       - name: Resolve PR
         id: pr
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_PR_NUMBER: ${{ github.event.inputs['pr-number'] }}
           COMMENT_PR_NUMBER: ${{ github.event.issue.number }}
@@ -92,7 +92,7 @@ jobs:
           exit 1
 
       - name: Checkout workflow support
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           path: _workflow
@@ -101,7 +101,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.pr.outputs.head-sha }}
           path: _pr
@@ -111,7 +111,7 @@ jobs:
       - name: Check review policy
         id: review-policy
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
         run: |
@@ -169,7 +169,7 @@ jobs:
         if: steps.review-policy.outputs.should-run == 'true'
         working-directory: _pr
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
           REVIEW_ACTION: ${{ env.REVIEW_ACTION }}
           REVIEW_OUTPUT: ${{ env.REVIEW_OUTPUT }}

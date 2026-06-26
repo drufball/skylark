@@ -19,11 +19,15 @@ function fail(msg) {
   process.exit(1)
 }
 
-function env(name, required = true) {
+function requireEnv(name) {
   const v = process.env[name]
-  if ((v === undefined || v === '') && required)
-    fail(`missing required env ${name}`)
+  if (v === undefined || v === '') fail(`missing required env ${name}`)
   return v
+}
+
+function optionalEnv(name) {
+  const v = process.env[name]
+  return v === undefined || v === '' ? undefined : v
 }
 
 function readJson(path) {
@@ -43,13 +47,13 @@ function skillDisplayName(ref) {
   return leaf === 'SKILL.md' && parts.length > 1 ? parts.at(-2) : leaf
 }
 
-const REPO = env('REPO') // owner/repo
-const PR_NUMBER = env('PR_NUMBER')
-const GH_TOKEN = env('GH_TOKEN')
-const reviewPath = env('REVIEW_OUTPUT', false) ?? 'change-review.json'
-const OUT = env('OUT', false) ?? 'review-publish.json'
+const REPO = requireEnv('REPO') // owner/repo
+const PR_NUMBER = requireEnv('PR_NUMBER')
+const GH_TOKEN = requireEnv('GH_TOKEN')
+const reviewPath = optionalEnv('REVIEW_OUTPUT') ?? 'change-review.json'
+const OUT = optionalEnv('OUT') ?? 'review-publish.json'
 
-const reviewAction = env('REVIEW_ACTION', false) ?? 'comment'
+const reviewAction = optionalEnv('REVIEW_ACTION') ?? 'comment'
 if (
   reviewAction !== 'comment' &&
   reviewAction !== 'request-changes-on-findings'
