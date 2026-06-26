@@ -1,0 +1,12 @@
+{
+  "name": "skylark/core",
+  "mode": "managed",
+  "dependencies": {
+    "skylark/skylark-builder": {
+      "source": "file:plugins/skylark-builder"
+    },
+    "tessl/code-review": {
+      "version": "0.0.1"
+    }
+  }
+}
