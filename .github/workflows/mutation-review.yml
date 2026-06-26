@@ -40,10 +40,15 @@ jobs:
     env:
       PR: ${{ github.event.pull_request.number || github.event.issue.number }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Setup Tessl
         uses: tesslio/setup-tessl@v2
         with:
           token: ${{ secrets.TESSL_TOKEN }}
+
+      - name: Install Tessl dependencies
+        run: tessl install
 
       - name: Launch mutation review in cloud
         env:
@@ -52,5 +57,6 @@ jobs:
           tessl launch skill mutation-review \
             --cloud \
             --repo ${{ github.repository }} \
+            --workspace skylark \
             --agent tessl-agent \
             --instructions "PR=${{ env.PR }} REPO=${{ github.repository }}"
