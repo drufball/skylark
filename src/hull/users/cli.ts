@@ -1,5 +1,5 @@
 import { db } from '@hull/db/client'
-import { isMain, runCli } from '@hull/lib/cli'
+import { DIM, isMain, RESET, runCli } from '@hull/lib/cli'
 
 import { cliActor } from './actor'
 import { listUsers, seedCrew } from './service'
@@ -8,9 +8,6 @@ import { listUsers, seedCrew } from './service'
 // crew, or print who the CLI is acting as. Run it with:
 //   node --env-file=.env --import tsx src/hull/users/cli.ts <command>
 // (or `npm run users -- <command>`). Needs Postgres up (`npm run db:up`).
-
-const DIM = '\x1b[2m'
-const RESET = '\x1b[0m'
 
 async function cmdSeed(): Promise<void> {
   await seedCrew(db)
