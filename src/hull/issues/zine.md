@@ -135,8 +135,14 @@ id) through their public functions, not their tables.
   is safe in `main` regardless. **Teardown is guarded by a merge check**: the
   prompt asks the agent to set `done` only after a real merge, but a prompt
   isn't a contract, so before removing the worktree the orchestrator confirms
-  the branch is an ancestor of `main` (`branchMerged`). If it can't confirm, it
-  leaves the worktree standing rather than orphan an in-flight PR.
+  the branch really merged (`branchMerged`). PRs land here squash-merged
+  (`gh pr merge --squash`), and a squash makes a _new_ commit on `main` — so the
+  branch tip isn't an ancestor and the ancestor check alone would wrongly read
+  "not merged" and orphan the worktree. `branchMerged` therefore tries the
+  ancestor check first (cheap, covers fast-forward merges) and falls back to
+  asking GitHub whether a merged PR exists for the branch. If it can't confirm
+  either way, it leaves the worktree standing rather than orphan an in-flight
+  PR.
 - **The builder's identity is a command prefix, not a process env.** The
   orchestrator seeds the prompt with
   `SKYLARK_ACTOR=<builder id> npm run issue …`. A command-level prefix sets the
