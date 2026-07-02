@@ -3,7 +3,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
-import { appendMessage } from '@hull/agent/service'
+import { appendMessage, getSession } from '@hull/agent/service'
 import { shipLogBus } from '@hull/events/bus'
 import { listEventsSince } from '@hull/events/service'
 import { defined, freshDb } from '@hull/db/test-db'
@@ -22,6 +22,15 @@ import {
   listMembers,
   listMessages,
 } from './service'
+
+// Pin CHAT_MODEL to a sentinel that can't equal DEFAULT_MODEL: in a keyless
+// test environment the two constants coincide, so asserting the real value
+// couldn't catch a regression back to DEFAULT_MODEL. The sentinel can.
+const TEST_CHAT_MODEL = 'test/chat-strong-model'
+vi.mock('@hull/agent/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@hull/agent/runtime')>()),
+  CHAT_MODEL: 'test/chat-strong-model',
+}))
 
 /** The id of the chat.message_posted event addMessage emitted for a chat. */
 async function postedEventId(db: Database, chatId: string): Promise<string> {
@@ -148,9 +157,14 @@ describe('chat orchestrator', () => {
       'tilde:hi dru',
     ])
 
-    // A backing session was created and recorded on the membership.
+    // A backing session was created and recorded on the membership — and it
+    // boots on CHAT_MODEL (pinned to a sentinel above), not the ship default
+    // the builders use.
     const members = await listMembers(db, chatId)
-    expect(members.find((m) => m.userId === tilde)?.sessionId).not.toBeNull()
+    const sessionId = members.find((m) => m.userId === tilde)?.sessionId
+    expect(sessionId).not.toBeNull()
+    const session = await getSession(db, defined(sessionId ?? undefined))
+    expect(session?.model).toBe(TEST_CHAT_MODEL)
   })
 
   it('emits transient progress events that are NOT persisted', async () => {

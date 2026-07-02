@@ -5,7 +5,7 @@ import { notifyOnly, type NotifyPayload } from '@hull/events/bus'
 import { getEventById, MEMBERS_AUDIENCE } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 import { createSession } from '@hull/agent/service'
-import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
+import { CHAT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
 import { chatProgressLine } from '@hull/agent/progress'
 
@@ -78,7 +78,9 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     const id = uuidv7()
     await createSession(db, {
       id,
-      model: DEFAULT_MODEL,
+      // Chat is the planning surface — it gets the strong model (a profile's
+      // model override still wins at boot). Builders keep DEFAULT_MODEL.
+      model: CHAT_MODEL,
       profileId: agent.profileId,
       agentUserId: agent.userId,
     })

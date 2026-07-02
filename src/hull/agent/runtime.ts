@@ -16,7 +16,7 @@ import { errorMessage } from '@hull/lib/errors'
 
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
-import { defaultModelRef, resolveModel } from './models'
+import { chatModelRef, defaultModelRef, resolveModel } from './models'
 import { getProfileById, resolveProfileExtensionPaths } from './profiles'
 import { resolveSessionOptions, type ResolvedProfile } from './session-config'
 import {
@@ -43,18 +43,14 @@ export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
 /** The prefix every session topic carries — the one home for the session: grammar. */
 const SESSION_TOPIC_PREFIX = 'session:'
 
-/**
- * The ship-log **topic** every event for a session is published under. Named
- * `*Scope` for historical reasons — the event `scope` field is retired; this
- * returns a topic string.
- */
-export function sessionScope(sessionId: string): string {
+/** The ship-log topic every event for a session is published under. */
+export function sessionTopic(sessionId: string): string {
   return `${SESSION_TOPIC_PREFIX}${sessionId}`
 }
 
 /**
  * The session id a topic refers to, or null if it isn't a session topic — the
- * inverse of `sessionScope`, so entitlement code asks the agent service "whose
+ * inverse of `sessionTopic`, so entitlement code asks the agent service "whose
  * session is this?" rather than re-deriving the `session:` format.
  */
 export function sessionIdFromTopic(topic: string): string | null {
@@ -72,6 +68,21 @@ export function sessionIdFromTopic(topic: string): string | null {
  * override (e.g. `anthropic/claude-sonnet-4-5`).
  */
 export const DEFAULT_MODEL = defaultModelRef()
+
+/**
+ * The model chat agents' backing sessions boot with — the strong hosted model
+ * when a key makes it reachable, else the local default (see `chatModelRef`).
+ * Read once at boot, like DEFAULT_MODEL. The auth probe fails soft to "not
+ * configured" so a broken credential store degrades to local, never crashes
+ * the boot.
+ */
+export const CHAT_MODEL = chatModelRef((provider) => {
+  try {
+    return AuthStorage.create().getAuthStatus(provider).configured
+  } catch {
+    return false
+  }
+})
 
 /**
  * The profile a session boots with when it has no profileId — the pre-profiles
@@ -264,7 +275,7 @@ export function createAgentRuntime(deps: {
         emit({
           type,
           source: 'agent',
-          topic: sessionScope(sessionId),
+          topic: sessionTopic(sessionId),
           audience: 'members',
           payload,
         }),

@@ -2,10 +2,12 @@ import { getModels } from '@earendil-works/pi-ai'
 import { describe, expect, it } from 'vitest'
 
 import {
+  chatModelRef,
   defaultModelRef,
   FALLBACK_DEFAULT_MODEL,
   findHostedModel,
   parseModelRef,
+  PREFERRED_CHAT_MODEL,
   resolveModel,
 } from './models'
 
@@ -167,6 +169,48 @@ describe('defaultModelRef', () => {
     expect(defaultModelRef({ SKYLARK_DEFAULT_MODEL: '   ' })).toBe(
       FALLBACK_DEFAULT_MODEL,
     )
+  })
+})
+
+describe('chatModelRef', () => {
+  const anthropicConfigured = (provider: string) => provider === 'anthropic'
+  const nothingConfigured = () => false
+
+  it('prefers the strong hosted model when its provider has a key', () => {
+    expect(chatModelRef(anthropicConfigured, {})).toBe(PREFERRED_CHAT_MODEL)
+  })
+
+  it('resolves against the pi-ai registry (the preferred model must exist)', () => {
+    expect(() => resolveModel(PREFERRED_CHAT_MODEL)).not.toThrow()
+  })
+
+  it('falls back to the ship default when no key is configured (local-first)', () => {
+    expect(chatModelRef(nothingConfigured, {})).toBe(FALLBACK_DEFAULT_MODEL)
+    expect(
+      chatModelRef(nothingConfigured, {
+        SKYLARK_DEFAULT_MODEL: 'ollama/qwen3-coder:30b',
+      }),
+    ).toBe('ollama/qwen3-coder:30b')
+  })
+
+  it('honors SKYLARK_CHAT_MODEL above everything', () => {
+    expect(
+      chatModelRef(anthropicConfigured, {
+        SKYLARK_CHAT_MODEL: 'anthropic/claude-sonnet-4-6',
+      }),
+    ).toBe('anthropic/claude-sonnet-4-6')
+    // Even with no key configured — an explicit choice is the crew's to make.
+    expect(
+      chatModelRef(nothingConfigured, {
+        SKYLARK_CHAT_MODEL: 'ollama/qwen3:8b',
+      }),
+    ).toBe('ollama/qwen3:8b')
+  })
+
+  it('treats a blank SKYLARK_CHAT_MODEL as unset', () => {
+    expect(
+      chatModelRef(anthropicConfigured, { SKYLARK_CHAT_MODEL: '   ' }),
+    ).toBe(PREFERRED_CHAT_MODEL)
   })
 })
 

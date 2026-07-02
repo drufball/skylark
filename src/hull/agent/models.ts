@@ -39,6 +39,33 @@ export function defaultModelRef(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * The strong hosted model chat runs on when a key makes it reachable. Chat is
+ * the ship's planning surface — it reviews, decides, and orchestrates builds —
+ * so it wants the strongest model available, while builders stay on the cheap
+ * local default.
+ */
+export const PREFERRED_CHAT_MODEL = 'anthropic/claude-fable-5'
+
+/**
+ * The model a chat agent's backing session boots with. `SKYLARK_CHAT_MODEL`
+ * wins when set (the crew's explicit choice, key or not); otherwise the strong
+ * hosted model when its provider has a key configured; otherwise the ship
+ * default — so a fresh keyless clone still chats, on the local model.
+ * `isProviderConfigured` is injected (the live wiring passes pi's AuthStorage
+ * check) so the preference order is pure and testable.
+ */
+export function chatModelRef(
+  isProviderConfigured: (providerId: string) => boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configured = env.SKYLARK_CHAT_MODEL?.trim()
+  if (configured) return configured
+  const { provider } = parseModelRef(PREFERRED_CHAT_MODEL)
+  if (isProviderConfigured(provider)) return PREFERRED_CHAT_MODEL
+  return defaultModelRef(env)
+}
+
+/**
  * Default context window assumed for an Ollama model. This is NOT inert
  * metadata: the runtime runs with auto-compaction on, and pi triggers
  * compaction off `model.contextWindow`. Too low and a large model compacts far
