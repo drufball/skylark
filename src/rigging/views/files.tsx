@@ -114,9 +114,49 @@ function OpenFile({
   onSave: (path: string, content: string) => void
   onDelete: (path: string) => void
 }) {
+  // null is the service's "no such file" — a deleted file or a stale deep
+  // link. Rendering it as an editable empty file would silently recreate it.
+  if (content === null) return <MissingFile path={path} />
+  return (
+    <ExistingFile
+      path={path}
+      content={content}
+      busy={busy}
+      onSave={onSave}
+      onDelete={onDelete}
+    />
+  )
+}
+
+function MissingFile({ path }: { path: string }) {
+  return (
+    <section className="flex min-w-0 flex-1 flex-col">
+      <header className="flex items-center gap-2 border-b px-6 py-3">
+        <h2 className="min-w-0 flex-1 truncate font-mono text-sm">{path}</h2>
+      </header>
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+        No such file — it may have been deleted.
+      </div>
+    </section>
+  )
+}
+
+function ExistingFile({
+  path,
+  content,
+  busy,
+  onSave,
+  onDelete,
+}: {
+  path: string
+  content: string
+  busy: boolean
+  onSave: (path: string, content: string) => void
+  onDelete: (path: string) => void
+}) {
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(content ?? '')
-  const dirty = draft !== (content ?? '')
+  const [draft, setDraft] = useState(content)
+  const dirty = draft !== content
 
   // Auto-save: a pause in typing flushes the draft. Cleared on every keystroke.
   const saveRef = useRef(onSave)
@@ -133,6 +173,21 @@ function OpenFile({
     }
   }, [editing, dirty, draft, path])
 
+  // Switching files remounts this component (it's keyed by path), which cancels
+  // the pending autosave — so flush a dirty draft on unmount rather than losing
+  // the keystrokes typed inside the debounce window.
+  const flushRef = useRef({ editing, dirty, draft, path })
+  useEffect(() => {
+    flushRef.current = { editing, dirty, draft, path }
+  })
+  useEffect(
+    () => () => {
+      const last = flushRef.current
+      if (last.editing && last.dirty) saveRef.current(last.path, last.draft)
+    },
+    [],
+  )
+
   return (
     <section className="flex min-w-0 flex-1 flex-col">
       <header className="flex items-center gap-2 border-b px-6 py-3">
@@ -147,7 +202,7 @@ function OpenFile({
             // Entering edit seeds the draft from what's on screen; leaving it
             // flushes anything unsaved immediately rather than waiting out the
             // debounce.
-            if (!editing) setDraft(content ?? '')
+            if (!editing) setDraft(content)
             else if (dirty) onSave(path, draft)
             setEditing(!editing)
           }}
@@ -179,7 +234,7 @@ function OpenFile({
       ) : (
         <ScrollArea className="flex-1">
           <article className="prose prose-sm dark:prose-invert max-w-3xl p-6">
-            {content === null || content === '' ? (
+            {content === '' ? (
               <p className="text-muted-foreground">This file is empty.</p>
             ) : (
               <ReactMarkdown>{content}</ReactMarkdown>

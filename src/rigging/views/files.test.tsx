@@ -159,6 +159,35 @@ describe('FilesView', () => {
     expect(screen.getByRole('textbox')).toHaveProperty('value', 'my typing')
   })
 
+  it('flushes a dirty draft when switching files before the debounce fires', () => {
+    const onSave = vi.fn()
+    const props = {
+      files: ['a.md', 'b.md'],
+      busy: false,
+      onSelect: vi.fn(),
+      onSave,
+      onCreate: vi.fn(),
+      onDelete: vi.fn(),
+    }
+    const { rerender } = render(
+      <FilesView {...props} selected="a.md" content="before" />,
+    )
+    fireEvent.click(screen.getByText('Edit'))
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'typed but not yet saved' },
+    })
+    // Switching the selected file remounts the open pane immediately — the
+    // keystrokes inside the debounce window must be saved, not dropped.
+    rerender(<FilesView {...props} selected="b.md" content="other" />)
+    expect(onSave).toHaveBeenCalledWith('a.md', 'typed but not yet saved')
+  })
+
+  it('renders a missing file (null content) as not-found, not as an editable empty file', () => {
+    renderView({ files: [], selected: 'gone.md', content: null })
+    expect(screen.getByText(/no such file/i)).toBeTruthy()
+    expect(screen.queryByText('Edit')).toBeNull()
+  })
+
   it('deletes only after confirmation', () => {
     const confirmSpy = vi
       .spyOn(window, 'confirm')

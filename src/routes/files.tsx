@@ -30,7 +30,11 @@ export const Route = createFileRoute('/files')({
   loaderDeps: ({ search }) => ({ path: search.path }),
   loader: async ({ deps }) => {
     const files = await listFiles()
-    const content = deps.path ? await readFile({ data: deps.path }) : null
+    // A hand-edited or stale ?path= must not take the route down — an invalid
+    // path reads as "no such file", which the view renders as not-found.
+    const content = deps.path
+      ? await readFile({ data: deps.path }).catch(() => null)
+      : null
     return { files, content }
   },
 })
