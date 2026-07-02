@@ -9,7 +9,7 @@ import { currentActor, withCurrentActor } from '@hull/users/actor'
 
 import { defaultModelRef } from './models'
 import { isHostedProvider, providersWithStatus } from './providers'
-import { type AgentRuntime, DEFAULT_MODEL, sessionScope } from './runtime'
+import { type AgentRuntime, DEFAULT_MODEL, sessionTopic } from './runtime'
 import { createServerRuntime } from './fake-session'
 import {
   CHAT_PROFILE,
@@ -79,7 +79,7 @@ async function actorCanSeeSession(sessionId: string): Promise<boolean> {
   const actor = await currentActor()
   // The same unified gate the SSE stream uses, via the session's topic — no
   // bespoke per-door check.
-  return canSeeTopic(db, actor.id, sessionScope(sessionId))
+  return canSeeTopic(db, actor.id, sessionTopic(sessionId))
 }
 
 /** Refuse an action on a session the actor can't see. */

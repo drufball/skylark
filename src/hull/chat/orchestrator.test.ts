@@ -3,7 +3,8 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
-import { appendMessage } from '@hull/agent/service'
+import { CHAT_MODEL } from '@hull/agent/runtime'
+import { appendMessage, getSession } from '@hull/agent/service'
 import { shipLogBus } from '@hull/events/bus'
 import { listEventsSince } from '@hull/events/service'
 import { defined, freshDb } from '@hull/db/test-db'
@@ -148,9 +149,14 @@ describe('chat orchestrator', () => {
       'tilde:hi dru',
     ])
 
-    // A backing session was created and recorded on the membership.
+    // A backing session was created and recorded on the membership — and it
+    // boots on the chat model (the strong one when a key is configured), not
+    // the ship default the builders use.
     const members = await listMembers(db, chatId)
-    expect(members.find((m) => m.userId === tilde)?.sessionId).not.toBeNull()
+    const sessionId = members.find((m) => m.userId === tilde)?.sessionId
+    expect(sessionId).not.toBeNull()
+    const session = await getSession(db, defined(sessionId ?? undefined))
+    expect(session?.model).toBe(CHAT_MODEL)
   })
 
   it('emits transient progress events that are NOT persisted', async () => {
