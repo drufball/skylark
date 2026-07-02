@@ -91,8 +91,10 @@ jobs:
           EOF
 
       - name: Launch mutation review in cloud
+        # The skill lives in this repo's plugin, not the workspace registry, so
+        # reference it as a local path — a bare name 404s in the cloud launcher.
         run: |
-          tessl launch skill mutation-review \
+          tessl launch skill file:./plugins/skylark-builder/skills/mutation-review \
             --cloud \
             --repo ${{ github.repository }} \
             --workspace skylark \

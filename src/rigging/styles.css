@@ -1,5 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+/* Typographic defaults for rendered markdown (the `prose` classes). */
+@plugin '@tailwindcss/typography';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Skylark theme tokens.

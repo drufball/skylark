@@ -16,7 +16,7 @@ const FakeLink: DockLink = ({ to, className, children }) => (
 )
 
 describe('Dock', () => {
-  it('renders the chat, issues, agents, and models links and the children', () => {
+  it('renders the chat, issues, files, agents, and models links and the children', () => {
     render(
       <Dock active="issues" Link={FakeLink}>
         <p>surface</p>
@@ -28,6 +28,9 @@ describe('Dock', () => {
     expect(screen.getByText('Issues').closest('a')?.getAttribute('href')).toBe(
       '/issues',
     )
+    expect(screen.getByText('Files').closest('a')?.getAttribute('href')).toBe(
+      '/files',
+    )
     expect(screen.getByText('Agents').closest('a')?.getAttribute('href')).toBe(
       '/agents',
     )
@@ -35,6 +38,17 @@ describe('Dock', () => {
       '/models',
     )
     expect(screen.getByText('surface')).toBeTruthy()
+  })
+
+  it('marks Files active on the files surface', () => {
+    render(
+      <Dock active="files" Link={FakeLink}>
+        <span />
+      </Dock>,
+    )
+    const link = screen.getByText('Files').closest('a')
+    expect(link?.querySelector('[aria-current="page"]')).toBeTruthy()
+    expect(classTokensOf('Files', 'a')).toContain('bg-accent')
   })
 
   it('flags only the active section for assistive tech', () => {

@@ -6,3 +6,6 @@ package-lock.json
 src/routeTree.gen.ts
 # drizzle-kit owns its migration files (and checksums them) — never reformat.
 src/migrations/
+# The crew's shared documents (the files service auto-merges them to main);
+# they're content, not code — format:check must never fail on a doc.
+src/home/files/
