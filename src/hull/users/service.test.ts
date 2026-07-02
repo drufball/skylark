@@ -17,6 +17,8 @@ import {
   setUserProfile,
   SEED_CREW,
   UNKNOWN_HANDLE,
+  updateUser,
+  validateHandle,
 } from './service'
 
 describe('users service', () => {
@@ -56,6 +58,40 @@ describe('users service', () => {
   it('returns undefined for unknown id or handle', async () => {
     expect(await getUserById(db, 'nope')).toBeUndefined()
     expect(await getUserByHandle(db, 'nope')).toBeUndefined()
+  })
+
+  it('updates only the fields given, leaving the rest alone', async () => {
+    await createUser(db, {
+      id: 'u1',
+      handle: 'scout',
+      displayName: 'Scout',
+      type: 'agent',
+    })
+    const renamed = await updateUser(db, 'u1', { displayName: 'Scout Prime' })
+    expect(renamed).toMatchObject({
+      handle: 'scout',
+      displayName: 'Scout Prime',
+      profileId: null,
+    })
+    const rewired = await updateUser(db, 'u1', { profileId: 'p1' })
+    expect(rewired).toMatchObject({
+      displayName: 'Scout Prime',
+      profileId: 'p1',
+    })
+  })
+
+  it('updateUser returns undefined for an unknown user', async () => {
+    expect(await updateUser(db, 'nope', { displayName: 'X' })).toBeUndefined()
+  })
+
+  it('validateHandle accepts mentionable handles and rejects the rest', () => {
+    // Handles must survive @mention parsing (\w+, lowercased) — see chat's
+    // parseMentions — so only lowercase word characters are allowed.
+    expect(validateHandle('scout')).toBe('scout')
+    expect(validateHandle('scout_2')).toBe('scout_2')
+    for (const bad of ['', 'Scout', 'sc out', 'sc-out', 'sc.out', '@scout']) {
+      expect(() => validateHandle(bad)).toThrow(/handle/i)
+    }
   })
 
   it('lists users in creation order', async () => {

@@ -16,9 +16,12 @@ import {
   saveAgentProfile,
   sendAgentMessage,
 } from '@hull/agent/server'
+import { agentMemoryIndexPath } from '@hull/agent/memory-paths'
 import { listLocalModels } from '@hull/local-model/server'
 import { modelPickerOptions } from '@hull/local-model/ollama-client'
+import { createAgentUser, listCrew, updateCrewMember } from '@hull/users/server'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
+import { AgentCrew, type CrewMemberSummary } from '@rigging/views/agent-crew'
 import {
   AgentProfiles,
   type ExtensionSummary,
@@ -29,13 +32,15 @@ import { Dock } from '@rigging/views/dock'
 import { cn } from '@rigging/lib/utils'
 import { useShipLog } from '@rigging/lib/use-ship-log'
 
-// The Agents surface: the dedicated agent-management view. Two sub-tabs — the
-// session **monitor** (the old front-door chat ux, which was only ever a way to
-// watch sessions and unstick a wedged one with a direct message) and the
-// **profiles** editor (the data that tells the runtime how to boot an agent).
-// Live updates ride the ship's log, same as the front door.
+// The Agents surface: the dedicated agent-management view. Three sub-tabs —
+// the session **monitor** (the old front-door chat ux, which was only ever a
+// way to watch sessions and unstick a wedged one with a direct message), the
+// **profiles** editor (the data that tells the runtime how to boot an agent),
+// and the **crew** roster (named agents: create one, rename it, point it at a
+// profile, open its memory). Live updates ride the ship's log, same as the
+// front door.
 
-type AgentTab = 'sessions' | 'profiles'
+type AgentTab = 'sessions' | 'profiles' | 'crew'
 
 interface AgentsSearch {
   tab?: AgentTab
@@ -44,30 +49,35 @@ interface AgentsSearch {
 
 export const Route = createFileRoute('/agents')({
   validateSearch: (search: Record<string, unknown>): AgentsSearch => ({
-    tab: search.tab === 'profiles' ? 'profiles' : 'sessions',
+    tab:
+      search.tab === 'profiles' || search.tab === 'crew'
+        ? search.tab
+        : 'sessions',
     session: typeof search.session === 'string' ? search.session : undefined,
   }),
   loaderDeps: ({ search }) => ({ session: search.session }),
   loader: async ({ deps }) => {
-    const [sessions, profiles, extensions, local, def] = await Promise.all([
-      listAgentSessions(),
-      listAgentProfiles(),
-      listAgentExtensions(),
-      listLocalModels(),
-      getDefaultModel(),
-    ])
+    const [sessions, profiles, extensions, local, def, crew] =
+      await Promise.all([
+        listAgentSessions(),
+        listAgentProfiles(),
+        listAgentExtensions(),
+        listLocalModels(),
+        getDefaultModel(),
+        listCrew(),
+      ])
     const modelOptions = modelPickerOptions(def.ref, local.installed)
     const chat = deps.session
       ? await getAgentChat({ data: deps.session })
       : null
-    return { sessions, profiles, extensions, modelOptions, chat }
+    return { sessions, profiles, extensions, modelOptions, chat, crew }
   },
   component: AgentsRoute,
 })
 
 function AgentsRoute() {
   const { tab = 'sessions', session: activeId } = Route.useSearch()
-  const { sessions, profiles, extensions, modelOptions, chat } =
+  const { sessions, profiles, extensions, modelOptions, chat, crew } =
     Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
@@ -117,6 +127,34 @@ function AgentsRoute() {
     }
   }
 
+  async function createCrewAgent(input: {
+    handle: string
+    displayName: string
+    profileId: string | null
+  }) {
+    setSaving(true)
+    try {
+      await createAgentUser({ data: input })
+      await router.invalidate()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function updateCrew(input: {
+    userId: string
+    displayName?: string
+    profileId?: string
+  }) {
+    setSaving(true)
+    try {
+      await updateCrewMember({ data: input })
+      await router.invalidate()
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const items = chat?.items ?? []
   if (pending && items.length > pending.baseCount) setPending(null)
   const shown =
@@ -144,6 +182,13 @@ function AgentsRoute() {
     name: e.name,
     description: e.description,
   }))
+  const crewSummaries: CrewMemberSummary[] = crew.map((m) => ({
+    id: m.id,
+    handle: m.handle,
+    displayName: m.displayName,
+    type: m.type,
+    profileId: m.profileId,
+  }))
 
   return (
     <Dock active="agents" Link={Link}>
@@ -155,7 +200,25 @@ function AgentsRoute() {
           }}
         />
         <div className="min-h-0 flex-1">
-          {tab === 'profiles' ? (
+          {tab === 'crew' ? (
+            <AgentCrew
+              crew={crewSummaries}
+              profiles={profiles.map((p) => ({ id: p.id, name: p.name }))}
+              saving={saving}
+              onCreate={(input) => {
+                void createCrewAgent(input)
+              }}
+              onUpdate={(input) => {
+                void updateCrew(input)
+              }}
+              onOpenMemory={(handle) => {
+                void navigate({
+                  to: '/files',
+                  search: { path: agentMemoryIndexPath(handle) },
+                })
+              }}
+            />
+          ) : tab === 'profiles' ? (
             <AgentProfiles
               profiles={profileSummaries}
               extensions={extensionSummaries}
@@ -201,7 +264,7 @@ function TabBar({
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1 border-b bg-muted/20 px-3 py-2">
-      {(['sessions', 'profiles'] as const).map((t) => (
+      {(['sessions', 'profiles', 'crew'] as const).map((t) => (
         <button
           key={t}
           type="button"

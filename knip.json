@@ -10,7 +10,7 @@
   ],
   "project": ["src/**/*.{ts,tsx}", "e2e/**/*.ts"],
   "ignoreExportsUsedInFile": true,
-  "ignore": ["src/rigging/components/ui/**", "src/hull/users/server.ts"],
+  "ignore": ["src/rigging/components/ui/**"],
   "ignoreDependencies": [
     "tailwindcss",
     "tw-animate-css",

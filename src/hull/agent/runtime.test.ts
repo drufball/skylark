@@ -2,8 +2,11 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { uuidv7 } from '@earendil-works/pi-agent-core'
+
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
+import { createUser } from '@hull/users/service'
 
 import { createProfile, registerExtension } from './profiles'
 import { createAgentRuntime, type PiSession } from './runtime'
@@ -213,6 +216,57 @@ describe('agent runtime', () => {
     expect(args.profile.useRepoSkills).toBe(true)
     expect(args.profile.extensionPaths).toEqual([])
     expect(args.cwd).toBe(process.cwd()) // null cwd → repo root
+  })
+
+  it("folds a named agent's memory into the profile it boots with", async () => {
+    const withMemory = createAgentRuntime({
+      db,
+      factory: (profile, cwd, model) => {
+        factoryArgs.push({ profile, cwd, model })
+        return Promise.resolve(fake)
+      },
+      emit: () => Promise.resolve(),
+      memory: (agentUserId) =>
+        Promise.resolve({
+          userId: agentUserId,
+          handle: 'tilde',
+          index: '# remembered: the dock has five slots',
+        }),
+    })
+    const agentId = uuidv7()
+    await createUser(db, {
+      id: agentId,
+      handle: 'tilde',
+      displayName: 'Tilde',
+      type: 'agent',
+    })
+    await createSession(db, { id: 's1', model: 'm', agentUserId: agentId })
+    await withMemory.runTurn('s1', 'hi')
+
+    const [args] = factoryArgs
+    expect(args.profile.systemPrompt).toContain('You are @tilde')
+    expect(args.profile.systemPrompt).toContain(
+      'remembered: the dock has five slots',
+    )
+    withMemory.disposeAll()
+  })
+
+  it('boots on the profile alone when the session has no agent identity', async () => {
+    const withMemory = createAgentRuntime({
+      db,
+      factory: (profile, cwd, model) => {
+        factoryArgs.push({ profile, cwd, model })
+        return Promise.resolve(fake)
+      },
+      emit: () => Promise.resolve(),
+      memory: () => {
+        throw new Error('must not be called for a session with no agent')
+      },
+    })
+    await createSession(db, { id: 's1', model: 'm' })
+    await withMemory.runTurn('s1', 'hi')
+    expect(factoryArgs[0].profile.systemPrompt).toBeNull()
+    withMemory.disposeAll()
   })
 
   it('boots from stored history, seeds it into the session, and persists the new tail', async () => {

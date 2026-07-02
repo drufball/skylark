@@ -68,6 +68,34 @@ export async function handleOf(
   return user?.handle ?? UNKNOWN_HANDLE
 }
 
+/**
+ * Validate a new crew handle. Handles are @mentioned in chat and parsed with
+ * `\w+` (lowercased) — see chat's parseMentions — so only lowercase word
+ * characters survive the round trip. Returns the handle unchanged when valid.
+ */
+export function validateHandle(handle: string): string {
+  if (!/^[a-z0-9_]+$/.test(handle)) {
+    throw new Error(
+      `Invalid handle "${handle}" — lowercase letters, digits, and _ only`,
+    )
+  }
+  return handle
+}
+
+/** Update a crew member's mutable fields; undefined leaves a field alone. */
+export async function updateUser(
+  db: Database,
+  userId: string,
+  patch: { displayName?: string; profileId?: string },
+): Promise<UserRow | undefined> {
+  const [row] = await db
+    .update(users)
+    .set(patch)
+    .where(eq(users.id, userId))
+    .returning()
+  return row
+}
+
 /** Point one crew member at an agent profile (by id). Writes only the users table. */
 export async function setUserProfile(
   db: Database,
