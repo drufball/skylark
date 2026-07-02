@@ -8,6 +8,7 @@ import { useCallback, useState } from 'react'
 
 import { commentOnIssue, getThread, setIssueStatus } from '@hull/issues/server'
 import { issueTopic } from '@hull/issues/topic'
+import { setWatch, watchState } from '@hull/notifications/server'
 import { Dock } from '@rigging/views/dock'
 import { IssueThreadView } from '@rigging/views/issue-thread'
 import { useShipLog } from '@rigging/lib/use-ship-log'
@@ -17,11 +18,17 @@ import { useShipLog } from '@rigging/lib/use-ship-log'
 // the builder's progress line stream in without a refresh.
 export const Route = createFileRoute('/issues/$id')({
   component: ThreadRoute,
-  loader: ({ params }) => getThread({ data: params.id }),
+  loader: async ({ params }) => {
+    const [thread, watch] = await Promise.all([
+      getThread({ data: params.id }),
+      watchState({ data: issueTopic(params.id) }),
+    ])
+    return { thread, watching: watch.watching }
+  },
 })
 
 function ThreadRoute() {
-  const thread = Route.useLoaderData()
+  const { thread, watching } = Route.useLoaderData()
   const { id } = Route.useParams()
   const navigate = useNavigate()
   const router = useRouter()
@@ -52,6 +59,16 @@ function ThreadRoute() {
     }
   }
 
+  async function toggleWatch() {
+    setBusy(true)
+    try {
+      await setWatch({ data: { topic: issueTopic(id), watching: !watching } })
+      await router.invalidate()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!thread) {
     return (
       <Dock active="issues" Link={Link}>
@@ -72,6 +89,7 @@ function ThreadRoute() {
       <IssueThreadView
         thread={thread}
         busy={busy}
+        watching={watching}
         onBack={() => {
           void navigate({ to: '/issues' })
         }}
@@ -80,6 +98,9 @@ function ThreadRoute() {
         }}
         onSetStatus={(status) => {
           void setStatus(status)
+        }}
+        onToggleWatch={() => {
+          void toggleWatch()
         }}
       />
     </Dock>

@@ -3,6 +3,7 @@ import { runAsActor } from '@hull/db/with-actor'
 import { chatIdFromTopic, getChat } from '@hull/chat/service'
 import { getSession } from '@hull/agent/service'
 import { sessionIdFromTopic } from '@hull/agent/runtime'
+import { userIdFromNotifyTopic } from '@hull/notifications/topic'
 
 // The ONE entitlement gate. Everything that needs "may this actor see X?" — the
 // SSE stream, and the in-process control doors (cancel/send a turn) — asks
@@ -39,6 +40,11 @@ export async function canSeeTopic(
 
   const sessionId = sessionIdFromTopic(topic)
   if (sessionId !== null) return seen((tx) => getSession(tx, sessionId))
+
+  // A notification topic is private to its owner — no probe needed: the topic
+  // IS the entitlement (notify:<userId> admits exactly that user).
+  const notifyUserId = userIdFromNotifyTopic(topic)
+  if (notifyUserId !== null) return actorId === notifyUserId
 
   return true
 }

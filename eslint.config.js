@@ -77,6 +77,9 @@ export default defineConfig(
       'src/hull/agent/cli.ts',
       'src/hull/chat/orchestrator-live.ts',
       'src/hull/issues/orchestrator-live.ts',
+      // The notifications reactor fans out inbox rows ACROSS users — plumbing
+      // no single actor's RLS context could run.
+      'src/hull/notifications/live.ts',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },

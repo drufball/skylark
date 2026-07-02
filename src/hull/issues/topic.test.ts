@@ -3,11 +3,21 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { ISSUE_TOPIC_PATTERN, ISSUE_TOPIC_PREFIX, issueTopic } from './topic'
+import {
+  ISSUE_TOPIC_PATTERN,
+  ISSUE_TOPIC_PREFIX,
+  issueIdFromTopic,
+  issueTopic,
+} from './topic'
 
 describe('issue topic namespace', () => {
   it('namespaces an issue id into its own ship-log topic', () => {
     expect(issueTopic('abcd')).toBe('issue:abcd')
+  })
+
+  it('round-trips an issue id back out of a topic', () => {
+    expect(issueIdFromTopic(issueTopic('abcd'))).toBe('abcd')
+    expect(issueIdFromTopic('chat:abcd')).toBeNull()
   })
 
   it('builds the topic and the board pattern from one prefix', () => {

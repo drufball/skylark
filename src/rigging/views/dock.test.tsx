@@ -31,6 +31,9 @@ describe('Dock', () => {
     expect(screen.getByText('Files').closest('a')?.getAttribute('href')).toBe(
       '/files',
     )
+    expect(screen.getByText('Inbox').closest('a')?.getAttribute('href')).toBe(
+      '/inbox',
+    )
     expect(screen.getByText('Agents').closest('a')?.getAttribute('href')).toBe(
       '/agents',
     )

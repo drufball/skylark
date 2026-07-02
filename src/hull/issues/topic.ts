@@ -23,5 +23,12 @@ export function issueTopic(issueId: string): string {
   return `${ISSUE_TOPIC_PREFIX}${issueId}`
 }
 
+/** The issue id a topic refers to, or null if it isn't an issue topic. */
+export function issueIdFromTopic(topic: string): string | null {
+  return topic.startsWith(ISSUE_TOPIC_PREFIX)
+    ? topic.slice(ISSUE_TOPIC_PREFIX.length)
+    : null
+}
+
 /** The topic pattern matching every issue's topic (the board subscribes here). */
 export const ISSUE_TOPIC_PATTERN = `${ISSUE_TOPIC_PREFIX}*`

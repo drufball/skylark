@@ -36,6 +36,7 @@ import {
 export { issueTopic }
 
 /** Event types this service emits (one name, used by emitters and subscribers). */
+export const ISSUE_OPENED = 'issue.opened'
 export const ISSUE_STATUS_CHANGED = 'issue.status_changed'
 export const ISSUE_COMMENTED = 'issue.commented'
 
@@ -171,6 +172,12 @@ export async function createIssue(
           authorId: input.authorId,
         })
         .returning()
+      await announce(db, {
+        type: ISSUE_OPENED,
+        issueId: row.id,
+        actorId: input.authorId,
+        payload: { issueId: row.id, title: row.title },
+      })
       return row
     } catch (err) {
       // A forced nano can't be retried into a new value — surface immediately.

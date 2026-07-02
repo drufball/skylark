@@ -50,6 +50,11 @@ describe('canSeeTopic', () => {
     expect(await canSeeTopic(db, bob, 'issue:123')).toBe(true)
   })
 
+  it('admits exactly the owner to a notification topic', async () => {
+    expect(await canSeeTopic(db, alice, `notify:${alice}`)).toBe(true)
+    expect(await canSeeTopic(db, bob, `notify:${alice}`)).toBe(false)
+  })
+
   it('makes an issue-owned session public', async () => {
     const sid = uuidv7()
     await createSession(db, { id: sid, model: 'm' })

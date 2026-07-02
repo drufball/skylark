@@ -1,5 +1,13 @@
 import { useState } from 'react'
-import { ArrowLeft, GitBranch, Hammer, Loader2, Send } from 'lucide-react'
+import {
+  ArrowLeft,
+  Bell,
+  BellOff,
+  GitBranch,
+  Hammer,
+  Loader2,
+  Send,
+} from 'lucide-react'
 
 import type { IssueThread, ThreadEntry } from '@hull/issues/server'
 import type { IssueStatus } from '@hull/issues/schema'
@@ -15,9 +23,12 @@ import { Textarea } from '@rigging/components/ui/textarea'
 export interface IssueThreadViewProps {
   thread: IssueThread
   busy: boolean
+  /** Is the current actor watching this issue (notified of its news)? */
+  watching: boolean
   onBack: () => void
   onComment: (body: string) => void
   onSetStatus: (status: string) => void
+  onToggleWatch: () => void
 }
 
 const STATUS_LABEL: Record<IssueStatus, string> = {
@@ -30,9 +41,11 @@ const STATUS_LABEL: Record<IssueStatus, string> = {
 export function IssueThreadView({
   thread,
   busy,
+  watching,
   onBack,
   onComment,
   onSetStatus,
+  onToggleWatch,
 }: IssueThreadViewProps) {
   const terminal = thread.status === 'done' || thread.status === 'closed'
   return (
@@ -50,6 +63,19 @@ export function IssueThreadView({
           <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">
             {thread.title}
           </h1>
+          <Button
+            variant={watching ? 'default' : 'outline'}
+            size="sm"
+            disabled={busy}
+            onClick={onToggleWatch}
+          >
+            {watching ? (
+              <BellOff className="size-4" />
+            ) : (
+              <Bell className="size-4" />
+            )}
+            {watching ? 'Unwatch' : 'Watch'}
+          </Button>
           <span className="shrink-0 font-mono text-xs text-muted-foreground">
             #{thread.nano}
           </span>

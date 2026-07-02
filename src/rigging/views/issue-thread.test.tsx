@@ -27,17 +27,20 @@ function renderView(props: Partial<IssueThreadViewProps> = {}) {
   const onBack = vi.fn()
   const onComment = vi.fn()
   const onSetStatus = vi.fn()
+  const onToggleWatch = vi.fn()
   const result = render(
     <IssueThreadView
       thread={thread()}
       busy={false}
+      watching={false}
       onBack={onBack}
       onComment={onComment}
       onSetStatus={onSetStatus}
+      onToggleWatch={onToggleWatch}
       {...props}
     />,
   )
-  return { ...result, onBack, onComment, onSetStatus }
+  return { ...result, onBack, onComment, onSetStatus, onToggleWatch }
 }
 
 describe('IssueThreadView', () => {
@@ -139,5 +142,13 @@ describe('IssueThreadView', () => {
     })
     fireEvent.click(screen.getByLabelText('Add comment'))
     expect(onComment).not.toHaveBeenCalled()
+  })
+
+  it('offers Watch when not watching and Unwatch when watching', () => {
+    const { onToggleWatch } = renderView()
+    fireEvent.click(screen.getByText('Watch'))
+    expect(onToggleWatch).toHaveBeenCalledTimes(1)
+    renderView({ watching: true })
+    expect(screen.getByText('Unwatch')).toBeTruthy()
   })
 })

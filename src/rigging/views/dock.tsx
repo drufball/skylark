@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from 'react'
 import {
   Anchor,
+  Bell,
   Bot,
   Boxes,
   FolderOpen,
@@ -12,11 +13,18 @@ import { cn } from '@rigging/lib/utils'
 
 // The dock: the ship's persistent app-shell nav. It switches between the ship's
 // surfaces — Chat (the front door), Issues (the board), Files (shared docs),
-// Agents (profiles + the session monitor), and Models (local + hosted models).
-// Presentational and router-agnostic: the link element is injected so the dock
-// is testable without a router and reusable across routes.
+// Inbox (notifications), Agents (profiles + the session monitor), and Models
+// (local + hosted models). Presentational and router-agnostic: the link element
+// is injected so the dock is testable without a router and reusable across
+// routes.
 
-export type DockSection = 'chat' | 'issues' | 'files' | 'agents' | 'models'
+export type DockSection =
+  | 'chat'
+  | 'issues'
+  | 'files'
+  | 'inbox'
+  | 'agents'
+  | 'models'
 
 /** A navigation link, injected so the dock doesn't depend on a router. */
 export type DockLink = ComponentType<{
@@ -36,6 +44,7 @@ const ITEMS: DockItem[] = [
   { section: 'chat', to: '/', label: 'Chat', Icon: MessageSquare },
   { section: 'issues', to: '/issues', label: 'Issues', Icon: Hammer },
   { section: 'files', to: '/files', label: 'Files', Icon: FolderOpen },
+  { section: 'inbox', to: '/inbox', label: 'Inbox', Icon: Bell },
   { section: 'agents', to: '/agents', label: 'Agents', Icon: Bot },
   { section: 'models', to: '/models', label: 'Models', Icon: Boxes },
 ]
