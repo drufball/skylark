@@ -1,0 +1,255 @@
+import { uuidv7 } from '@earendil-works/pi-agent-core'
+import { and, desc, eq, isNull } from 'drizzle-orm'
+
+import type { Database } from '@hull/db/client'
+import {
+  emitEvent,
+  type NotifyPayload,
+  type ShipLogReactor,
+} from '@hull/events/bus'
+import { getEventById, MEMBERS_AUDIENCE } from '@hull/events/service'
+import { ISSUE_TOPIC_PREFIX } from '@hull/issues/topic'
+import { errorMessage } from '@hull/lib/errors'
+
+import { notifications, watches, type NotificationRow } from './schema'
+import { notifyTopic } from './topic'
+
+/**
+ * Every user's inbox, fed by watches. A watch says "tell <user> when something
+ * happens on <topic>"; the reactor below listens to the ship's log and turns
+ * watched durable events into inbox rows. One mechanism for everyone: humans
+ * read theirs on the Inbox surface, and an agent's notifications wake it.
+ *
+ * Watches are earned two ways: explicitly (the Watch button), and by ACTING —
+ * whoever causes an event on an auto-watch topic (files an issue, comments,
+ * moves status) is subscribed to that topic from then on. That one rule covers
+ * "creators are notified" and "commenting watches" without special cases.
+ *
+ * Each inbox row is announced as `notification.created` on the owner's private
+ * `notify:<userId>` topic (the visibility gate admits only the owner), which is
+ * what makes the bell live.
+ */
+
+/** The event announcing a new inbox row (on the owner's notify:<id> topic). */
+export const NOTIFICATION_CREATED = 'notification.created'
+
+/**
+ * Should acting on this topic subscribe the actor to it? Issues, for now:
+ * filing, commenting, or moving one means you care where it goes. Chat topics
+ * stay out — chat has its own surface and would drown the inbox.
+ */
+export function isAutoWatchTopic(topic: string): boolean {
+  return topic.startsWith(ISSUE_TOPIC_PREFIX)
+}
+
+/**
+ * One line of inbox copy for a notification, from what the row itself carries.
+ * Pure — the door resolves the actor's handle and hands it in. Falls back to
+ * "type on topic" for event types this doesn't know, so an unknown event is
+ * still legible rather than blank.
+ */
+export function describeNotification(input: {
+  type: string
+  topic: string
+  payload: unknown
+  actorHandle: string
+}): string {
+  const { type, topic, actorHandle } = input
+  const payload = input.payload as {
+    title?: unknown
+    from?: unknown
+    to?: unknown
+  }
+  switch (type) {
+    case 'issue.opened':
+      return typeof payload.title === 'string'
+        ? `@${actorHandle} opened "${payload.title}"`
+        : `@${actorHandle} opened an issue`
+    case 'issue.commented':
+      return `@${actorHandle} commented`
+    case 'issue.status_changed':
+      return typeof payload.from === 'string' && typeof payload.to === 'string'
+        ? `@${actorHandle} moved it: ${payload.from} → ${payload.to}`
+        : `@${actorHandle} changed the status`
+    default:
+      return `${type} on ${topic}`
+  }
+}
+
+// --- Watches ----------------------------------------------------------------
+
+export async function watchTopic(
+  db: Database,
+  userId: string,
+  topic: string,
+): Promise<void> {
+  await db.insert(watches).values({ userId, topic }).onConflictDoNothing()
+}
+
+export async function unwatchTopic(
+  db: Database,
+  userId: string,
+  topic: string,
+): Promise<void> {
+  await db
+    .delete(watches)
+    .where(and(eq(watches.userId, userId), eq(watches.topic, topic)))
+}
+
+export async function isWatching(
+  db: Database,
+  userId: string,
+  topic: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ userId: watches.userId })
+    .from(watches)
+    .where(and(eq(watches.userId, userId), eq(watches.topic, topic)))
+  return rows.length > 0
+}
+
+/** Everyone subscribed to a topic. */
+export async function listWatchers(
+  db: Database,
+  topic: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ userId: watches.userId })
+    .from(watches)
+    .where(eq(watches.topic, topic))
+  return rows.map((r) => r.userId)
+}
+
+// --- The inbox ----------------------------------------------------------------
+
+/**
+ * Put one entry in a user's inbox and announce it on their private notify
+ * topic. The announcement carries the row's essentials so a live subscriber
+ * (the bell) can update without a read-back.
+ */
+export async function addNotification(
+  db: Database,
+  input: {
+    userId: string
+    type: string
+    topic: string
+    payload: unknown
+    actorId: string | null
+  },
+): Promise<NotificationRow> {
+  const [row] = await db
+    .insert(notifications)
+    .values({ id: uuidv7(), ...input })
+    .returning()
+  await emitEvent(db, {
+    type: NOTIFICATION_CREATED,
+    source: 'notifications',
+    topic: notifyTopic(input.userId),
+    audience: MEMBERS_AUDIENCE,
+    actorId: input.actorId,
+    payload: { notificationId: row.id, type: input.type, topic: input.topic },
+  })
+  return row
+}
+
+/** A user's inbox, newest first. */
+export async function listNotifications(
+  db: Database,
+  userId: string,
+  limit = 100,
+): Promise<NotificationRow[]> {
+  return db
+    .select()
+    .from(notifications)
+    .where(eq(notifications.userId, userId))
+    .orderBy(desc(notifications.id))
+    .limit(limit)
+}
+
+/** The user's unread entries, oldest first — what an agent wake-up consumes. */
+export async function listUnread(
+  db: Database,
+  userId: string,
+): Promise<NotificationRow[]> {
+  return db
+    .select()
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+    .orderBy(notifications.id)
+}
+
+export async function unreadCount(
+  db: Database,
+  userId: string,
+): Promise<number> {
+  return (await listUnread(db, userId)).length
+}
+
+export async function markAllRead(db: Database, userId: string): Promise<void> {
+  await db
+    .update(notifications)
+    .set({ readAt: new Date() })
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+}
+
+// --- The reactor ---------------------------------------------------------------
+
+/**
+ * The fan-out: reacts to every durable ship-log event. The event's actor is
+ * auto-subscribed to auto-watch topics (acting = caring), then every OTHER
+ * watcher of the topic gets an inbox entry. Runs on systemDb in the live
+ * wiring — it writes inbox rows across users, which RLS rightly forbids any
+ * single actor from doing.
+ *
+ * `onNotified` is the delivery hook beyond the inbox itself: the live wiring
+ * uses it to wake agents. Injected so this stays testable without a runtime.
+ */
+export function createNotificationsReactor(deps: {
+  db: Database
+  onNotified?: (notification: NotificationRow) => void
+}): ShipLogReactor {
+  const { db } = deps
+
+  async function handleBusNote(note: NotifyPayload): Promise<void> {
+    // Transient UI events never notify, and our own announcements must not
+    // fan out again (that way lies an infinite loop).
+    if (note.ephemeral) return
+    if (note.type === NOTIFICATION_CREATED) return
+
+    const event = await getEventById(db, note.id)
+    if (!event?.topic) return
+    // Only public events fan out. A members-scoped event (a chat message, a
+    // session delta) must not reach someone through a watch row they planted
+    // on a topic they can't see.
+    if (event.audience && event.audience !== 'public') return
+
+    if (event.actorId && isAutoWatchTopic(event.topic)) {
+      await watchTopic(db, event.actorId, event.topic)
+    }
+
+    for (const watcher of await listWatchers(db, event.topic)) {
+      if (watcher === event.actorId) continue // your own action isn't news
+      const row = await addNotification(db, {
+        userId: watcher,
+        type: event.type,
+        topic: event.topic,
+        payload: event.payload,
+        actorId: event.actorId,
+      })
+      try {
+        deps.onNotified?.(row)
+      } catch (err) {
+        // Delivery beyond the inbox is best-effort; the row is already durable.
+        console.error(`notification delivery failed: ${errorMessage(err)}`)
+      }
+    }
+  }
+
+  return {
+    handleBusNote,
+    // Notifications are best-effort amplification of live events: anything a
+    // restart missed is still visible on the thing itself (the issue, the
+    // board), so there's no catch-up scan to run.
+    reconcile: () => Promise.resolve(),
+  }
+}
