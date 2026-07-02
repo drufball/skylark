@@ -17,7 +17,8 @@ import {
   setUserProfile,
   SEED_CREW,
   UNKNOWN_HANDLE,
-  updateUser,
+  deleteUser,
+  updateAgentUser,
   validateHandle,
 } from './service'
 
@@ -67,21 +68,47 @@ describe('users service', () => {
       displayName: 'Scout',
       type: 'agent',
     })
-    const renamed = await updateUser(db, 'u1', { displayName: 'Scout Prime' })
+    const renamed = await updateAgentUser(db, 'u1', {
+      displayName: 'Scout Prime',
+    })
     expect(renamed).toMatchObject({
       handle: 'scout',
       displayName: 'Scout Prime',
       profileId: null,
     })
-    const rewired = await updateUser(db, 'u1', { profileId: 'p1' })
+    const rewired = await updateAgentUser(db, 'u1', { profileId: 'p1' })
     expect(rewired).toMatchObject({
       displayName: 'Scout Prime',
       profileId: 'p1',
     })
   })
 
-  it('updateUser returns undefined for an unknown user', async () => {
-    expect(await updateUser(db, 'nope', { displayName: 'X' })).toBeUndefined()
+  it('updateAgentUser refuses humans and unknown users alike (not-found)', async () => {
+    await createUser(db, {
+      id: 'h1',
+      handle: 'dru',
+      displayName: 'Dru',
+      type: 'human',
+    })
+    // A human row can never be renamed or handed a profile through this path.
+    expect(
+      await updateAgentUser(db, 'h1', { displayName: 'Hacked' }),
+    ).toBeUndefined()
+    expect((await getUserById(db, 'h1'))?.displayName).toBe('Dru')
+    expect(
+      await updateAgentUser(db, 'nope', { displayName: 'X' }),
+    ).toBeUndefined()
+  })
+
+  it('deleteUser removes the row (the compensating delete)', async () => {
+    await createUser(db, {
+      id: 'u1',
+      handle: 'scout',
+      displayName: 'Scout',
+      type: 'agent',
+    })
+    await deleteUser(db, 'u1')
+    expect(await getUserById(db, 'u1')).toBeUndefined()
   })
 
   it('validateHandle accepts mentionable handles and rejects the rest', () => {

@@ -256,6 +256,10 @@ function NewAgent({
           type="button"
           variant="ghost"
           onClick={() => {
+            // A cancelled draft is discarded — reopening starts blank.
+            setHandle('')
+            setDisplayName('')
+            setProfileId('')
             setOpen(false)
           }}
         >

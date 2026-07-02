@@ -101,6 +101,17 @@ describe('AgentCrew', () => {
     })
   })
 
+  it('cancel discards the draft — reopening starts blank', () => {
+    renderView()
+    fireEvent.click(screen.getByText(/new agent/i))
+    fireEvent.change(screen.getByPlaceholderText(/handle/i), {
+      target: { value: 'scout' },
+    })
+    fireEvent.click(screen.getByText('Cancel'))
+    fireEvent.click(screen.getByText(/new agent/i))
+    expect(screen.getByPlaceholderText(/handle/i)).toHaveProperty('value', '')
+  })
+
   it('opens an agent memory from the card', () => {
     const { onOpenMemory } = renderView()
     fireEvent.click(screen.getByText('Memory'))

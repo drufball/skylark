@@ -19,7 +19,7 @@ import {
 import { agentMemoryIndexPath } from '@hull/agent/memory-paths'
 import { listLocalModels } from '@hull/local-model/server'
 import { modelPickerOptions } from '@hull/local-model/ollama-client'
-import { createAgentUser, listCrew, updateCrewMember } from '@hull/users/server'
+import { createAgentUser, listCrew, updateAgentUser } from '@hull/users/server'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
 import { AgentCrew, type CrewMemberSummary } from '@rigging/views/agent-crew'
 import {
@@ -148,7 +148,7 @@ function AgentsRoute() {
   }) {
     setSaving(true)
     try {
-      await updateCrewMember({ data: input })
+      await updateAgentUser({ data: input })
       await router.invalidate()
     } finally {
       setSaving(false)
