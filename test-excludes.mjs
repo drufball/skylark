@@ -41,5 +41,6 @@ export const SHARED_EXCLUDES = [
  */
 export const STRYKER_ONLY_EXCLUDES = [
   'src/hull/issues/orchestrator-live.ts',
+  'src/hull/files/live.ts',
   'src/hull/agent/extensions/build-gates/index.ts',
 ]
