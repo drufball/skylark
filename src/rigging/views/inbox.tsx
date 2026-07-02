@@ -1,5 +1,6 @@
 import { BellOff, Check, CircleSmall } from 'lucide-react'
 
+import type { InboxItem } from '@hull/notifications/server'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
@@ -8,19 +9,11 @@ import { ScrollArea } from '@rigging/components/ui/scroll-area'
 // entries lead with a dot; opening the surface doesn't auto-read — the crew
 // clears it deliberately with "Mark all read". Presentational and
 // routing-agnostic: the route wires the notifications doors and navigation.
-
-/** One entry as the inbox shows it (shaped by the notifications door). */
-export interface InboxEntry {
-  id: string
-  label: string
-  /** The issue this concerns, when there is one — the click target. */
-  issueId: string | null
-  at: string
-  read: boolean
-}
+// The entry shape is the door's own InboxItem — one contract, imported down,
+// so the two sides can't drift.
 
 export interface InboxViewProps {
-  entries: InboxEntry[]
+  entries: InboxItem[]
   unread: number
   busy: boolean
   onMarkAllRead: () => void
@@ -83,7 +76,7 @@ function EntryRow({
   entry,
   onOpenIssue,
 }: {
-  entry: InboxEntry
+  entry: InboxItem
   onOpenIssue: (issueId: string) => void
 }) {
   const body = (

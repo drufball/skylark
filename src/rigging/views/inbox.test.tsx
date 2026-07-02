@@ -2,11 +2,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { InboxView, type InboxEntry, type InboxViewProps } from './inbox'
+import type { InboxItem } from '@hull/notifications/server'
+import { InboxView, type InboxViewProps } from './inbox'
 
 afterEach(cleanup)
 
-function entry(over: Partial<InboxEntry> = {}): InboxEntry {
+function entry(over: Partial<InboxItem> = {}): InboxItem {
   return {
     id: 'n1',
     label: '@tilde opened "Fix the mast"',

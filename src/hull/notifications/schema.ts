@@ -5,6 +5,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 import { users } from '@hull/users/schema'
@@ -25,6 +26,12 @@ export const notifications = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    /**
+     * The ship-log event this row came from. The (userId, eventId) unique key
+     * makes fan-out idempotent: the same event delivered twice (a bus replay,
+     * two processes with reactors) lands one row per watcher, never two.
+     */
+    eventId: text('event_id').notNull(),
     /** The ship-log event type that caused it (e.g. "issue.commented"). */
     type: text('type').notNull(),
     /** The watched topic the event rode (e.g. "issue:abc1"). */
@@ -39,7 +46,10 @@ export const notifications = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index('notifications_user_idx').on(table.userId, table.id)],
+  (table) => [
+    index('notifications_user_idx').on(table.userId, table.id),
+    uniqueIndex('notifications_user_event_key').on(table.userId, table.eventId),
+  ],
 )
 
 export type NotificationRow = typeof notifications.$inferSelect

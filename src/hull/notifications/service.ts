@@ -7,8 +7,19 @@ import {
   type NotifyPayload,
   type ShipLogReactor,
 } from '@hull/events/bus'
-import { getEventById, MEMBERS_AUDIENCE } from '@hull/events/service'
-import { ISSUE_TOPIC_PREFIX } from '@hull/issues/topic'
+import {
+  getEventById,
+  listEventsSince,
+  MEMBERS_AUDIENCE,
+  PUBLIC_AUDIENCE,
+  REPLAY_PAGE_SIZE,
+} from '@hull/events/service'
+import {
+  ISSUE_COMMENTED,
+  ISSUE_OPENED,
+  ISSUE_STATUS_CHANGED,
+} from '@hull/issues/service'
+import { ISSUE_TOPIC_PATTERN, ISSUE_TOPIC_PREFIX } from '@hull/issues/topic'
 import { errorMessage } from '@hull/lib/errors'
 
 import { notifications, watches, type NotificationRow } from './schema'
@@ -61,13 +72,13 @@ export function describeNotification(input: {
     to?: unknown
   }
   switch (type) {
-    case 'issue.opened':
+    case ISSUE_OPENED:
       return typeof payload.title === 'string'
         ? `@${actorHandle} opened "${payload.title}"`
         : `@${actorHandle} opened an issue`
-    case 'issue.commented':
+    case ISSUE_COMMENTED:
       return `@${actorHandle} commented`
-    case 'issue.status_changed':
+    case ISSUE_STATUS_CHANGED:
       return typeof payload.from === 'string' && typeof payload.to === 'string'
         ? `@${actorHandle} moved it: ${payload.from} → ${payload.to}`
         : `@${actorHandle} changed the status`
@@ -124,23 +135,32 @@ export async function listWatchers(
 
 /**
  * Put one entry in a user's inbox and announce it on their private notify
- * topic. The announcement carries the row's essentials so a live subscriber
- * (the bell) can update without a read-back.
+ * topic. Idempotent per (user, source event): a duplicate delivery — a bus
+ * replay, a second process's reactor — is a no-op returning null: no second
+ * row, no second bell. The announcement carries the row's essentials so a
+ * live subscriber can update without a read-back.
  */
 export async function addNotification(
   db: Database,
   input: {
     userId: string
+    eventId: string
     type: string
     topic: string
     payload: unknown
     actorId: string | null
   },
-): Promise<NotificationRow> {
-  const [row] = await db
-    .insert(notifications)
-    .values({ id: uuidv7(), ...input })
-    .returning()
+): Promise<NotificationRow | null> {
+  // .at(0) rather than destructuring: on conflict the returned array is EMPTY,
+  // and .at() carries the `| undefined` that fact needs in its type.
+  const row = (
+    await db
+      .insert(notifications)
+      .values({ id: uuidv7(), ...input })
+      .onConflictDoNothing()
+      .returning()
+  ).at(0)
+  if (!row) return null
   await emitEvent(db, {
     type: NOTIFICATION_CREATED,
     source: 'notifications',
@@ -221,7 +241,7 @@ export function createNotificationsReactor(deps: {
     // Only public events fan out. A members-scoped event (a chat message, a
     // session delta) must not reach someone through a watch row they planted
     // on a topic they can't see.
-    if (event.audience && event.audience !== 'public') return
+    if (event.audience && event.audience !== PUBLIC_AUDIENCE) return
 
     if (event.actorId && isAutoWatchTopic(event.topic)) {
       await watchTopic(db, event.actorId, event.topic)
@@ -231,11 +251,13 @@ export function createNotificationsReactor(deps: {
       if (watcher === event.actorId) continue // your own action isn't news
       const row = await addNotification(db, {
         userId: watcher,
+        eventId: event.id,
         type: event.type,
         topic: event.topic,
         payload: event.payload,
         actorId: event.actorId,
       })
+      if (!row) continue // already delivered (a replay) — nothing new to say
       try {
         deps.onNotified?.(row)
       } catch (err) {
@@ -245,11 +267,32 @@ export function createNotificationsReactor(deps: {
     }
   }
 
-  return {
-    handleBusNote,
-    // Notifications are best-effort amplification of live events: anything a
-    // restart missed is still visible on the thing itself (the issue, the
-    // board), so there's no catch-up scan to run.
-    reconcile: () => Promise.resolve(),
+  /**
+   * Startup recovery for WATCHES only: replay the durable issue events and
+   * re-apply the acting-auto-watches, so an issue filed while no reactor was
+   * subscribed (a fresh process, a CLI hit before any door) still ends up
+   * watched by its actors — a watch is durable intent and must not be lost.
+   * Notification fan-out is deliberately NOT replayed: old news would flood
+   * inboxes for watches added later, and anything a restart missed is still
+   * visible on the issue itself.
+   */
+  async function reconcile(): Promise<void> {
+    let sinceId: string | undefined
+    for (;;) {
+      const page = await listEventsSince(db, {
+        topicPatterns: [ISSUE_TOPIC_PATTERN],
+        audience: PUBLIC_AUDIENCE,
+        sinceId,
+      })
+      for (const event of page) {
+        sinceId = event.id
+        if (event.actorId && event.topic && isAutoWatchTopic(event.topic)) {
+          await watchTopic(db, event.actorId, event.topic)
+        }
+      }
+      if (page.length < REPLAY_PAGE_SIZE) break
+    }
   }
+
+  return { handleBusNote, reconcile }
 }

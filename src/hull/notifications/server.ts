@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { issueIdFromTopic, ISSUE_TOPIC_PREFIX } from '@hull/issues/topic'
+import { issueIdFromTopic } from '@hull/issues/topic'
 import { withCurrentActor } from '@hull/users/actor'
 import { handleOf } from '@hull/users/service'
 
@@ -25,9 +25,10 @@ import {
  * A topic the crew may watch through the web door: issues only for now — they
  * are public, so a watch can't be used to siphon events the watcher couldn't
  * see. (The reactor independently refuses to fan out non-public events.)
+ * Parsed with the issues topic grammar, so a bare "issue:" doesn't pass.
  */
 function parseWatchableTopic(input: unknown): string {
-  if (typeof input !== 'string' || !input.startsWith(ISSUE_TOPIC_PREFIX)) {
+  if (typeof input !== 'string' || !issueIdFromTopic(input)) {
     throw new Error('Only issue topics can be watched')
   }
   return input

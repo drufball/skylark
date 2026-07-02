@@ -118,6 +118,7 @@ describe('notifications service', () => {
 
   it('an inbox entry is stored and announced on the owner private topic', async () => {
     await addNotification(db, {
+      eventId: uuidv7(),
       userId: alice,
       type: 'issue.commented',
       topic: 'issue:aa11',
@@ -144,6 +145,7 @@ describe('notifications service', () => {
   it('unread tracking: listUnread oldest-first, markAllRead clears', async () => {
     for (const n of ['one', 'two']) {
       await addNotification(db, {
+        eventId: uuidv7(),
         userId: alice,
         type: 'issue.commented',
         topic: 'issue:aa11',
@@ -245,6 +247,7 @@ describe('notifications service', () => {
     // deliver one real notification, then feed ITS announcement back through.
     await watchTopic(db, bob, notifyTopic(alice)) // even a hostile watch…
     await addNotification(db, {
+      eventId: uuidv7(),
       userId: alice,
       type: 'issue.commented',
       topic: 'issue:aa11',
@@ -261,6 +264,52 @@ describe('notifications service', () => {
       type: NOTIFICATION_CREATED,
     })
     expect(await unreadCount(db, bob)).toBe(0)
+  })
+
+  it('delivers the same event exactly once: a bus replay adds no row and rings no bell', async () => {
+    const delivered: string[] = []
+    const reactor = createNotificationsReactor({
+      db,
+      onNotified: (n) => delivered.push(n.id),
+    })
+    const issue = await createIssue(db, { title: 'x', authorId: bob })
+    await watchTopic(db, alice, issueTopic(issue.id))
+    await addComment(db, { issueId: issue.id, authorId: bob, body: 'hi' })
+    const events = await listEventsSince(db, {
+      topicPatterns: [issueTopic(issue.id)],
+      audience: 'public',
+    })
+    const comment = defined(events.find((e) => e.type === 'issue.commented'))
+
+    // The same durable event arrives twice — a replay, or a second process.
+    await reactor.handleBusNote({ id: comment.id, type: comment.type })
+    await reactor.handleBusNote({ id: comment.id, type: comment.type })
+
+    expect(await unreadCount(db, alice)).toBe(1)
+    expect(delivered).toHaveLength(1)
+    // And the bell rang once: one notification.created on alice's topic.
+    const rings = await listEventsSince(db, {
+      topicPatterns: [notifyTopic(alice)],
+      audience: 'members',
+    })
+    expect(rings.filter((e) => e.type === NOTIFICATION_CREATED)).toHaveLength(1)
+  })
+
+  it('reconcile recovers auto-watches from the durable log without replaying old news', async () => {
+    // An issue is filed while NO reactor is subscribed (a fresh process, a CLI
+    // hit before any door) — the durable intent (the creator watches) must
+    // survive; the missed fan-out stays missed by design.
+    const issue = await createIssue(db, { title: 'x', authorId: bob })
+    await addComment(db, { issueId: issue.id, authorId: alice, body: 'hi' })
+
+    const reactor = createNotificationsReactor({ db })
+    await reactor.reconcile()
+
+    expect(await isWatching(db, bob, issueTopic(issue.id))).toBe(true)
+    expect(await isWatching(db, alice, issueTopic(issue.id))).toBe(true)
+    // No backfilled notifications — old news would flood late watchers.
+    expect(await unreadCount(db, bob)).toBe(0)
+    expect(await unreadCount(db, alice)).toBe(0)
   })
 
   it('never fans out a members-scoped event, even to a planted watch', async () => {
