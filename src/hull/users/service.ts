@@ -68,6 +68,43 @@ export async function handleOf(
   return user?.handle ?? UNKNOWN_HANDLE
 }
 
+/**
+ * Validate a new crew handle. Handles are @mentioned in chat and parsed with
+ * `\w+` (lowercased) — see chat's parseMentions — so only lowercase word
+ * characters survive the round trip. Returns the handle unchanged when valid.
+ */
+export function validateHandle(handle: string): string {
+  if (!/^[a-z0-9_]+$/.test(handle)) {
+    throw new Error(
+      `Invalid handle "${handle}" — lowercase letters, digits, and _ only`,
+    )
+  }
+  return handle
+}
+
+/**
+ * Update a named AGENT's mutable fields; undefined leaves a field alone.
+ * Scoped to agents at the query so a human row can never be renamed or handed
+ * an agent profile through this path — a human target reads as not-found.
+ */
+export async function updateAgentUser(
+  db: Database,
+  userId: string,
+  patch: { displayName?: string; profileId?: string },
+): Promise<UserRow | undefined> {
+  const [row] = await db
+    .update(users)
+    .set(patch)
+    .where(and(eq(users.id, userId), eq(users.type, 'agent')))
+    .returning()
+  return row
+}
+
+/** Remove a user row — the compensating delete for a failed agent creation. */
+export async function deleteUser(db: Database, userId: string): Promise<void> {
+  await db.delete(users).where(eq(users.id, userId))
+}
+
 /** Point one crew member at an agent profile (by id). Writes only the users table. */
 export async function setUserProfile(
   db: Database,

@@ -16,6 +16,7 @@ import { errorMessage } from '@hull/lib/errors'
 
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
+import { withAgentMemory, type AgentMemoryLoader } from './memory'
 import { chatModelRef, defaultModelRef, resolveModel } from './models'
 import { getProfileById, resolveProfileExtensionPaths } from './profiles'
 import { resolveSessionOptions, type ResolvedProfile } from './session-config'
@@ -241,6 +242,11 @@ export function createAgentRuntime(deps: {
   emit?: AgentEmitter
   /** How background jobs spawn processes. Defaults to a real shell child. */
   spawn?: SpawnFn
+  /**
+   * Loads a named agent's persistent memory at session boot (see memory.ts).
+   * Omitted → sessions boot on their profile alone.
+   */
+  memory?: AgentMemoryLoader
 }) {
   const { db, factory } = deps
 
@@ -363,7 +369,13 @@ export function createAgentRuntime(deps: {
     const row = await getSession(db, sessionId)
     if (!row) throw new Error(`No such session: ${sessionId}`)
 
-    const profile = await resolveProfile(row.profileId)
+    let profile = await resolveProfile(row.profileId)
+    // A session acting as a named agent boots with that agent's persistent
+    // memory folded into its system prompt (identity, index, how to update).
+    if (row.agentUserId && deps.memory) {
+      const memory = await deps.memory(row.agentUserId)
+      if (memory) profile = withAgentMemory(profile, memory)
+    }
     const cwd = row.cwd ?? process.cwd()
     const session = await factory(profile, cwd, row.model, [
       createBackgroundTool(sessionId, cwd, jobs),

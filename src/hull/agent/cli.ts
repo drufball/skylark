@@ -11,6 +11,7 @@ import {
   registerExtension,
   seedAndWireProfiles,
 } from './profiles'
+import { liveAgentMemoryLoader } from './fake-session'
 import { toolExecutionDetail, truncate } from './progress'
 import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
 import {
@@ -91,7 +92,11 @@ async function cmdNew(args: string[]): Promise<void> {
   // for this one session — so it runs on systemDb, not wrapped in withCliActor
   // (a turn must not be a single long transaction; see runAsActor). Same posture
   // as the server's runtime.
-  const runtime = createAgentRuntime({ db: systemDb, factory: createPiSession })
+  const runtime = createAgentRuntime({
+    db: systemDb,
+    factory: createPiSession,
+    memory: liveAgentMemoryLoader(systemDb),
+  })
   await runtime.runTurn(id, message, renderEvent)
   runtime.disposeAll()
 }
@@ -108,7 +113,11 @@ async function cmdSend(args: string[]): Promise<void> {
   const session = await withCliActor((tx) => getSession(tx, id))
   if (!session) throw new Error(`No such session: ${id}`)
 
-  const runtime = createAgentRuntime({ db: systemDb, factory: createPiSession })
+  const runtime = createAgentRuntime({
+    db: systemDb,
+    factory: createPiSession,
+    memory: liveAgentMemoryLoader(systemDb),
+  })
   await runtime.runTurn(id, message, renderEvent)
   runtime.disposeAll()
 }
@@ -146,7 +155,11 @@ async function cmdCancel(args: string[]): Promise<void> {
   // A fresh CLI process doesn't host the live turn (the web server does), so
   // this resets the stored status to idle. When the hosting process runs this
   // it also aborts the in-flight turn.
-  const runtime = createAgentRuntime({ db: systemDb, factory: createPiSession })
+  const runtime = createAgentRuntime({
+    db: systemDb,
+    factory: createPiSession,
+    memory: liveAgentMemoryLoader(systemDb),
+  })
   await runtime.cancel(id)
   process.stdout.write(`Cancelled ${id}.\n`)
 }
