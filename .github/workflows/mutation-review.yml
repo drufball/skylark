@@ -93,10 +93,12 @@ jobs:
       - name: Launch mutation review in cloud
         # The skill lives in this repo's plugin, not the workspace registry, so
         # reference it as a local path — a bare name 404s in the cloud launcher.
+        # No --workspace flag: the account spans multiple orgs and a named
+        # workspace resolves against the default org, which may not contain it.
+        # Omitting it defaults to whatever project is configured for the repo.
         run: |
           tessl launch skill file:./plugins/skylark-builder/skills/mutation-review \
             --cloud \
             --repo ${{ github.repository }} \
-            --workspace skylark \
             --agent tessl-agent \
             --env-file .env.cloud
