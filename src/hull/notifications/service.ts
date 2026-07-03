@@ -251,6 +251,25 @@ export async function markRead(
     )
 }
 
+/**
+ * Fan one delivered notification out to every registered delivery hook (the
+ * live wiring's "beyond the inbox row" channels — e.g. the agent waker), each
+ * hook isolated: one broken delivery channel must not silence the others.
+ * Failures are logged, never thrown — the inbox row is already durable.
+ */
+export function deliverToHooks(
+  hooks: readonly ((notification: NotificationRow) => void)[],
+  notification: NotificationRow,
+): void {
+  for (const hook of hooks) {
+    try {
+      hook(notification)
+    } catch (err) {
+      console.error(`notification hook failed: ${errorMessage(err)}`)
+    }
+  }
+}
+
 // --- The reactor ---------------------------------------------------------------
 
 /**

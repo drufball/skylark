@@ -1,9 +1,24 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { freshDb } from '@hull/db/test-db'
 
-import { emitEvent, InProcessBus, type NotifyPayload } from './bus'
+import {
+  emitEvent,
+  InProcessBus,
+  shipLogBus,
+  subscribeToShipLog,
+  type NotifyPayload,
+  type ShipLogReactor,
+} from './bus'
 import { listEventsSince } from './service'
 
 const note = (over: Partial<NotifyPayload> = {}): NotifyPayload => ({
@@ -62,6 +77,119 @@ describe('InProcessBus', () => {
       bus.publish(note({ id: 'a' }))
     }).not.toThrow()
     expect(seen).toEqual(['a'])
+  })
+})
+
+describe('subscribeToShipLog', () => {
+  /** Wait for the microtask queue so a handler's rejection settles. */
+  const settle = () => new Promise((resolve) => setImmediate(resolve))
+
+  const reactor = (over: Partial<ShipLogReactor> = {}): ShipLogReactor => ({
+    handleBusNote: () => Promise.resolve(),
+    reconcile: () => Promise.resolve(),
+    ...over,
+  })
+
+  let errors: MockInstance
+  const cleanups: (() => void)[] = []
+
+  beforeEach(() => {
+    errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    for (const off of cleanups.splice(0)) off()
+    errors.mockRestore()
+  })
+
+  it('arms the listener and drives the reactor with published notes', async () => {
+    const ensureListener = vi.fn()
+    const seen: string[] = []
+    cleanups.push(
+      subscribeToShipLog(
+        reactor({
+          handleBusNote: (n) => {
+            seen.push(n.id)
+            return Promise.resolve()
+          },
+        }),
+        'test',
+        ensureListener,
+      ),
+    )
+
+    shipLogBus.publish(note({ id: 'a' }))
+    await settle()
+    expect(seen).toEqual(['a'])
+    expect(ensureListener).toHaveBeenCalledTimes(1)
+  })
+
+  it('isolates a REJECTING handleBusNote: other subscribers still get the note, the failure is logged', async () => {
+    cleanups.push(
+      subscribeToShipLog(
+        reactor({
+          handleBusNote: () => Promise.reject(new Error('reactor boom')),
+        }),
+        'issues orchestrator',
+        vi.fn(),
+      ),
+    )
+    const seen: string[] = []
+    cleanups.push(shipLogBus.subscribe((n) => seen.push(n.id)))
+
+    // Vitest fails a test on an unhandled rejection — surviving `settle` IS
+    // the "no unhandled rejection" assertion.
+    shipLogBus.publish(note({ id: 'a' }))
+    await settle()
+    expect(seen).toEqual(['a'])
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining('issues orchestrator bus handler failed'),
+    )
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('reactor boom'))
+  })
+
+  it('isolates a SYNCHRONOUSLY throwing handleBusNote the same way', async () => {
+    cleanups.push(
+      subscribeToShipLog(
+        reactor({
+          handleBusNote: () => {
+            throw new Error('sync boom')
+          },
+        }),
+        'notifications',
+        vi.fn(),
+      ),
+    )
+    const seen: string[] = []
+    cleanups.push(shipLogBus.subscribe((n) => seen.push(n.id)))
+
+    shipLogBus.publish(note({ id: 'a' }))
+    await settle()
+    expect(seen).toEqual(['a'])
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining('notifications bus handler failed'),
+    )
+  })
+
+  it('logs a rejecting reconcile instead of throwing', async () => {
+    expect(() => {
+      cleanups.push(
+        subscribeToShipLog(
+          reactor({
+            reconcile: () => Promise.reject(new Error('reconcile boom')),
+          }),
+          'issues orchestrator',
+          vi.fn(),
+        ),
+      )
+    }).not.toThrow()
+
+    await settle()
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining('issues orchestrator reconcile failed'),
+    )
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining('reconcile boom'),
+    )
   })
 })
 
