@@ -9,7 +9,11 @@
 // PR review in .github/workflows/mutation-review.yml). Reports land in reports/
 // and are gitignored.
 
-import { SHARED_EXCLUDES, STRYKER_ONLY_EXCLUDES } from './test-excludes.mjs'
+import {
+  MUTATE_SOURCES,
+  SHARED_EXCLUDES,
+  STRYKER_ONLY_EXCLUDES,
+} from './test-excludes.mjs'
 
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 export default {
@@ -28,8 +32,7 @@ export default {
   // ignore`d files still have their ignored regions mutated here, since Stryker
   // can't read the pragma.
   mutate: [
-    'src/**/*.ts',
-    'src/**/*.tsx',
+    ...MUTATE_SOURCES,
     ...SHARED_EXCLUDES.map((p) => `!${p}`),
     ...STRYKER_ONLY_EXCLUDES.map((p) => `!${p}`),
   ],

@@ -60,8 +60,7 @@ export const Route = createFileRoute('/api/stream')({
           // Impure ReadableStream lifecycle: controller, encoder, heartbeat
           // timer, abort + dead-socket teardown. The subscribe/replay/flush
           // coordination it drives is runShipLogStream, unit-tested in
-          // replay-stream.test.ts. (No pragma needed: routes/** sits outside
-          // both quality gates — see test-excludes.mjs.)
+          // replay-stream.test.ts.
           async start(controller) {
             let open = true
             let heartbeat: ReturnType<typeof setInterval> | undefined

@@ -6,9 +6,13 @@
 // scripts/mutate-diff.
 import picomatch from 'picomatch'
 
-import { SHARED_EXCLUDES, STRYKER_ONLY_EXCLUDES } from '../test-excludes.mjs'
+import {
+  MUTATE_SOURCES,
+  SHARED_EXCLUDES,
+  STRYKER_ONLY_EXCLUDES,
+} from '../test-excludes.mjs'
 
-const isSource = picomatch(['src/**/*.ts', 'src/**/*.tsx'])
+const isSource = picomatch(MUTATE_SOURCES)
 const isExcluded = picomatch([...SHARED_EXCLUDES, ...STRYKER_ONLY_EXCLUDES])
 
 let input = ''

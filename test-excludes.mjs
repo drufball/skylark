@@ -7,6 +7,9 @@
 // import a `.ts`). A `.mjs` is the one format both loaders accept; the sibling
 // `test-excludes.d.mts` gives tsc the types when `vitest.config.ts` imports it.
 
+/** What the mutation gates consider source: every deck's TS/TSX. */
+export const MUTATE_SOURCES = ['src/**/*.ts', 'src/**/*.tsx']
+
 /**
  * Code excluded from BOTH gates: it isn't ours to test, or carries no logic —
  * schemas (declarative tables), doors (server.ts/cli.ts), the DB client + test
@@ -45,10 +48,9 @@ export const SHARED_EXCLUDES = [
  *    arguments. files/git.ts is covered by tests against a throwaway repo,
  *    but Stryker's sandbox is a directory copy, not a process jail: a mutant
  *    that breaks repoRoot resolution makes `git` discover the ENCLOSING repo
- *    — this actual repository — and commit/merge/branch-delete against it
- *    (observed: a sweep committed to the real files/staging branch). git.ts
- *    also fails closed at runtime (assertOwnRepo), but a mutant can delete
- *    that guard too, so the file stays out of the mutation set.
+ *    — this actual repository — and commit/merge/branch-delete against it.
+ *    git.ts also fails closed at runtime (assertOwnRepo), but a mutant can
+ *    delete that guard too, so the file stays out of the mutation set.
  */
 export const STRYKER_ONLY_EXCLUDES = [
   'src/hull/issues/orchestrator-live.ts',

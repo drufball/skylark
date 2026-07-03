@@ -141,6 +141,7 @@ describe('createIssue', () => {
 
     const fetched = defined(await getIssue(db, issue.id))
     expect(fetched.id).toBe(issue.id)
+    expect(fetched.body).toBe('It should sparkle.') // persisted, not just echoed
   })
 
   it('defaults body to empty', async () => {
