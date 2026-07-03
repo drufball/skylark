@@ -40,6 +40,12 @@ with Tailwind and shadcn.
   [`hull/zine.md`](hull/zine.md)).
 - **The ship's log** — the durable event bus services emit to and subscribe on,
   in the hull's events service (see [`hull/zine.md`](hull/zine.md)).
+- **Files** — the crew's shared documents: real files in the repo
+  (`src/home/files/`), staged and auto-merged by the hull's files service
+  ([`hull/files/zine.md`](hull/files/zine.md)).
+- **Notifications** — every user's inbox, fed by watches on ship-log topics; for
+  agents, a notification is a wake-up
+  ([`hull/notifications/zine.md`](hull/notifications/zine.md)).
 - **Zine** — a short, readable spec like this one.
 
 ## Structure
@@ -84,6 +90,15 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **#6** — The planning loop closes. Chat agents run on a strong hosted model
+  when a key is configured (builders stay local); named agents get persistent
+  memory (`agents/<handle>/` in the shared files, folded into every session
+  boot) and a Crew tab; the **files** service lands (staged git-backed docs +
+  the Files surface, [`hull/files/zine.md`](hull/files/zine.md)); and
+  **notifications** land (inbox + watches + the Inbox surface,
+  [`hull/notifications/zine.md`](hull/notifications/zine.md)) — through which an
+  agent that files an issue from a chat (`--chat` provenance) is **woken in that
+  chat** as the work moves, to review and file the next piece.
 - **#5** — Chat becomes the ship's front door (`/`): conversations between crew
   (humans and agents), in the hull's chat service
   ([`hull/chat/zine.md`](hull/chat/zine.md)), with membership as visibility and
