@@ -42,6 +42,9 @@ describe('CHAT_MODEL boot wiring', () => {
   it('boots on the local default when no provider is configured', async () => {
     vi.stubEnv('SKYLARK_CHAT_MODEL', '')
     vi.stubEnv('SKYLARK_DEFAULT_MODEL', '')
+    // providerConfigured also honors a key in the process env — blank it so
+    // this stays "no provider" even on a machine with ANTHROPIC_API_KEY set.
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
     const model = await chatModelWith(() => ({ configured: false }))
     expect(model).toBe(FALLBACK_DEFAULT_MODEL)
   })
@@ -49,6 +52,7 @@ describe('CHAT_MODEL boot wiring', () => {
   it('degrades to the local default when the auth store throws (never crashes boot)', async () => {
     vi.stubEnv('SKYLARK_CHAT_MODEL', '')
     vi.stubEnv('SKYLARK_DEFAULT_MODEL', '')
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
     const model = await chatModelWith(() => {
       throw new Error('corrupt credential store')
     })
