@@ -1,6 +1,7 @@
 import { BellOff, Check, CircleSmall } from 'lucide-react'
 
 import type { InboxItem } from '@hull/notifications/server'
+import { formatLocalTime } from '@rigging/lib/format-local-time'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
@@ -97,7 +98,7 @@ function EntryRow({
         {entry.label}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground">
-        {entry.at.slice(0, 16).replace('T', ' ')}
+        {formatLocalTime(entry.at)}
       </span>
     </>
   )
