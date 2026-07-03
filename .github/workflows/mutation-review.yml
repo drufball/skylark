@@ -93,13 +93,16 @@ jobs:
       - name: Launch mutation review in cloud
         # The skill lives in this repo's plugin, not the workspace registry, so
         # reference it as a local path — a bare name 404s in the cloud launcher.
-        # --workspace takes the workspace ID, not the name: under API-key auth
-        # (TESSL_TOKEN) the by-name lookup 404s ("Workspace not found") even
-        # though the key is scoped to this very workspace.
+        # No --workspace flag: it defaults to the linked project's workspace,
+        # which is correct here. KNOWN BLOCKER (2026-07-02): under API-key auth
+        # (TESSL_TOKEN) the server's POST /experimental/launch-runs rejects
+        # every variant (no flag / name / ID) with "404 Workspace not found",
+        # even though the key is scoped to this workspace and the env-file
+        # upload to the same workspace succeeds. User-auth launches work. Needs
+        # a Tessl backend fix; the workflow stays manually disabled until then.
         run: |
           tessl launch skill file:./plugins/skylark-builder/skills/mutation-review \
             --cloud \
             --repo ${{ github.repository }} \
-            --workspace 019f056c-79cc-7036-9c89-984c117a41ff \
             --agent tessl-agent \
             --env-file .env.cloud
