@@ -6,6 +6,7 @@ import { currentActor } from '@hull/users/actor'
 import { handleOf } from '@hull/users/service'
 
 import { ensureOrchestrator } from './orchestrator-live'
+import { listPlaybooks, upsertPlaybook } from './playbooks'
 import {
   addComment,
   assembleThread,
@@ -109,15 +110,73 @@ export const getThread = createServerFn({ method: 'GET' })
 
 /** Open a new issue as the current actor. Returns the new id. */
 export const openIssue = createServerFn({ method: 'POST' })
-  .validator((input: { title: string; body?: string }) => input)
+  .validator(
+    (input: { title: string; body?: string; playbookId?: string }) => input,
+  )
   .handler(async ({ data }) => {
     const actor = await currentActor()
     const issue = await createIssue(db, {
       title: data.title,
       body: data.body,
+      playbookId: data.playbookId,
       authorId: actor.id,
     })
     return { id: issue.id, nano: issue.nano }
+  })
+
+/** A playbook as the views render it: roster and entrypoint as handles too. */
+export interface PlaybookView {
+  id: string
+  name: string
+  description: string
+  memberIds: string[]
+  memberHandles: string[]
+  entrypointId: string
+  entrypointHandle: string
+}
+
+/** Every playbook, with member/entrypoint handles resolved for display. */
+export const listPlaybooksView = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<PlaybookView[]> => {
+    bootOrchestrator() // boot seeds the standard playbooks
+    return Promise.all(
+      (await listPlaybooks(db)).map(async (p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        memberIds: p.memberIds,
+        memberHandles: await Promise.all(
+          p.memberIds.map((id) => handleOf(db, id)),
+        ),
+        entrypointId: p.entrypointId,
+        entrypointHandle: await handleOf(db, p.entrypointId),
+      })),
+    )
+  },
+)
+
+/**
+ * Create or update a playbook (matched by name — ids stay stable so issues
+ * keep pointing at an edited playbook). Validation (roster of real agents,
+ * entrypoint on the roster) lives in the service and its errors surface here.
+ */
+export const savePlaybook = createServerFn({ method: 'POST' })
+  .validator(
+    (input: {
+      name: string
+      description?: string
+      memberIds: string[]
+      entrypointId: string
+    }) => input,
+  )
+  .handler(async ({ data }) => {
+    const saved = await upsertPlaybook(db, {
+      name: data.name.trim(),
+      description: data.description,
+      memberIds: data.memberIds,
+      entrypointId: data.entrypointId,
+    })
+    return { id: saved.id }
   })
 
 /** Comment on an issue as the current actor. */

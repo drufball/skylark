@@ -155,6 +155,8 @@ export async function createIssue(
     authorId: string
     /** Who answers for the issue; defaults to the author (creator owns it). */
     ownerId?: string
+    /** How it gets worked (→ playbooks.id); null = the `build` default. */
+    playbookId?: string
     /** The chat this was filed from (agent wake-ups route back to it). */
     originChatId?: string
     /** Force a nano (tests/seeding); otherwise generated + retried for uniqueness. */
@@ -177,6 +179,7 @@ export async function createIssue(
           body: input.body ?? '',
           authorId: input.authorId,
           ownerId: input.ownerId ?? input.authorId,
+          playbookId: input.playbookId,
           originChatId: input.originChatId,
         })
         .returning()
@@ -324,6 +327,22 @@ export async function setBuildContext(
   await db
     .update(issues)
     .set({ ...ctx, updatedAt: new Date() })
+    .where(eq(issues.id, issueId))
+}
+
+/**
+ * Point an issue at a playbook. Sensible only before work starts — the
+ * orchestrator resolves the playbook on each → building, so changing it
+ * mid-build changes who resumes; the doors expose it on open issues.
+ */
+export async function setIssuePlaybook(
+  db: Database,
+  issueId: string,
+  playbookId: string,
+): Promise<void> {
+  await db
+    .update(issues)
+    .set({ playbookId, updatedAt: new Date() })
     .where(eq(issues.id, issueId))
 }
 

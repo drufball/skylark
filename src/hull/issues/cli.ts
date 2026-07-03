@@ -13,6 +13,7 @@ import {
   transitionIssue,
 } from './service'
 import { requestHandoff } from './handoff'
+import { getPlaybook, getPlaybookByName, listPlaybooks } from './playbooks'
 import type { IssueStatus } from './schema'
 
 // The default door onto the issues service — the message board, drivable from a
@@ -39,9 +40,10 @@ const STATUS_MARK: Record<IssueStatus, string> = {
 /**
  * Parse `issue new`'s args: the title, plus optional `--body <text>`,
  * `--chat <id>` (the chat this issue was filed from — how notifications about
- * it route back to that conversation), and `--owner <handle>` (who answers for
- * it; defaults to the creator downstream). A flag present without a value (or
- * with another flag where its value should be) is a loud usage error, not a
+ * it route back to that conversation), `--owner <handle>` (who answers for
+ * it; defaults to the creator downstream), and `--playbook <name>` (how it
+ * gets worked; defaults to `build`). A flag present without a value (or with
+ * another flag where its value should be) is a loud usage error, not a
  * silently unrouted issue.
  */
 export function parseNewArgs(args: string[]): {
@@ -49,6 +51,7 @@ export function parseNewArgs(args: string[]): {
   body?: string
   originChatId?: string
   ownerHandle?: string
+  playbookName?: string
 } {
   const rest = [...args]
   const takeFlag = (flag: string): string | undefined => {
@@ -64,14 +67,22 @@ export function parseNewArgs(args: string[]): {
   const body = takeFlag('--body')
   const originChatId = takeFlag('--chat')
   const ownerHandle = takeFlag('--owner')?.replace(/^@/, '')
-  return { title: rest.join(' ').trim(), body, originChatId, ownerHandle }
+  const playbookName = takeFlag('--playbook')
+  return {
+    title: rest.join(' ').trim(),
+    body,
+    originChatId,
+    ownerHandle,
+    playbookName,
+  }
 }
 
 async function cmdNew(args: string[]): Promise<void> {
-  const { title, body, originChatId, ownerHandle } = parseNewArgs(args)
+  const { title, body, originChatId, ownerHandle, playbookName } =
+    parseNewArgs(args)
   if (!title)
     throw new Error(
-      'usage: issue new <title> [--body <text>] [--chat <id>] [--owner <handle>]',
+      'usage: issue new <title> [--body <text>] [--chat <id>] [--owner <handle>] [--playbook <name>]',
     )
   const issue = await withCliActor(async (tx, me) => {
     // Provenance must be honest: the filer can only claim a chat they're in.
@@ -84,17 +95,57 @@ async function cmdNew(args: string[]): Promise<void> {
       : undefined
     if (ownerHandle && !owner)
       throw new Error(`No such crew member: @${ownerHandle}`)
+    const playbook = playbookName
+      ? await getPlaybookByName(tx, playbookName)
+      : undefined
+    if (playbookName && !playbook) {
+      const names = (await listPlaybooks(tx)).map((p) => p.name)
+      throw new Error(
+        `No such playbook: ${playbookName}` +
+          (names.length > 0 ? ` (have: ${names.join(', ')})` : ''),
+      )
+    }
     return createIssue(tx, {
       title,
       body,
       originChatId,
       authorId: me.id,
       ownerId: owner?.id,
+      playbookId: playbook?.id,
     })
   })
   process.stdout.write(
     `Opened #${issue.nano} ${DIM}${issue.id}${RESET}\n${issue.title}\n`,
   )
+}
+
+/** List the playbooks: name, roster, entrypoint — what `--playbook` accepts. */
+async function cmdPlaybooks(): Promise<void> {
+  const rows = await withCliActor(async (tx) => {
+    const all = await listPlaybooks(tx)
+    return Promise.all(
+      all.map(async (p) => ({
+        name: p.name,
+        description: p.description,
+        entry: (await getUserById(tx, p.entrypointId))?.handle ?? '?',
+        members: await Promise.all(
+          p.memberIds.map(
+            async (id) => (await getUserById(tx, id))?.handle ?? '?',
+          ),
+        ),
+      })),
+    )
+  })
+  if (rows.length === 0) {
+    process.stdout.write('No playbooks — the server seeds them on boot.\n')
+    return
+  }
+  for (const p of rows) {
+    process.stdout.write(
+      `${p.name}  ${DIM}${p.description}${RESET}\n` +
+        `  ${DIM}crew @${p.members.join(', @')} · starts with @${p.entry}${RESET}\n`,
+    )
+  }
 }
 
 async function cmdList(): Promise<void> {
@@ -119,9 +170,13 @@ async function cmdShow(args: string[]): Promise<void> {
     if (!issue) throw new Error(`No such issue: ${ref}`)
     const author = await getUserById(tx, issue.authorId)
     const owner = await getUserById(tx, issue.ownerId)
+    const playbook = issue.playbookId
+      ? await getPlaybook(tx, issue.playbookId)
+      : undefined
     process.stdout.write(
       `${STATUS_MARK[issue.status]} #${issue.nano} ${issue.title}  ${DIM}[${issue.status}]${RESET}\n` +
-        `${DIM}by @${author?.handle ?? '?'} · owner @${owner?.handle ?? '?'} · ${issue.id}${RESET}\n`,
+        `${DIM}by @${author?.handle ?? '?'} · owner @${owner?.handle ?? '?'} · ` +
+        `playbook ${playbook?.name ?? 'build'} · ${issue.id}${RESET}\n`,
     )
     if (issue.branchName)
       process.stdout.write(`${DIM}branch ${issue.branchName}${RESET}\n`)
@@ -204,6 +259,8 @@ async function main(): Promise<void> {
       return cmdStatus(args)
     case 'handoff':
       return cmdHandoff(args)
+    case 'playbooks':
+      return cmdPlaybooks()
     // Friendly verbs: `issue building <id>`, `issue done <id>`, etc.
     case 'building':
     case 'open':
@@ -215,12 +272,14 @@ async function main(): Promise<void> {
     }
     default:
       process.stdout.write(
-        'usage: issue <new|list|show|comment|handoff|status|building|open|done|close> …\n' +
-          '  new <title> [--body <text>] [--chat <id>] [--owner <handle>]   open an issue\n' +
+        'usage: issue <new|list|show|comment|handoff|playbooks|status|building|open|done|close> …\n' +
+          '  new <title> [--body <text>] [--chat <id>] [--owner <handle>] [--playbook <name>]\n' +
+          '                                open an issue\n' +
           '  list                          list issues, newest first\n' +
           '  show <id>                     show an issue, its branch, and its thread\n' +
           '  comment <id> <text>           add a comment\n' +
           '  handoff <id> <agent> <msg>    pass the baton to an agent (or OWNER to ask the owner)\n' +
+          '  playbooks                     list the playbooks `--playbook` accepts\n' +
           '  status <id> <state>           move status (open|building|done|close)\n' +
           '  building|open|done|close <id> move status (shorthand)\n',
       )

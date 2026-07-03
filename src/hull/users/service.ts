@@ -144,6 +144,9 @@ export const SEED_CREW: readonly {
   // The building agent: the identity M3's builder sessions act as, so their
   // issue comments and transitions show as the builder (via SKYLARK_ACTOR).
   { handle: 'builder', displayName: 'Builder', type: 'agent' },
+  // The general deckhand: the `general` playbook's entrypoint — full tools, no
+  // build contract, does whatever the issue says.
+  { handle: 'hand', displayName: 'Hand', type: 'agent' },
 ]
 
 /**

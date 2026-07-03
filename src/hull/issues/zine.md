@@ -1,6 +1,6 @@
 # Issues
 
-_issues zine — issue #2_
+_issues zine — issue #3_
 
 ## tl;dr
 
@@ -8,11 +8,13 @@ Issues are the ship's message board — a forum where the crew files work and
 discusses it, and where agents are launched to actually do it. An issue is a
 thread with a lifecycle: `open` (a discussion) → `building` (agents are on it,
 in the issue's one git worktree) → `done` (merged) or `closed` (dropped). Every
-issue has an **owner** (who answers for it, defaulting to the creator), and
-agents working an issue pass a **baton** between each other with `handoff` — one
-agent, one turn at a time, all in the same worktree. Comments, status changes,
-and handoffs ride the ship's log, so the board updates live and — crucially —
-the **orchestrator** can react across processes.
+issue has an **owner** (who answers for it, defaulting to the creator) and a
+**playbook** (how it gets worked: a roster of agents and the entrypoint that
+starts — `build` implements to a merged PR, `general` is one agent doing what
+the issue says). Agents on an issue pass a **baton** between each other with
+`handoff` — one agent, one turn at a time, all in the same worktree. Comments,
+status changes, and handoffs ride the ship's log, so the board updates live and
+— crucially — the **orchestrator** can react across processes.
 
 The orchestrator is the heart of this milestone and the thing that proves the
 event bus. It runs in the web-server process, subscribes to the ship's log, and
@@ -33,10 +35,19 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
 - **Issue** — a row in `issues`: a UUIDv7 `id`, a 4-char url/git-safe `nano`
   (the short id embedded in branch names), `title`, `body`, `status`
   (`open|building|done|closed`), `authorId` (→ users.id), `ownerId` (→ users.id
-  — who answers for it, the creator unless set otherwise), `visibility`
-  (`public` for now — room to grow), and the build context filled in on the
-  first build: `branchName`, `worktreePath`, and `statusLine` (the latest agent
-  progress).
+  — who answers for it, the creator unless set otherwise), `playbookId` (→
+  playbooks.id; null = the `build` default), `visibility` (`public` for now —
+  room to grow), and the build context filled in on the first build:
+  `branchName`, `worktreePath`, and `statusLine` (the latest agent progress).
+- **Playbook** (`playbooks.ts`) — a row in `playbooks`: `name` (unique — the
+  upsert key and what `--playbook` accepts), `description`, `memberIds` (agent
+  users allowed hands on the issue), `entrypointId` (who a → building seeds).
+  Deliberately NOT a state machine: the who-hands-to-whom knowledge lives in the
+  agents' own profiles and prompts; the playbook is the guardrail (membership)
+  and the starting gun (entrypoint). Two are seeded — `build` (the builder,
+  ship-feature contract) and `general` (the `hand` crew agent, full tools, the
+  issue's own words as the brief) — and the crew can add more from the Agents →
+  Playbooks tab.
 - **Issue session** — a row in `issue_sessions`: `(issueId, agentUserId)` →
   `sessionId`. Which agents have a hand on an issue, one session per (issue,
   agent), every one of them with `cwd` = the issue's ONE worktree. The builder's
@@ -76,12 +87,14 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   the server process, subscribes it to `shipLogBus`, runs reconciliation). All
   `v8 ignore`d — the live builder is exercised manually, not in CI.
 - **Doors** — `cli.ts` (`npm run issue`:
-  `new <title> [--body <text>] [--chat <id>] [--owner <handle>]`, `list`,
-  `show`, `comment`, `handoff <id> <agent|OWNER> <message>`, `status`, and the
-  verb shorthands `building`/`open`/`done`/`close`) and `server.ts` (the web
-  doors). The CLI attributes every action to `cliActor()`, so the orchestrator's
-  `SKYLARK_ACTOR=<agent id>` command prefix makes each agent's comments,
-  transitions, and handoffs show as that agent.
+  `new <title> [--body <text>] [--chat <id>] [--owner <handle>] [--playbook <name>]`,
+  `list`, `show`, `comment`, `handoff <id> <agent|OWNER> <message>`,
+  `playbooks`, `status`, and the verb shorthands
+  `building`/`open`/`done`/`close`) and `server.ts` (the web doors, including
+  `listPlaybooksView`/`savePlaybook` for the editor tab). The CLI attributes
+  every action to `cliActor()`, so the orchestrator's `SKYLARK_ACTOR=<agent id>`
+  command prefix makes each agent's comments, transitions, and handoffs show as
+  that agent.
 - **The views** (rigging) — the **board** (issues grouped by status, author +
   comment count + the live status line for building issues), the **thread**
   (body, the merged comment/status-change timeline, a composer, status
@@ -220,14 +233,26 @@ id) through their public functions, not their tables.
   crew-public. Migration 0015 puts an insert policy on the table: you may only
   link a session you can already see. Selects stay open (the board is public;
   the links carry no content).
-- **Reconcile sweeps stranded turns, then resumes the builder's hand.** A crash
-  leaves sessions stuck on `running`, and a stuck row would jam the baton
+- **Reconcile sweeps stranded turns, then resumes the entrypoint's hand.** A
+  crash leaves sessions stuck on `running`, and a stuck row would jam the baton
   forever (every handoff refused with "wait for their turn to end"). On startup,
   reconcile cancels any running issue session — a fresh process has no live
-  turns, so they're all corpses — then re-seeds the builder's turn. If the baton
-  was with another agent when the server died, that hand stays paused until the
-  next handoff or a human nudge: fine while the builder is the entrypoint of
-  every flow; revisit when playbooks make the entrypoint explicit data.
+  turns, so they're all corpses — then re-seeds the playbook entrypoint's turn.
+  If the baton was with a NON-entrypoint agent when the server died, that hand
+  stays paused until the next handoff or a human nudge — the honest gap that
+  remains.
+- **Playbook entrypoints boot from `users.profileId`.** The playbook names WHO
+  starts; how that agent boots is the agent's own profile — one source of truth,
+  the same one a handoff target uses. Corollary: the seeding wires the `builder`
+  and `hand` crew members to their profiles (the chat default is never right for
+  them), and `ensureOrchestrator` converges crew + profiles + playbooks on every
+  boot so entrypoint resolution never runs against half-seeded config. An issue
+  whose playbook (or entrypoint agent) is gone falls back to the legacy builder
+  path, loudly.
+- **`playbookId` is nullable, and null MEANS build.** No backfill, no required
+  field on every door: a bare `issue new`, every pre-playbooks issue, and every
+  agent that never heard of playbooks all keep their meaning. The default is
+  resolved at orchestration time (`playbookFor`), not stamped at creation.
 - **What's verified vs. deferred.** The orchestrator's decision logic — create/
   reuse/remove worktrees, start/resume/cancel sessions, idempotency, the
   defensive done-refresh, status-line writing, the bus-note handler, and startup
@@ -247,6 +272,13 @@ id) through their public functions, not their tables.
 
 ## Changelog
 
+- **#3** — Playbooks: the `playbooks` table (roster + entrypoint as data),
+  `issues.playbookId` (null = build), the seeded `build` and `general` playbooks
+  (+ the `hand` crew agent and `general` profile), entrypoint-driven
+  orchestration (`generalPrompt` for non-build playbooks), roster-guarded
+  handoffs, `--playbook` on `issue new` + `issue playbooks`, the board's
+  playbook select, the Agents → Playbooks editor tab, and boot-time seeding
+  convergence in `ensureOrchestrator`.
 - **#2** — Owners and the baton: `ownerId` split from `authorId` (defaulting to
   the creator; `--owner` on `issue new`), `issue_sessions` (one session per
   issue × agent, replacing the single `issues.session_id` — the RLS visibility

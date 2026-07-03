@@ -17,8 +17,10 @@ import {
   createIssue,
   setBuildContext,
   recordIssueSession,
+  setIssuePlaybook,
   transitionIssue,
 } from './service'
+import { upsertPlaybook } from './playbooks'
 import type { IssueRow } from './schema'
 
 let db: Database
@@ -233,6 +235,74 @@ describe('requestHandoff — agent to agent', () => {
         message: 'go',
       }),
     ).rejects.toThrow(/no such issue/i)
+  })
+})
+
+describe('requestHandoff — playbook membership', () => {
+  it('refuses a target outside the issue playbook, naming the roster', async () => {
+    const issue = await buildingIssue()
+    const outsider = await createUser(db, {
+      id: uuidv7(),
+      handle: 'outsider',
+      displayName: 'Outsider',
+      type: 'agent',
+    })
+    const playbook = await upsertPlaybook(db, {
+      name: 'duo',
+      memberIds: [builder.id, babysitter.id],
+      entrypointId: builder.id,
+    })
+    await setIssuePlaybook(db, issue.id, playbook.id)
+    await expect(
+      requestHandoff(db, {
+        issueRef: issue.nano,
+        actorId: builder.id,
+        target: 'outsider',
+        message: 'go',
+      }),
+    ).rejects.toThrow(/playbook.*@builder.*@babysitter/s)
+    void outsider
+  })
+
+  it('allows roster members, and OWNER regardless of the roster', async () => {
+    const issue = await buildingIssue()
+    const playbook = await upsertPlaybook(db, {
+      name: 'duo',
+      memberIds: [builder.id, babysitter.id],
+      entrypointId: builder.id,
+    })
+    await setIssuePlaybook(db, issue.id, playbook.id)
+    const pass = await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'babysitter',
+      message: 'go',
+    })
+    expect(pass.toHandle).toBe('babysitter')
+    const ping = await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'OWNER',
+      message: 'thoughts?',
+    })
+    expect(ping.toOwner).toBe(true)
+  })
+
+  it('places no roster limit when no playbook exists (unseeded ship)', async () => {
+    const issue = await buildingIssue()
+    const anyone = await createUser(db, {
+      id: uuidv7(),
+      handle: 'anyone',
+      displayName: 'Anyone',
+      type: 'agent',
+    })
+    const result = await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'anyone',
+      message: 'go',
+    })
+    expect(result.toHandle).toBe(anyone.handle)
   })
 })
 

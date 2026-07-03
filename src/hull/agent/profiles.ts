@@ -2,7 +2,11 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { asc, eq, inArray } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
-import { assignDefaultAgentProfile } from '@hull/users/service'
+import {
+  assignDefaultAgentProfile,
+  getUserByHandle,
+  setUserProfile,
+} from '@hull/users/service'
 
 import {
   agentProfiles,
@@ -245,6 +249,25 @@ export async function seedProfiles(db: Database): Promise<void> {
     ...BUILDER_PROFILE,
     extensionIds: [buildGates.id],
   })
+  await upsertProfile(db, { ...GENERAL_PROFILE, extensionIds: [] })
+}
+
+/**
+ * The general deckhand — the `general` playbook's entrypoint. Full coding
+ * tools and ship context, but no build contract and no gates: the issue's own
+ * words are the instructions. Distinct from `chat` (read-only pilot) and
+ * `builder` (the ship-feature loop).
+ */
+export const GENERAL_PROFILE: SeedProfile = {
+  name: 'general',
+  systemPrompt:
+    'You are a general-purpose agent aboard a Skylark ship. Do the work the ' +
+    'issue describes — research, writing, operating the ship’s services, or ' +
+    'code — and report back through the issue thread as instructed.',
+  tools: null,
+  readContextFiles: true,
+  useRepoSkills: true,
+  model: null,
 }
 
 /**
@@ -259,4 +282,25 @@ export async function seedAndWireProfiles(db: Database): Promise<void> {
   await seedProfiles(db)
   const chat = await getProfileByName(db, CHAT_PROFILE.name)
   if (chat) await assignDefaultAgentProfile(db, chat.id)
+  // Named crew whose whole point is a specific profile converge onto it — the
+  // chat default is never right for them. A deliberate hand-assignment to any
+  // OTHER profile survives; only null-or-chat is corrected. Playbook
+  // entrypoints boot from users.profileId, so these two must be true.
+  await wireCrewProfile(db, 'builder', BUILDER_PROFILE.name, chat?.id)
+  await wireCrewProfile(db, 'hand', GENERAL_PROFILE.name, chat?.id)
+}
+
+/** Point `handle` at `profileName` when its profile is unset or the chat default. */
+async function wireCrewProfile(
+  db: Database,
+  handle: string,
+  profileName: string,
+  chatProfileId: string | undefined,
+): Promise<void> {
+  const user = await getUserByHandle(db, handle)
+  const profile = await getProfileByName(db, profileName)
+  if (!user || !profile) return
+  if (!user.profileId || user.profileId === chatProfileId) {
+    await setUserProfile(db, user.id, profile.id)
+  }
 }

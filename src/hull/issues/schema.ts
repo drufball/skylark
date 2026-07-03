@@ -1,5 +1,6 @@
 import {
   index,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -27,6 +28,29 @@ import { users } from '@hull/users/schema'
 // No crew column yet: the crew primitive's compile-time filter (see hull/zine.md)
 // isn't built, so the ship is single-tenant. `visibility` is here as room to
 // grow, defaulting to public; crew-scoping attaches when the primitive lands.
+
+/**
+ * A playbook: how an issue gets worked. A roster of agent crew members allowed
+ * hands on the issue, and the entrypoint whose session a → building seeds. The
+ * routing knowledge (who hands to whom, when) lives in the agents' own
+ * profiles/prompts — the playbook is the guardrail (membership) and the
+ * starting gun (entrypoint), deliberately not a state machine.
+ */
+export const playbooks = pgTable('playbooks', {
+  /** UUIDv7 — time-ordered, so insertion order is creation order. */
+  id: text('id').primaryKey(),
+  /** Unique name, e.g. "build" or "general". How humans and CLIs pick one. */
+  name: text('name').notNull().unique(),
+  /** What this strategy is for, for humans browsing the list. */
+  description: text('description').notNull().default(''),
+  /** Agent crew members (→ users.id) allowed hands on the issue. */
+  memberIds: jsonb('member_ids').$type<string[]>().notNull().default([]),
+  /** The member whose session a → building seeds (→ users.id). */
+  entrypointId: text('entrypoint_id').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
 
 /** A unit of work or discussion on the board — possibly built by an agent. */
 export const issues = pgTable(
@@ -62,6 +86,12 @@ export const issues = pgTable(
     ownerId: text('owner_id')
       .notNull()
       .references(() => users.id),
+    /**
+     * How this issue gets worked (→ playbooks.id). Null means the default:
+     * the `build` playbook — so every pre-playbooks issue keeps its meaning
+     * and a bare `issue new` still builds.
+     */
+    playbookId: text('playbook_id').references(() => playbooks.id),
     /** Visibility key — room to grow; public for now (single-tenant ship). */
     visibility: text('visibility', { enum: ['public'] })
       .notNull()
@@ -145,3 +175,4 @@ export type IssueRow = typeof issues.$inferSelect
 export type IssueCommentRow = typeof issueComments.$inferSelect
 export type IssueSessionRow = typeof issueSessions.$inferSelect
 export type IssueStatus = IssueRow['status']
+export type PlaybookRow = typeof playbooks.$inferSelect

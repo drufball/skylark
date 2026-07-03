@@ -8,6 +8,7 @@ import { getUserByHandle, handleOf } from '@hull/users/service'
 
 import { issueSessions, type IssueRow } from './schema'
 import { issueTopic } from './topic'
+import { playbookFor } from './playbooks'
 import { resolveIssueRef } from './service'
 
 /**
@@ -134,6 +135,20 @@ export async function requestHandoff(
     }
     if (target.id === input.actorId) {
       throw new HandoffError('You cannot hand the baton to yourself.')
+    }
+    // The playbook is the roster: the baton only passes between the agents an
+    // issue was set up with. OWNER (above) is the deliberate exception — the
+    // escape hatch out of the roster when the work needs a decision.
+    const playbook = await playbookFor(db, issue)
+    if (playbook && !playbook.memberIds.includes(target.id)) {
+      const handles = await Promise.all(
+        playbook.memberIds.map((id) => handleOf(db, id)),
+      )
+      throw new HandoffError(
+        `@${handle} is not on this issue's playbook "${playbook.name}" ` +
+          `(members: @${handles.join(', @')}). Hand to a member, or use ` +
+          'OWNER to escalate.',
+      )
     }
     if (issue.status !== 'building') {
       throw new HandoffError(

@@ -78,3 +78,31 @@ describe('parseNewArgs — owner', () => {
     expect(parseNewArgs(['Fix', 'it']).ownerHandle).toBeUndefined()
   })
 })
+
+describe('parseNewArgs — playbook', () => {
+  it('extracts --playbook alongside the other flags', () => {
+    expect(
+      parseNewArgs([
+        'Do',
+        'research',
+        '--playbook',
+        'general',
+        '--owner',
+        'tilde',
+      ]),
+    ).toEqual({
+      title: 'Do research',
+      body: undefined,
+      originChatId: undefined,
+      ownerHandle: 'tilde',
+      playbookName: 'general',
+    })
+  })
+
+  it('leaves playbookName undefined when absent — the build default downstream', () => {
+    expect(parseNewArgs(['Fix', 'it']).playbookName).toBeUndefined()
+    expect(() => parseNewArgs(['Fix', '--playbook'])).toThrow(
+      /--playbook requires/,
+    )
+  })
+})

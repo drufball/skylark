@@ -22,6 +22,7 @@ import {
   seedAndWireProfiles,
   CHAT_PROFILE,
   BUILDER_PROFILE,
+  GENERAL_PROFILE,
   BUILD_GATES_EXTENSION,
 } from './profiles'
 
@@ -219,7 +220,12 @@ describe('agent profiles + extensions service', () => {
     expect(builder.extensionIds).toEqual([ext.id])
     expect(builder.systemPrompt).toMatch(/ship-feature/i)
 
-    expect(await listProfiles(db)).toHaveLength(2)
+    // general: full tools + ship context, no gates — the issue is the brief
+    const general = defined(await getProfileByName(db, GENERAL_PROFILE.name))
+    expect(general.tools).toBeNull()
+    expect(general.extensionIds).toEqual([])
+
+    expect(await listProfiles(db)).toHaveLength(3)
     expect(await listExtensions(db)).toHaveLength(1)
   })
 
@@ -233,6 +239,6 @@ describe('agent profiles + extensions service', () => {
     const dru = defined(await getUserByHandle(db, 'drufball'))
     expect(tilde.profileId).toBe(chat.id) // agent → chat
     expect(dru.profileId).toBeNull() // human → untouched
-    expect(await listProfiles(db)).toHaveLength(2)
+    expect(await listProfiles(db)).toHaveLength(3)
   })
 })
