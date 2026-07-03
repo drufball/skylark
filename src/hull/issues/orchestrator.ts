@@ -200,7 +200,10 @@ export function handoffPrompt(
     `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
     // "Complete", not "merged": the baton crosses playbooks, and on a general
     // issue done ≠ a PR. The done-teardown's merge check guards code work.
-    `- When the issue's work is complete, run: ${issueCmd} done ${issue.nano}\n`
+    // LAST action: done tears down every session on the issue, including the
+    // one running this very turn — the ending must be chosen, not a surprise.
+    `- When the issue's work is complete, run ${issueCmd} done ${issue.nano} ` +
+    `as your LAST action, then stop.\n`
   )
 }
 
