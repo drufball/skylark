@@ -76,6 +76,25 @@ describe('upsertPlaybook', () => {
     ).rejects.toThrow(/member/i)
   })
 
+  it('refuses a member id that is not crew at all', async () => {
+    await expect(
+      upsertPlaybook(db, {
+        name: 'ghost',
+        memberIds: [builderId, uuidv7()],
+        entrypointId: builderId,
+      }),
+    ).rejects.toThrow(/no such crew/i)
+  })
+
+  it('defaults the description to empty', async () => {
+    const p = await upsertPlaybook(db, {
+      name: 'terse',
+      memberIds: [builderId],
+      entrypointId: builderId,
+    })
+    expect(p.description).toBe('')
+  })
+
   it('refuses a human member — playbooks are agent rosters', async () => {
     const human = defined(await getUserByHandle(db, 'drufball'))
     await expect(
@@ -105,6 +124,18 @@ describe('seedPlaybooks', () => {
       'build',
       'general',
     ])
+  })
+
+  it('skips playbooks whose crew is not aboard, without failing', async () => {
+    // A fresh database with no crew at all: seeding must be a quiet no-op,
+    // not a crash — seedCrew always runs first in the real boot paths.
+    const bare = await freshDb()
+    try {
+      await seedPlaybooks(bare.db)
+      expect(await listPlaybooks(bare.db)).toEqual([])
+    } finally {
+      await bare.close()
+    }
   })
 
   it('gives the hand agent the general profile, not the chat default', async () => {
