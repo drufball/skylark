@@ -20,7 +20,11 @@ import {
   ISSUE_STATUS_CHANGED,
 } from '@hull/issues/service'
 import { ISSUE_HANDOFF } from '@hull/issues/handoff'
-import { ISSUE_TOPIC_PATTERN, ISSUE_TOPIC_PREFIX } from '@hull/issues/topic'
+import {
+  ISSUE_TOPIC_PATTERN,
+  ISSUE_TOPIC_PREFIX,
+  issueTopic,
+} from '@hull/issues/topic'
 import { errorMessage } from '@hull/lib/errors'
 import { firstLine, truncate } from '@hull/lib/text'
 
@@ -89,15 +93,17 @@ export function describeNotification(input: {
         : `@${actorHandle} changed the status`
     case ISSUE_HANDOFF: {
       // One bounded line: the brief's first line, capped — an inbox row is a
-      // headline, not the brief itself.
+      // headline, not the brief itself. Always third-person: an owner ping
+      // fans out to bystander watchers too, and this function has no recipient
+      // context, so "handed this to YOU" would lie to everyone but the owner.
       const brief =
         typeof payload.message === 'string'
           ? truncate(firstLine(payload.message), 160)
           : ''
-      if (payload.toOwner === true)
-        return `@${actorHandle} handed this to you: ${brief}`
       const toHandle =
         typeof payload.toHandle === 'string' ? payload.toHandle : '?'
+      if (payload.toOwner === true)
+        return `@${actorHandle} needs @${toHandle} (the owner) to look: ${brief}`
       return `@${actorHandle} passed the baton to @${toHandle}: ${brief}`
     }
     default:
@@ -292,11 +298,21 @@ export function createNotificationsReactor(deps: {
     // Handoffs adjust the recipients around the watch list: an OWNER ping must
     // reach the owner even if they never watched, and a baton pass must NOT
     // also land in the target's inbox — the issues orchestrator is already
-    // driving them a turn, and an inbox wake on top would double-drive.
+    // driving them a turn, and an inbox wake on top would double-drive. The
+    // payload is only honored when it agrees with the event's own topic: a
+    // forged row naming a foreign issueId doesn't get to pick recipients.
     const recipients = new Set(await listWatchers(db, event.topic))
     if (event.type === ISSUE_HANDOFF) {
-      const p = event.payload as { toUserId?: unknown; toOwner?: unknown }
-      if (typeof p.toUserId === 'string') {
+      const p = event.payload as {
+        issueId?: unknown
+        toUserId?: unknown
+        toOwner?: unknown
+      }
+      if (
+        typeof p.toUserId === 'string' &&
+        typeof p.issueId === 'string' &&
+        event.topic === issueTopic(p.issueId)
+      ) {
         if (p.toOwner === true) recipients.add(p.toUserId)
         else recipients.delete(p.toUserId)
       }
@@ -343,6 +359,18 @@ export function createNotificationsReactor(deps: {
         sinceId = event.id
         if (event.actorId && event.topic && isAutoWatchTopic(event.topic)) {
           await watchTopic(db, event.actorId, event.topic)
+        }
+        // Owner watches are durable intent too: an issue opened for a distinct
+        // owner while no reactor was subscribed still ends up watched by them.
+        if (
+          event.type === ISSUE_OPENED &&
+          event.topic &&
+          isAutoWatchTopic(event.topic)
+        ) {
+          const ownerId = (event.payload as { ownerId?: unknown }).ownerId
+          if (typeof ownerId === 'string') {
+            await watchTopic(db, ownerId, event.topic)
+          }
         }
       }
       if (page.length < REPLAY_PAGE_SIZE) break

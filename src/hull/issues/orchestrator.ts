@@ -3,7 +3,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { Database } from '@hull/db/client'
 import { getProfileByName } from '@hull/agent/profiles'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
-import { createSession } from '@hull/agent/service'
+import { createSession, getSession } from '@hull/agent/service'
 import type { NotifyPayload } from '@hull/events/bus'
 import { getEventById } from '@hull/events/service'
 import { getUserById, handleOf } from '@hull/users/service'
@@ -11,17 +11,23 @@ import { errorMessage } from '@hull/lib/errors'
 import { issuesProgressLine } from '@hull/agent/progress'
 
 import {
+  addComment,
   getIssue,
   getIssueSession,
   ISSUE_STATUS_CHANGED,
+  issueTopic,
   listComments,
   listIssues,
   listIssueSessions,
+  recordIssueSession,
   setBuildContext,
-  setIssueSession,
   setStatusLine,
 } from './service'
-import { ISSUE_HANDOFF, type IssueHandoffPayload } from './handoff'
+import {
+  ISSUE_HANDOFF,
+  runningHands,
+  type IssueHandoffPayload,
+} from './handoff'
 import type { IssueRow, IssueStatus } from './schema'
 
 /**
@@ -335,7 +341,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       cwd: input.worktreePath,
       agentUserId: input.agentUserId,
     })
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: input.issue.id,
       agentUserId: input.agentUserId,
       sessionId,
@@ -446,18 +452,49 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * Re-reads the issue so a stale event (the issue moved on before this note
    * was handled) is dropped rather than acted on.
    */
+  /**
+   * A baton that can't be delivered must not evaporate: the from-agent already
+   * printed "baton passed" and stopped, so the handoff message is written back
+   * onto the thread where every watcher (and the owner) can see it and act.
+   */
+  async function dropHandoff(
+    payload: IssueHandoffPayload,
+    reason: string,
+  ): Promise<void> {
+    await addComment(db, {
+      issueId: payload.issueId,
+      authorId: payload.fromUserId,
+      body:
+        `⚠ Handoff to @${payload.toHandle} was dropped: ${reason}. ` +
+        `The message was:\n\n> ${payload.message}`,
+    })
+  }
+
   async function applyHandoff(payload: IssueHandoffPayload): Promise<void> {
     const issue = await getIssue(db, payload.issueId)
     if (!issue) return
     if (issue.status !== 'building') {
+      // Raced a close/pause between emit and handling.
+      await dropHandoff(payload, `the issue is ${issue.status}, not building`)
+      return
+    }
+    // Re-validate against durable state, not just the payload: requestHandoff
+    // only emits baton passes to agents, but a replayed, stale, or forged
+    // event must not boot a worktree session that acts as a HUMAN.
+    const target = await getUserById(db, payload.toUserId)
+    if (target?.type !== 'agent') {
       console.warn(
-        `handoff on #${issue.nano} dropped: issue is ${issue.status}, not building`,
+        `handoff on #${issue.nano} dropped: target is not a crew agent`,
       )
       return
     }
-    const target = await getUserById(db, payload.toUserId)
-    if (!target) {
-      console.warn(`handoff on #${issue.nano} dropped: no such user`)
+    // Re-check the baton HERE, inside the per-issue chain, where check-and-act
+    // is atomic. requestHandoff's door check can race another pass (its emit
+    // and this handler are seconds apart); two batons both passing the door
+    // must not both fire — that's two agents committing into one worktree.
+    const busy = await runningHands(db, issue.id, payload.fromUserId)
+    if (busy.length > 0) {
+      await dropHandoff(payload, 'another agent is already mid-turn')
       return
     }
     const worktreePath = await ensureWorktree(issue)
@@ -527,6 +564,13 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         typeof p.message !== 'string'
       )
         return
+      // The envelope must agree with the payload: a handoff is only acted on
+      // when the durable event came from this service, on the public audience,
+      // on the very issue the payload names. A row whose topic points at a
+      // different issue must not start work in that issue's worktree.
+      if (event.source !== 'issues') return
+      if (event.audience !== 'public') return
+      if (event.topic !== issueTopic(p.issueId)) return
       // Owner pings ride the notifications reactor (inbox + agent wake), not a
       // worktree turn — the owner reviews from wherever they are.
       if (p.toOwner !== false) return
@@ -552,6 +596,19 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const all = await listIssues(db)
     for (const issue of all) {
       if (issue.status !== 'building') continue
+      // A fresh process has no live turns, so any issue session still marked
+      // 'running' was stranded by a crash/restart — and a stranded row jams
+      // the baton forever (runningHands reads it as mid-turn, and every
+      // future handoff is refused). Cancel sweeps it back to idle.
+      for (const hand of await listIssueSessions(db, issue.id)) {
+        const session = await getSession(db, hand.sessionId)
+        if (session?.status !== 'running') continue
+        await runtime.cancel(hand.sessionId).catch((err: unknown) => {
+          console.error(
+            `reconcile ${issue.nano}: cancelling stranded session failed: ${errorMessage(err)}`,
+          )
+        })
+      }
       // Route through the same serialized building path so a reconcile racing a
       // live bus note for the same issue can't double-create its worktree.
       await onStatusChanged(issue.id, 'building', 'building').catch(

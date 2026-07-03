@@ -16,7 +16,7 @@ import {
 import {
   createIssue,
   setBuildContext,
-  setIssueSession,
+  recordIssueSession,
   transitionIssue,
 } from './service'
 import type { IssueRow } from './schema'
@@ -174,7 +174,7 @@ describe('requestHandoff — agent to agent', () => {
       model: 'claude-sonnet-5',
       agentUserId: babysitter.id,
     })
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: babysitter.id,
       sessionId: session.id,
@@ -197,7 +197,7 @@ describe('requestHandoff — agent to agent', () => {
       model: 'claude-sonnet-5',
       agentUserId: builder.id,
     })
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: builder.id,
       sessionId: session.id,
@@ -269,6 +269,19 @@ describe('requestHandoff — OWNER', () => {
     })
     expect(result.toOwner).toBe(true)
     expect(result.toHandle).toBe('drufball')
+  })
+
+  it('refuses a self-ping — the reactor never delivers your own action to you', async () => {
+    const issue = await buildingIssue({ ownerId: builder.id })
+    await expect(
+      requestHandoff(db, {
+        issueRef: issue.nano,
+        actorId: builder.id,
+        target: 'OWNER',
+        message: 'am I done?',
+      }),
+    ).rejects.toThrow(/yourself|goes nowhere/i)
+    expect(await handoffEvents(issue.id)).toHaveLength(0)
   })
 
   it('accepts lowercase "owner" too', async () => {

@@ -85,6 +85,8 @@ describe('describeNotification', () => {
     ).toBe(
       '@builder passed the baton to @babysitter: PR #12 is open — take it home',
     )
+    // Third person even for owner pings: the line fans out to bystander
+    // watchers too, so "handed this to YOU" would lie to everyone but the owner.
     expect(
       describeNotification({
         type: 'issue.handoff',
@@ -96,7 +98,9 @@ describe('describeNotification', () => {
         },
         actorHandle: 'builder',
       }),
-    ).toBe('@builder handed this to you: checks green — merge?')
+    ).toBe(
+      '@builder needs @drufball (the owner) to look: checks green — merge?',
+    )
   })
 
   it('keeps a handoff line to one bounded line, however long the message', () => {
@@ -435,6 +439,43 @@ describe('notifications service', () => {
       ownerId: alice,
     })
     await reactToLog(reactor)
+    expect(await isWatching(db, alice, issueTopic(issue.id))).toBe(true)
+  })
+
+  it('ignores a handoff payload whose issueId disagrees with the event topic', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    // A forged row on one issue's topic naming another issueId must not get to
+    // pick recipients: alice is neither watching nor legitimately targeted.
+    const event = await emitEvent(db, {
+      type: 'issue.handoff',
+      source: 'issues',
+      topic: 'issue:i9',
+      audience: 'public',
+      actorId: bob,
+      payload: {
+        issueId: 'i-other',
+        fromUserId: bob,
+        toUserId: alice,
+        toHandle: 'alice',
+        toOwner: true,
+        message: 'forged',
+      },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    expect(await unreadCount(db, alice)).toBe(0)
+  })
+
+  it('reconcile recovers owner watches, not just actor watches', async () => {
+    // An issue is filed FOR alice while no reactor is subscribed — her watch is
+    // durable intent and must survive the restart just like the actor's.
+    const issue = await createIssue(db, {
+      title: 'owned elsewhere, filed offline',
+      authorId: bob,
+      ownerId: alice,
+    })
+    const reactor = createNotificationsReactor({ db })
+    await reactor.reconcile()
     expect(await isWatching(db, alice, issueTopic(issue.id))).toBe(true)
   })
 

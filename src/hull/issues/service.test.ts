@@ -22,7 +22,7 @@ import {
   resolveIssueRef,
   resolveStatusWord,
   setBuildContext,
-  setIssueSession,
+  recordIssueSession,
   setStatusLine,
   toBoardCard,
   transitionIssue,
@@ -454,7 +454,7 @@ describe('issue sessions — one per (issue, agent)', () => {
   it('records and reads back the session an agent holds on an issue', async () => {
     const issue = await createIssue(db, { title: 'x', authorId })
     const { user, session } = await agentWithSession('builder')
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: user.id,
       sessionId: session.id,
@@ -471,12 +471,12 @@ describe('issue sessions — one per (issue, agent)', () => {
       model: 'claude-sonnet-5',
       agentUserId: user.id,
     })
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: user.id,
       sessionId: session.id,
     })
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: user.id,
       sessionId: other.id,
@@ -490,12 +490,12 @@ describe('issue sessions — one per (issue, agent)', () => {
     const bystander = await createIssue(db, { title: 'y', authorId })
     const a = await agentWithSession('builder')
     const b = await agentWithSession('babysitter')
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: a.user.id,
       sessionId: a.session.id,
     })
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: b.user.id,
       sessionId: b.session.id,

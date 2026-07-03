@@ -335,7 +335,7 @@ export async function setBuildContext(
  * live one) is a no-op that keeps the first session — the transcript an agent
  * already has is worth more than a fresh one.
  */
-export async function setIssueSession(
+export async function recordIssueSession(
   db: Database,
   input: { issueId: string; agentUserId: string; sessionId: string },
 ): Promise<void> {

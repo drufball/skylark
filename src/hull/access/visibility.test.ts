@@ -5,7 +5,7 @@ import type { Database } from '@hull/db/client'
 import { freshDb } from '@hull/db/test-db'
 import { createChat, setMemberSession } from '@hull/chat/service'
 import { createSession } from '@hull/agent/service'
-import { createIssue, setIssueSession } from '@hull/issues/service'
+import { createIssue, recordIssueSession } from '@hull/issues/service'
 import { createUser } from '@hull/users/service'
 
 import { canSeeTopic } from './visibility'
@@ -59,7 +59,7 @@ describe('canSeeTopic', () => {
     const sid = uuidv7()
     await createSession(db, { id: sid, model: 'm' })
     const issue = await createIssue(db, { title: 'build it', authorId: alice })
-    await setIssueSession(db, {
+    await recordIssueSession(db, {
       issueId: issue.id,
       agentUserId: alice,
       sessionId: sid,

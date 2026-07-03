@@ -55,8 +55,13 @@ class HandoffError extends Error {
   }
 }
 
-/** Agents (other than the caller) currently mid-turn on this issue. */
-async function runningHands(
+/**
+ * Agents (other than the caller) currently mid-turn on this issue. Checked at
+ * the door by requestHandoff and AGAIN by the orchestrator inside its per-issue
+ * chain (applyHandoff) — the door check gives the agent a good error, the
+ * serialized re-check is the one that's actually atomic against a racing pass.
+ */
+export async function runningHands(
   db: Database,
   issueId: string,
   exceptUserId: string,
@@ -105,7 +110,16 @@ export async function requestHandoff(
   let toHandle: string
   if (toOwner) {
     // An owner ping needs no worktree and no state check — asking the person
-    // (or agent) who answers for the issue is always legal.
+    // (or agent) who answers for the issue is always legal. Unless YOU are the
+    // owner: your own action is never your own news (the reactor skips the
+    // actor), so a self-ping would vanish silently and strand the issue.
+    if (issue.ownerId === input.actorId) {
+      throw new HandoffError(
+        'You are the owner of this issue — pinging yourself goes nowhere. ' +
+          `Post your question as a comment and pause instead: ` +
+          `issue comment ${issue.nano} "<question>" then issue open ${issue.nano}.`,
+      )
+    }
     toUserId = issue.ownerId
     toHandle = await handleOf(db, issue.ownerId)
   } else {

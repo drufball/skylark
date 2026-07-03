@@ -41,7 +41,9 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   `sessionId`. Which agents have a hand on an issue, one session per (issue,
   agent), every one of them with `cwd` = the issue's ONE worktree. The builder's
   session is a row here like any other; links are kept (not deleted) on teardown
-  — the session rows are the durable transcript.
+  — the session rows are the durable transcript. RLS-guarded (see Decisions): a
+  link makes its session publicly visible, so inserting one requires being able
+  to see that session already.
 - **Comment** — a row in `issue_comments`: `id`, `issueId`, `authorId`, `body`.
   A forum reply, or an agent's note when it pauses for clarification.
 - **Handoff** (`handoff.ts`) — the baton: `requestHandoff` validates a pass and
@@ -186,12 +188,22 @@ id) through their public functions, not their tables.
 - **One worktree per issue, one baton.** Every agent on an issue works in the
   SAME worktree — parallel worktrees per issue are a deliberate non-goal (merge
   hell for no gain on a crew-sized ship). The concurrency rule that makes that
-  safe is the baton: `requestHandoff` refuses a pass while another agent's
-  session on the issue is running, and the prompts tell agents to hand off as
-  their **last** action. There's a residual overlap window (the caller's turn
+  safe is the baton, enforced twice: `requestHandoff` refuses at the door
+  (giving the agent a good error), and `applyHandoff` re-checks **inside the
+  per-issue chain** — the only place check-and-act is atomic — so two passes
+  that both squeaked past the door can't both fire. A baton the orchestrator
+  drops (raced a close, lost the re-check) is written back onto the thread as a
+  comment: the from-agent already stopped, so the message must not evaporate
+  into a console log. There's a residual overlap window (the caller's turn
   finishing while the target's boots) accepted on the same grounds as
   `SKYLARK_ACTOR`'s honesty: the contract says don't touch files after handing
   off.
+- **The event consumer re-validates; the emitter's checks are courtesy.**
+  `applyHandoff` re-checks the target is a crew **agent** (a forged or replayed
+  event must never boot a session that acts as a human) and only honors an event
+  whose envelope agrees with its payload (source `issues`, audience `public`,
+  topic = `issue:<payload.issueId>`). The notifications reactor applies the same
+  topic-binding before letting a handoff payload adjust recipients.
 - **Owner ≠ author, and OWNER rides notifications, not a turn.** `ownerId`
   defaults to the creator and exists so an agent can file work someone else
   answers for. A `handoff OWNER` never boots a worktree session — the owner
@@ -199,12 +211,23 @@ id) through their public functions, not their tables.
   chat for an agent; see [notifications](../notifications/zine.md)). Corollary:
   a baton pass to an agent is delivered ONLY as the orchestrator's turn — the
   reactor excludes the target from fan-out so an inbox wake can't double-drive
-  it.
-- **Reconcile resumes the builder's hand only.** Startup reconciliation re-seeds
-  a building issue's turn on the builder session — if the baton was with another
-  agent when the server restarted, that hand stays paused until the next handoff
-  or a human nudge. Fine while the builder is the entrypoint of every flow;
-  revisit when playbooks make the entrypoint explicit data.
+  it. And an owner may not ping **themself**: your own action is never your own
+  news, so a self-ping would vanish silently — `requestHandoff` refuses it and
+  points the agent at comment-and-pause instead.
+- **A row in `issue_sessions` is a key, so it's guarded like one.** The RLS
+  session-visibility rule reads "does an issue point at this session?" from
+  `issue_sessions` — which makes inserting a link the power to flip a session
+  crew-public. Migration 0015 puts an insert policy on the table: you may only
+  link a session you can already see. Selects stay open (the board is public;
+  the links carry no content).
+- **Reconcile sweeps stranded turns, then resumes the builder's hand.** A crash
+  leaves sessions stuck on `running`, and a stuck row would jam the baton
+  forever (every handoff refused with "wait for their turn to end"). On startup,
+  reconcile cancels any running issue session — a fresh process has no live
+  turns, so they're all corpses — then re-seeds the builder's turn. If the baton
+  was with another agent when the server died, that hand stays paused until the
+  next handoff or a human nudge: fine while the builder is the entrypoint of
+  every flow; revisit when playbooks make the entrypoint explicit data.
 - **What's verified vs. deferred.** The orchestrator's decision logic — create/
   reuse/remove worktrees, start/resume/cancel sessions, idempotency, the
   defensive done-refresh, status-line writing, the bus-note handler, and startup
