@@ -9,6 +9,7 @@ import {
   assignDefaultAgentProfile,
   createUser,
   getUserByHandle,
+  clearDanglingProfiles,
   getUserById,
   handleOf,
   listUsers,
@@ -135,6 +136,35 @@ describe('users service', () => {
       type: 'agent',
     })
     expect((await listUsers(db)).map((u) => u.id)).toEqual(['a', 'b'])
+  })
+
+  describe('clearDanglingProfiles', () => {
+    it('nulls unresolved references, keeps valid ones, clears all when no profile exists', async () => {
+      const agent = await createUser(db, {
+        id: 'a1',
+        handle: 'ghosted',
+        displayName: 'Ghosted',
+        type: 'agent',
+      })
+      const ok = await createUser(db, {
+        id: 'a2',
+        handle: 'fine',
+        displayName: 'Fine',
+        type: 'agent',
+      })
+      await setUserProfile(db, agent.id, 'ghost-profile')
+      await setUserProfile(db, ok.id, 'real-profile')
+
+      await clearDanglingProfiles(db, ['real-profile'])
+      expect(defined(await getUserById(db, agent.id)).profileId).toBeNull()
+      expect(defined(await getUserById(db, ok.id)).profileId).toBe(
+        'real-profile',
+      )
+
+      // No valid profiles at all -> every reference is dangling.
+      await clearDanglingProfiles(db, [])
+      expect(defined(await getUserById(db, ok.id)).profileId).toBeNull()
+    })
   })
 
   describe('seedCrew', () => {

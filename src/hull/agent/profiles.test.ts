@@ -4,7 +4,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
 
-import { getUserByHandle, seedCrew } from '@hull/users/service'
+import { getUserByHandle, seedCrew, setUserProfile } from '@hull/users/service'
 
 import {
   createProfile,
@@ -260,6 +260,32 @@ describe('agent profiles + extensions service', () => {
     ).toMatch(/pilot a Skylark ship/i)
     expect(defined(await getProfileByName(db, CHAT_PROFILE.name)).id).toBe(
       chat.id,
+    )
+  })
+
+  it('heals a DANGLING profileId — profiles recreated with new ids — back to the default', async () => {
+    await seedCrew(db)
+    await seedAndWireProfiles(db)
+    const chat = defined(await getProfileByName(db, CHAT_PROFILE.name))
+    const tilde = defined(await getUserByHandle(db, 'tilde'))
+    // The live failure mode: agent_profiles was rebuilt, users kept old ids.
+    // Nothing references the ghost id; a session boot would die on its FK.
+    await setUserProfile(db, tilde.id, uuidv7())
+    await seedAndWireProfiles(db, { convergeAll: false })
+    expect(defined(await getUserByHandle(db, 'tilde')).profileId).toBe(chat.id)
+  })
+
+  it('healing leaves a VALID hand-picked profile alone', async () => {
+    await seedCrew(db)
+    await seedAndWireProfiles(db)
+    const builderProfile = defined(
+      await getProfileByName(db, BUILDER_PROFILE.name),
+    )
+    const bix = defined(await getUserByHandle(db, 'bix'))
+    await setUserProfile(db, bix.id, builderProfile.id)
+    await seedAndWireProfiles(db, { convergeAll: false })
+    expect(defined(await getUserByHandle(db, 'bix')).profileId).toBe(
+      builderProfile.id,
     )
   })
 
