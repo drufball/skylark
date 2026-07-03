@@ -83,9 +83,9 @@ Two coverage gates (`npm run coverage`, `npm run coverage:diff`) run both
 locally and in per-PR CI; mutation testing runs locally (`npm run mutate:diff`)
 and as a weekly full-project sweep (`npm run mutate`), not per PR — scope and
 rationale live in `vitest.config.ts` and `stryker.config.mjs`. Every PR also
-draws an advisory **change review** (five `tessl/code-review` lenses via
-`tessl change review`); comment `@tessl-change-review` on a PR to re-run it. The
-**mutation review** workflow (via `tessl launch skill --cloud`) is currently
+draws an advisory **change review** (five review lenses via
+`anthropics/claude-code-action`); comment `@change-review` on a PR to re-run it.
+The **mutation review** workflow (via `tessl launch skill --cloud`) is currently
 disabled. The weekly sweeps and their secrets are documented in
 `.github/workflows/`.
 
