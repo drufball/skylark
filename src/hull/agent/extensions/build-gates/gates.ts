@@ -16,10 +16,13 @@ import { truncate } from '@hull/lib/text'
  *
  * Matched on word boundaries so a `git` subcommand anywhere in a compound
  * command (`cd x && git commit`) counts, while a mere mention
- * (`echo "commit"`, `git-committer.txt`) does not.
+ * (`echo "commit"`, `git-committer.txt`) does not. Global options between
+ * `git` and the verb (`git -c user.name=x commit`, `git -C /repo add`) are
+ * skipped — each `-flag` may carry one value token — so a dressed-up commit
+ * can't slip past the gate.
  */
 export function isCommitCommand(command: string): boolean {
-  return /\bgit\s+(add|commit)\b/.test(command)
+  return /\bgit(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+(add|commit)\b/.test(command)
 }
 
 /** Did `npm run check` pass? Zero exit code only. */

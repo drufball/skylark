@@ -145,6 +145,15 @@ describe('resolveModel', () => {
       /weirdprovider\/foo/,
     )
   })
+
+  it('rejects an unknown provider with the PROVIDER error, not a model miss', () => {
+    // 'bogus' deliberately doesn't contain the word "provider": the message
+    // must come from the provider guard itself, not fall through to the
+    // "unknown <provider> model" complaint (which would misdiagnose the typo).
+    expect(() => resolveModel('bogus/x')).toThrow(
+      /unknown model provider "bogus"/i,
+    )
+  })
 })
 
 describe('defaultModelRef', () => {

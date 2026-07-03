@@ -94,6 +94,26 @@ describe('createAgentWaker', () => {
     expect(deps.unread).toHaveLength(0)
   })
 
+  it('arms exactly one timer per agent — a flurry never schedules a second fire', async () => {
+    // markRead deliberately does NOT consume here: if the debounce armed a
+    // second timer, its fire would still see unread rows and wake AGAIN. With
+    // a single armed timer there is exactly one wake no matter what.
+    deps.markRead = () => Promise.resolve()
+    const waker = createAgentWaker(deps)
+    deps.unread = [
+      notification({ type: 'issue.status_changed' }),
+      notification({ type: 'issue.commented' }),
+    ]
+    waker.onNotified(deps.unread[0])
+    waker.onNotified(deps.unread[1])
+
+    await vi.advanceTimersByTimeAsync(20_000) // both windows, if two were armed
+    await vi.waitFor(() => {
+      expect(deps.wakes.length).toBeGreaterThan(0)
+    })
+    expect(deps.wakes).toHaveLength(1)
+  })
+
   it('never wakes a human — their inbox stays unread for the bell', async () => {
     const waker = createAgentWaker(deps)
     deps.unread = [notification({ userId: 'human-1' })]

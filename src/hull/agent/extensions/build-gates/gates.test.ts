@@ -23,6 +23,25 @@ describe('build-gates decision logic', () => {
       expect(isCommitCommand('npm test; git add src/')).toBe(true)
     })
 
+    it('flags a commit however the whitespace is shaped', () => {
+      expect(isCommitCommand('git  commit -m "x"')).toBe(true) // double space
+      expect(isCommitCommand('git\tadd .')).toBe(true)
+    })
+
+    it('flags a commit dressed up with global git options', () => {
+      expect(isCommitCommand('git -c user.name=x commit -m "y"')).toBe(true)
+      expect(isCommitCommand('git -C /repo add .')).toBe(true)
+      expect(isCommitCommand('git --no-pager commit')).toBe(true)
+      expect(isCommitCommand('git -c user.name=x -c user.email=y commit')).toBe(
+        true,
+      )
+    })
+
+    it('does not flag non-committing verbs behind the same options', () => {
+      expect(isCommitCommand('git -c user.name=x status')).toBe(false)
+      expect(isCommitCommand('git --no-pager log --oneline')).toBe(false)
+    })
+
     it('ignores non-committing git commands', () => {
       expect(isCommitCommand('git status')).toBe(false)
       expect(isCommitCommand('git log --oneline')).toBe(false)
@@ -32,6 +51,8 @@ describe('build-gates decision logic', () => {
     it('ignores commands that merely mention commit as a substring', () => {
       expect(isCommitCommand('echo "commit your code"')).toBe(false)
       expect(isCommitCommand('cat git-committer.txt')).toBe(false)
+      expect(isCommitCommand('legit add file')).toBe(false) // "git" mid-word
+      expect(isCommitCommand('git committer')).toBe(false) // "commit" mid-word
     })
 
     it('ignores unrelated commands', () => {

@@ -207,6 +207,36 @@ describe('runShipLogStream', () => {
     expect(sentIds(sent)).toContain('e0101')
   })
 
+  it('frames an ephemeral note from its inline data, never the durable lookup', async () => {
+    // No durable row exists for an ephemeral event — the frame must be built
+    // from the payload riding the note itself, with no getEventById call.
+    const getEventById = vi.fn().mockResolvedValue(undefined)
+    const { bus, sent, deps } = harness({ getEventById })
+    await runShipLogStream(deps, { ...TOPICS })
+
+    bus.publish(
+      note({
+        id: 'e0500',
+        type: 'chat.agent_progress',
+        ephemeral: { source: 'chat', payload: { line: 'hi' } },
+      }),
+    )
+    await tick()
+
+    const frame = sent.find((f) => f.startsWith('id: e0500\n'))
+    expect(frame).toBeDefined()
+    const data: unknown = JSON.parse(
+      (frame ?? '').slice((frame ?? '').indexOf('data: ') + 6),
+    )
+    expect(data).toMatchObject({
+      id: 'e0500',
+      type: 'chat.agent_progress',
+      source: 'chat',
+      payload: { line: 'hi' },
+    })
+    expect(getEventById).not.toHaveBeenCalled()
+  })
+
   it('survives a durable fetch that rejects (dropped frame, no crash)', async () => {
     const { bus, sent, deps } = harness({
       getEventById: () => Promise.reject(new Error('db blip')),

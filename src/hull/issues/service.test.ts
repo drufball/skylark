@@ -208,6 +208,24 @@ describe('createIssue', () => {
     expect(issue.nano).toBe('bbbb')
   })
 
+  it('surfaces a forced-nano collision immediately — no pointless retries', async () => {
+    await createIssue(db, { title: 'holder', authorId, nano: 'ff11' })
+    const err: unknown = await createIssue(db, {
+      title: 'clash',
+      authorId,
+      nano: 'ff11',
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    // The database's own unique-violation error, not the retry-exhausted one:
+    // a forced nano can't be redrawn, so retrying it ten times would only bury
+    // the real cause.
+    expect(err).toBeInstanceOf(Error)
+    expect(String(err)).toMatch(/insert into "issues"/i)
+    expect(String(err)).not.toMatch(/could not generate/i)
+  })
+
   it('gives up loudly if it cannot find a free nano', async () => {
     await createIssue(db, { title: 'holder', authorId, nano: 'dupe' })
     await expect(
@@ -241,6 +259,69 @@ describe('listIssues + comments', () => {
     })
     const commented = events.filter((e) => e.type === 'issue.commented')
     expect(commented).toHaveLength(2)
+    // The payload names the issue AND the comment, so a subscriber can fetch
+    // exactly the new row without rescanning the thread.
+    expect(commented[0].payload).toEqual({
+      issueId: issue.id,
+      commentId: comments[0].id,
+    })
+  })
+
+  it('threads real comments and status changes chronologically, interleaved', async () => {
+    // comment → status change → comment, with real UUIDv7 ids from both
+    // sources; the assembled thread must interleave them in event order.
+    const issue = await createIssue(db, { title: 'timeline', authorId })
+    const first = await addComment(db, {
+      issueId: issue.id,
+      authorId,
+      body: 'first',
+    })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    const second = await addComment(db, {
+      issueId: issue.id,
+      authorId,
+      body: 'second',
+    })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
+    const change = defined(
+      events.find((e) => e.type === 'issue.status_changed'),
+    )
+    const thread = assembleThread({
+      issue: defined(await getIssue(db, issue.id)),
+      authorHandle: 'drufball',
+      comments: (await listComments(db, issue.id)).map((c) => ({
+        id: c.id,
+        authorHandle: 'drufball',
+        body: c.body,
+        at: c.createdAt.toISOString(),
+      })),
+      statusChanges: [
+        {
+          id: change.id,
+          authorHandle: 'drufball',
+          from: 'open',
+          to: 'building',
+          at: change.createdAt.toISOString(),
+        },
+      ],
+    })
+    expect(thread.entries.map((e) => e.kind)).toEqual([
+      'comment',
+      'status',
+      'comment',
+    ])
+    expect(thread.entries.map((e) => e.id)).toEqual([
+      first.id,
+      change.id,
+      second.id,
+    ])
   })
 })
 

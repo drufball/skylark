@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_OLLAMA_BASE_URL, ollamaApiRoot, ollamaBaseUrl } from './ollama'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('ollamaBaseUrl', () => {
   it('defaults to the loopback Ollama OpenAI endpoint', () => {
@@ -12,6 +16,19 @@ describe('ollamaBaseUrl', () => {
     expect(
       ollamaBaseUrl({ OLLAMA_BASE_URL: '  http://gpu-box:1234/v1  ' }),
     ).toBe('http://gpu-box:1234/v1')
+  })
+
+  it('uses an explicit override verbatim — no /v1 appended to a custom path', () => {
+    // A proxy or gateway endpoint may not end in /v1; the override must be
+    // returned as typed, not rebuilt from the root with /v1 bolted on.
+    expect(ollamaBaseUrl({ OLLAMA_BASE_URL: 'http://proxy.lan/ollama' })).toBe(
+      'http://proxy.lan/ollama',
+    )
+  })
+
+  it('reads the override from process.env by default', () => {
+    vi.stubEnv('OLLAMA_BASE_URL', 'http://stubbed.lan/ollama')
+    expect(ollamaBaseUrl()).toBe('http://stubbed.lan/ollama')
   })
 
   it('normalizes a bare host[:port] OLLAMA_HOST into an http /v1 url', () => {
