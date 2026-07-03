@@ -1,3 +1,4 @@
+import { ensureChatVisible } from '@hull/chat/service'
 import { isMain, runCli } from '@hull/lib/cli'
 import { withCliActor } from '@hull/users/actor'
 import { getUserById } from '@hull/users/service'
@@ -37,7 +38,9 @@ const STATUS_MARK: Record<IssueStatus, string> = {
 /**
  * Parse `issue new`'s args: the title, plus optional `--body <text>` and
  * `--chat <id>` (the chat this issue was filed from — how notifications about
- * it route back to that conversation).
+ * it route back to that conversation). A flag present without a value (or with
+ * another flag where its value should be) is a loud usage error, not a
+ * silently unrouted issue.
  */
 export function parseNewArgs(args: string[]): {
   title: string
@@ -48,7 +51,11 @@ export function parseNewArgs(args: string[]): {
   const takeFlag = (flag: string): string | undefined => {
     const at = rest.indexOf(flag)
     if (at === -1) return undefined
-    const [, value] = rest.splice(at, 2)
+    const value = rest.at(at + 1)
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error(`${flag} requires a value`)
+    }
+    rest.splice(at, 2)
     return value
   }
   const body = takeFlag('--body')
@@ -60,9 +67,14 @@ async function cmdNew(args: string[]): Promise<void> {
   const { title, body, originChatId } = parseNewArgs(args)
   if (!title)
     throw new Error('usage: issue new <title> [--body <text>] [--chat <id>]')
-  const issue = await withCliActor((tx, me) =>
-    createIssue(tx, { title, body, originChatId, authorId: me.id }),
-  )
+  const issue = await withCliActor(async (tx, me) => {
+    // Provenance must be honest: the filer can only claim a chat they're in.
+    // ensureChatVisible probes under the actor's RLS, so a forged or foreign
+    // chat id reads as not-a-member — and the wake can't be routed into a
+    // conversation the filer never saw.
+    if (originChatId) await ensureChatVisible(tx, originChatId)
+    return createIssue(tx, { title, body, originChatId, authorId: me.id })
+  })
   process.stdout.write(
     `Opened #${issue.nano} ${DIM}${issue.id}${RESET}\n${issue.title}\n`,
   )

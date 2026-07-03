@@ -8,12 +8,15 @@ import {
 } from './waker'
 
 // The waker's decisions, driven with fake timers and fake deps — no runtime,
-// no database, no real ten-second debounce.
+// no database, no real ten-second debounce. The fake inbox models the real
+// service: markRead really consumes, so retry semantics are the genuine ones.
 
+let seq = 0
 function notification(
   over: Partial<WakeableNotification> = {},
 ): WakeableNotification {
   return {
+    id: `n${String(++seq)}`,
     userId: 'agent-1',
     topic: 'issue:aa11',
     type: 'issue.status_changed',
@@ -37,21 +40,19 @@ describe('createAgentWaker', () => {
   let deps: AgentWakerDeps & {
     wakes: { chatId: string; agentUserId: string; briefing: string }[]
     unread: WakeableNotification[]
-    marked: string[]
   }
 
   beforeEach(() => {
     vi.useFakeTimers()
     const wakes: (typeof deps)['wakes'] = []
-    const marked: string[] = []
     deps = {
       wakes,
       unread: [],
-      marked,
       isAgent: (userId) => Promise.resolve(userId.startsWith('agent')),
-      listUnread: () => Promise.resolve(deps.unread),
-      markAllRead: (userId) => {
-        marked.push(userId)
+      listUnread: () => Promise.resolve([...deps.unread]),
+      // A REAL consume: marked entries leave the unread list, like the service.
+      markRead: (_userId, ids) => {
+        deps.unread = deps.unread.filter((n) => !ids.includes(n.id))
         return Promise.resolve()
       },
       chatForTopic: (topic) =>
@@ -68,7 +69,7 @@ describe('createAgentWaker', () => {
     vi.useRealTimers()
   })
 
-  it('gathers a flurry into ONE wake after the debounce', async () => {
+  it('gathers a flurry into ONE wake after the debounce, consuming the batch', async () => {
     const waker = createAgentWaker(deps)
     deps.unread = [
       notification({ type: 'issue.status_changed' }),
@@ -89,8 +90,8 @@ describe('createAgentWaker', () => {
     expect(wake.briefing).toContain('2 updates')
     expect(wake.briefing).toContain('describe(issue.status_changed)')
     expect(wake.briefing).toContain('describe(issue.commented)')
-    // The batch was consumed: briefed = delivered.
-    expect(deps.marked).toEqual(['agent-1'])
+    // Delivered = consumed.
+    expect(deps.unread).toHaveLength(0)
   })
 
   it('never wakes a human — their inbox stays unread for the bell', async () => {
@@ -99,10 +100,10 @@ describe('createAgentWaker', () => {
     waker.onNotified(deps.unread[0])
     await vi.advanceTimersByTimeAsync(10_000)
     expect(deps.wakes).toHaveLength(0)
-    expect(deps.marked).toHaveLength(0)
+    expect(deps.unread).toHaveLength(1)
   })
 
-  it('wakes per chat when the batch spans several origins', async () => {
+  it('wakes per chat when the batch spans several origins; orphans are consumed without one', async () => {
     deps.chatForTopic = (topic) =>
       Promise.resolve(
         topic === 'issue:aa11'
@@ -115,7 +116,7 @@ describe('createAgentWaker', () => {
     deps.unread = [
       notification({ topic: 'issue:aa11' }),
       notification({ topic: 'issue:bb22' }),
-      notification({ topic: 'issue:orphan' }), // no origin chat — inbox-only
+      notification({ topic: 'issue:orphan' }), // no origin chat — no wake
     ]
     waker.onNotified(deps.unread[0])
     await vi.advanceTimersByTimeAsync(10_000)
@@ -123,6 +124,9 @@ describe('createAgentWaker', () => {
       expect(deps.wakes).toHaveLength(2)
     })
     expect(deps.wakes.map((w) => w.chatId).sort()).toEqual(['chat-1', 'chat-2'])
+    // Everything consumed: two by delivery, the orphan because an agent inbox
+    // has no other reader.
+    expect(deps.unread).toHaveLength(0)
   })
 
   it('does nothing when the inbox drained before the debounce fired', async () => {
@@ -131,31 +135,37 @@ describe('createAgentWaker', () => {
     waker.onNotified(notification())
     await vi.advanceTimersByTimeAsync(10_000)
     expect(deps.wakes).toHaveLength(0)
-    expect(deps.marked).toHaveLength(0)
   })
 
-  it('a failed wake is logged, not thrown, and the next notification re-arms', async () => {
+  it('a failed wake leaves its batch UNREAD, and the next notification retries it', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       deps.wake = () => Promise.reject(new Error('session exploded'))
       const waker = createAgentWaker(deps)
-      deps.unread = [notification()]
-      waker.onNotified(deps.unread[0])
+      const first = notification()
+      deps.unread = [first]
+      waker.onNotified(first)
       await vi.advanceTimersByTimeAsync(10_000)
       await vi.waitFor(() => {
         expect(spy).toHaveBeenCalled()
       })
+      // NOT consumed — delivery failed, the briefing is still owed.
+      expect(deps.unread).toHaveLength(1)
 
-      // The pending slot was released — a later notification schedules again.
+      // A later notification re-arms; the retried wake carries the backlog.
       deps.wake = (chatId, agentUserId, briefing) => {
         deps.wakes.push({ chatId, agentUserId, briefing })
         return Promise.resolve()
       }
-      waker.onNotified(deps.unread[0])
+      const second = notification()
+      deps.unread.push(second)
+      waker.onNotified(second)
       await vi.advanceTimersByTimeAsync(10_000)
       await vi.waitFor(() => {
         expect(deps.wakes).toHaveLength(1)
       })
+      expect(deps.wakes[0].briefing).toContain('2 updates')
+      expect(deps.unread).toHaveLength(0)
     } finally {
       spy.mockRestore()
     }

@@ -49,3 +49,13 @@ describe('parseNewArgs', () => {
     })
   })
 })
+
+describe('parseNewArgs — strict flag values', () => {
+  it('rejects a flag with no value, or with another flag where its value goes', () => {
+    expect(() => parseNewArgs(['Fix', '--chat'])).toThrow(/--chat requires/)
+    expect(() => parseNewArgs(['Fix', '--chat', '--body', 'x'])).toThrow(
+      /--chat requires/,
+    )
+    expect(() => parseNewArgs(['Fix', '--body'])).toThrow(/--body requires/)
+  })
+})

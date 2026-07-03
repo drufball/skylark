@@ -13,12 +13,19 @@ import { errorMessage } from '@hull/lib/errors'
  * briefed, not a session per ping. If a turn is already running, the runtime
  * queues the wake prompt as a follow-up — a second, in-flight debounce.
  *
+ * Consumption follows delivery: a batch is marked read only AFTER its wake
+ * succeeds, so a failed wake leaves the rows unread and the next notification
+ * retries the whole backlog. Notifications with no route home (a topic with no
+ * origin chat) are consumed without a wake — for an agent the inbox has no
+ * other reader.
+ *
  * Everything is injected (reads, the wake itself, even the timer) so the
  * decisions test without a runtime, a database, or real time.
  */
 
 /** The slice of a notification the waker routes and briefs on. */
 export interface WakeableNotification {
+  id: string
   userId: string
   topic: string
   type: string
@@ -31,8 +38,8 @@ export interface AgentWakerDeps {
   isAgent(userId: string): Promise<boolean>
   /** The user's unread notifications, oldest first. */
   listUnread(userId: string): Promise<WakeableNotification[]>
-  /** Consume them — the wake briefing is their delivery. */
-  markAllRead(userId: string): Promise<void>
+  /** Consume delivered entries — called per batch, after its wake succeeds. */
+  markRead(userId: string, ids: string[]): Promise<void>
   /** The chat a topic's work belongs to (an issue's originChatId), if any. */
   chatForTopic(topic: string): Promise<string | null>
   /** One line of briefing copy per notification. */
@@ -66,24 +73,37 @@ export function createAgentWaker(deps: AgentWakerDeps): {
 
     const unread = await deps.listUnread(userId)
     if (unread.length === 0) return
-    await deps.markAllRead(userId)
 
-    // Group the batch by the chat its work belongs to; notifications whose
-    // topic resolves to no chat have nowhere to wake — they stay readable in
-    // the inbox (already marked read here; by design, the briefing IS their
-    // delivery for agents).
-    const byChat = new Map<string, WakeableNotification[]>()
+    // Group the batch by the chat its work belongs to.
+    const routable = new Map<string, WakeableNotification[]>()
+    const orphans: WakeableNotification[] = []
     for (const notification of unread) {
       const chatId = await deps.chatForTopic(notification.topic)
-      if (!chatId) continue
-      const batch = byChat.get(chatId) ?? []
+      if (!chatId) {
+        orphans.push(notification)
+        continue
+      }
+      const batch = routable.get(chatId) ?? []
       batch.push(notification)
-      byChat.set(chatId, batch)
+      routable.set(chatId, batch)
     }
 
-    for (const [chatId, batch] of byChat) {
+    // No route home → no wake to deliver; consume so they don't pile up (an
+    // agent's inbox has no other reader).
+    await deps.markRead(
+      userId,
+      orphans.map((n) => n.id),
+    )
+
+    // Deliver per chat, consuming each batch only once its wake succeeded — a
+    // failed wake leaves its rows unread for the next notification to retry.
+    for (const [chatId, batch] of routable) {
       const lines = await Promise.all(batch.map((n) => deps.describe(n)))
       await deps.wake(chatId, userId, wakeBriefing(lines))
+      await deps.markRead(
+        userId,
+        batch.map((n) => n.id),
+      )
     }
   }
 

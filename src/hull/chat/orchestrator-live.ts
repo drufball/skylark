@@ -10,7 +10,7 @@ import {
 import {
   describeNotification,
   listUnread,
-  markAllRead,
+  markRead,
 } from '@hull/notifications/service'
 import { getUserById, handleOf } from '@hull/users/service'
 
@@ -57,7 +57,7 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
     isAgent: async (userId) =>
       (await getUserById(systemDb, userId))?.type === 'agent',
     listUnread: (userId) => listUnread(systemDb, userId),
-    markAllRead: (userId) => markAllRead(systemDb, userId),
+    markRead: (userId, ids) => markRead(systemDb, userId, ids),
     chatForTopic: async (topic) => {
       const issueId = issueIdFromTopic(topic)
       if (!issueId) return null

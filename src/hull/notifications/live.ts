@@ -1,5 +1,6 @@
 import { systemDb } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
+import { errorMessage } from '@hull/lib/errors'
 
 import type { NotificationRow } from './schema'
 import { createNotificationsReactor } from './service'
@@ -36,7 +37,15 @@ export function ensureNotificationsReactor(): void {
     createNotificationsReactor({
       db: systemDb,
       onNotified: (row) => {
-        for (const hook of deliveryHooks) hook(row)
+        // Each hook isolated, matching the reactor's best-effort posture — one
+        // broken delivery channel must not silence the others.
+        for (const hook of deliveryHooks) {
+          try {
+            hook(row)
+          } catch (err) {
+            console.error(`notification hook failed: ${errorMessage(err)}`)
+          }
+        }
       },
     }),
     'notifications',
