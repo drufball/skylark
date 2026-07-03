@@ -4,7 +4,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
 
-import { getUserByHandle, seedCrew } from '@hull/users/service'
+import { getUserByHandle, seedCrew, setUserProfile } from '@hull/users/service'
 
 import {
   createProfile,
@@ -225,19 +225,82 @@ describe('agent profiles + extensions service', () => {
     const general = defined(await getProfileByName(db, GENERAL_PROFILE.name))
     expect(general.tools).toBeNull()
     expect(general.extensionIds).toEqual([])
+    expect(general.readContextFiles).toBe(true)
+    expect(general.useRepoSkills).toBe(true)
 
-    // babysitter: read+bash only (it shepherds PRs, never writes code), and
-    // its brief names the background tool for CI waits and the hand-back.
+    // babysitter: read+bash only (it shepherds PRs, never writes code), no
+    // ship context or repo skills (it operates gh + the issue CLI, it doesn't
+    // build), and its brief names the background tool and the hand-back.
     const babysitter = defined(
       await getProfileByName(db, BABYSITTER_PROFILE.name),
     )
     expect(babysitter.tools).toEqual(['read', 'bash'])
     expect(babysitter.extensionIds).toEqual([])
+    expect(babysitter.readContextFiles).toBe(false)
+    expect(babysitter.useRepoSkills).toBe(false)
     expect(babysitter.systemPrompt).toMatch(/background/i)
     expect(babysitter.systemPrompt).toMatch(/@builder/i)
 
     expect(await listProfiles(db)).toHaveLength(4)
     expect(await listExtensions(db)).toHaveLength(1)
+  })
+
+  it('seeded prompts keep their load-bearing contract lines', async () => {
+    await seedProfiles(db)
+    const prompt = async (name: string) =>
+      defined(await getProfileByName(db, name)).systemPrompt ?? ''
+
+    // chat: operates, never modifies; change requests become issues.
+    const chat = await prompt(CHAT_PROFILE.name)
+    expect(chat).toContain('never modify the ship')
+    expect(chat).toContain('file an issue')
+
+    // builder: TDD to an OPEN PR, then hand the baton and stop; long waits go
+    // through the background tool, never a foreground poll.
+    const builder = await prompt(BUILDER_PROFILE.name)
+    expect(builder).toContain('red-green TDD')
+    expect(builder).toContain('open a PR')
+    expect(builder).toContain('hand the baton to @babysitter')
+    expect(builder).toContain('`background` tool')
+    expect(builder).toContain('END YOUR TURN')
+
+    // babysitter: waits in the background, merges when green, hands fixes
+    // back to the builder, and never writes code itself.
+    const babysitter = await prompt(BABYSITTER_PROFILE.name)
+    expect(babysitter).toContain('`background` tool')
+    expect(babysitter).toContain('merge it (squash, delete branch)')
+    expect(babysitter).toContain('mark the issue done')
+    expect(babysitter).toContain('hand the baton back')
+    expect(babysitter).toContain('never write code')
+
+    // general: does what the issue says and reports back on its thread.
+    const general = await prompt(GENERAL_PROFILE.name)
+    expect(general).toContain('issue')
+    expect(general).toContain('report back')
+  })
+
+  it('re-seeding preserves a deliberately customized crew profile assignment', async () => {
+    await seedCrew(db)
+    await seedAndWireProfiles(db)
+    // The captain points the builder at a hand-rolled profile…
+    const custom = await upsertProfile(db, {
+      name: 'my-builder',
+      systemPrompt: 'build it my way',
+      tools: null,
+      readContextFiles: true,
+      useRepoSkills: true,
+      extensionIds: [],
+      model: null,
+    })
+    const builder = defined(await getUserByHandle(db, 'builder'))
+    await setUserProfile(db, builder.id, custom.id)
+
+    // …and the next seed leaves that choice standing (only null-or-chat is
+    // corrected back to the standard profile).
+    await seedAndWireProfiles(db)
+    expect(defined(await getUserByHandle(db, 'builder')).profileId).toBe(
+      custom.id,
+    )
   })
 
   it('an ensure-only seed leaves edited profiles alone; the converge seed resets them', async () => {

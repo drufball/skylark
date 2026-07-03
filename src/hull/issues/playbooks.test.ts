@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
 import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
-import { getUserByHandle, seedCrew } from '@hull/users/service'
+import { createUser, getUserByHandle, seedCrew } from '@hull/users/service'
 
 import {
   BUILD_PLAYBOOK_NAME,
@@ -66,14 +66,16 @@ describe('upsertPlaybook', () => {
     ).rejects.toThrow(/member/i)
   })
 
-  it('refuses an empty member list', async () => {
+  it('refuses an empty member list, naming the empty roster as the problem', async () => {
+    // The message must be the empty-roster one, not a downstream complaint
+    // (the entrypoint check also says "member" — that would mask this guard).
     await expect(
       upsertPlaybook(db, {
         name: 'empty',
         memberIds: [],
         entrypointId: builderId,
       }),
-    ).rejects.toThrow(/member/i)
+    ).rejects.toThrow(/at least one member/i)
   })
 
   it('refuses a duplicated roster entry', async () => {
@@ -186,6 +188,28 @@ describe('seedPlaybooks', () => {
     try {
       await seedPlaybooks(bare.db)
       expect(await listPlaybooks(bare.db)).toEqual([])
+    } finally {
+      await bare.close()
+    }
+  })
+
+  it('skips a playbook missing ONE standard member, seeding the rest', async () => {
+    // Builder and hand are aboard, the babysitter is not: the build roster is
+    // incomplete, so `build` is skipped (not seeded short-handed, not fatal)
+    // while `general` still lands.
+    const bare = await freshDb()
+    try {
+      for (const handle of ['builder', 'hand']) {
+        await createUser(bare.db, {
+          id: uuidv7(),
+          handle,
+          displayName: handle,
+          type: 'agent',
+        })
+      }
+      await seedPlaybooks(bare.db)
+      expect(await getPlaybookByName(bare.db, 'build')).toBeUndefined()
+      expect(await getPlaybookByName(bare.db, 'general')).toBeDefined()
     } finally {
       await bare.close()
     }

@@ -298,6 +298,13 @@ describe('files service over a real git repo', () => {
       'main-side\n',
     )
     expect(await service.read('seed.md')).toBe('staged\n')
+
+    // A conflicted sweep merged nothing, so it must not announce a merge.
+    const events = await listEventsSince(db, {
+      topicPatterns: ['files:*'],
+      audience: 'public',
+    })
+    expect(events.filter((e) => e.type === FILES_MERGED)).toHaveLength(0)
   })
 
   it('the idle clock is git-derived: it survives a restart and honors fresh writes', async () => {

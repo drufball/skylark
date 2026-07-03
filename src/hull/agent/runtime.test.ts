@@ -6,6 +6,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
+import type { AppendEventInput } from '@hull/events/service'
 import { createUser } from '@hull/users/service'
 
 import { createProfile, registerExtension } from './profiles'
@@ -361,6 +362,52 @@ describe('agent runtime', () => {
     expect(emitted.map((e) => e.type)).toContain('agent.message')
     // Two messages this turn (user echo + assistant) → two message events.
     expect(emitted.filter((e) => e.type === 'agent.message')).toHaveLength(2)
+  })
+
+  it('reuses the live session across turns — one boot per session id', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    await runtime.runTurn('s1', 'one')
+    await runtime.runTurn('s1', 'two')
+
+    // The registry served the second turn from the same live entry: the
+    // factory booted exactly one session, and both prompts reached it.
+    expect(factoryArgs).toHaveLength(1)
+    expect(fake.promptCalls).toEqual(['one', 'two'])
+  })
+
+  it('announces from source "agent" with the payload fields subscribers rely on', async () => {
+    const full: AppendEventInput[] = []
+    const rt = createAgentRuntime({
+      db,
+      factory: () => Promise.resolve(fake),
+      emit: (e) => {
+        full.push(e)
+        return Promise.resolve()
+      },
+    })
+    await createSession(db, { id: 's1', model: 'm' })
+    await rt.runTurn('s1', 'hi')
+    // Emission is fire-and-forget; give the last scheduled emit a macrotask.
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(full.length).toBeGreaterThan(0)
+    expect(full.every((e) => e.source === 'agent')).toBe(true)
+    expect(full.every((e) => e.topic === 'session:s1')).toBe(true)
+
+    // The status events carry the status word (and a null error) so the web
+    // chat can flip its indicator without a read-back.
+    const statuses = full.filter((e) => e.type === 'agent.status')
+    expect(statuses.map((e) => e.payload)).toEqual([
+      { status: 'running', error: null },
+      { status: 'idle', error: null },
+    ])
+    // The message events say whose message landed (user echo + assistant).
+    const messages = full.filter((e) => e.type === 'agent.message')
+    expect(messages.map((e) => e.payload)).toEqual([
+      { role: 'user' },
+      { role: 'assistant' },
+    ])
+    rt.disposeAll()
   })
 
   it('never lets a failing emit break a turn', async () => {
