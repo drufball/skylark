@@ -60,7 +60,4 @@ conflicting merge is aborted cleanly, leaving both sides intact.
 
 ## Changelog
 
-- **#1** — The service: staged CRUD over `src/home/files/` with a single
-  `files/staging` branch, the idle sweep merging to `main`, `file.changed`
-  events, web + CLI doors, and the Files surface (explorer + live markdown
-  editor with auto-save) in the dock.
+- **#1** — The files service and the Files surface land.

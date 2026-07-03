@@ -16,19 +16,19 @@ the issue says). Agents on an issue pass a **baton** between each other with
 status changes, and handoffs ride the ship's log, so the board updates live and
 — crucially — the **orchestrator** can react across processes.
 
-The orchestrator is the heart of this milestone and the thing that proves the
-event bus. It runs in the web-server process, subscribes to the ship's log, and
-turns `issue.status_changed` events into the worktree + builder lifecycle:
-generate a branch, create a worktree, boot a builder agent session in it, seed
-it with the issue, and drive it to a merged PR. It must be **event-driven**, not
-called inline, because the builder reports back by running `npm run issue …`
-from its own bash tool — a separate process whose transition only reaches the
-server as a durable event + `pg_notify`. The same handler hears a human clicking
-"Build it" in the browser and an agent typing `issue done` in a worktree.
+The orchestrator is what proves the event bus. It runs in the web-server
+process, subscribes to the ship's log, and turns `issue.status_changed` events
+into the worktree + builder lifecycle: generate a branch, create a worktree,
+boot a builder agent session in it, seed it with the issue, and drive it to a
+merged PR. It must be **event-driven**, not called inline, because the builder
+reports back by running `npm run issue …` from its own bash tool — a separate
+process whose transition only reaches the server as a durable event +
+`pg_notify`. The same handler hears a human clicking "Build it" in the browser
+and an agent typing `issue done` in a worktree.
 
 The service is hull (load-bearing orchestration). The board and thread are
-rigging views; the routes are thin mounts. The dock — a slim app-shell nav
-between Chat, Issues, and a placeholder Agents slot — is rigging too.
+rigging views; the routes are thin mounts, framed by the dock (the rigging's
+app-shell nav).
 
 ## Components
 
@@ -37,8 +37,11 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   (`open|building|done|closed`), `authorId` (→ users.id), `ownerId` (→ users.id
   — who answers for it, the creator unless set otherwise), `playbookId` (→
   playbooks.id; null = the `build` default), `visibility` (`public` for now —
-  room to grow), and the build context filled in on the first build:
-  `branchName`, `worktreePath`, and `statusLine` (the latest agent progress).
+  room to grow), `originChatId` (→ chats.id — the chat this issue was filed from
+  via `--chat`, how notifications about it find their way back to the
+  conversation that planned it; null when filed from the board or a bare CLI),
+  and the build context filled in on the first build: `branchName`,
+  `worktreePath`, and `statusLine` (the latest agent progress).
 - **Playbook** (`playbooks.ts`) — a row in `playbooks`: `name` (unique — the
   upsert key and what `--playbook` accepts), `description`, `memberIds` (agent
   users allowed hands on the issue), `entrypointId` (who a → building seeds).
@@ -70,12 +73,14 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   `open|building→closed`; `done` and `closed` are terminal; a status never
   transitions to itself. Every door (web, CLI, orchestrator) routes through it,
   so the rules live in exactly one place.
-- **Events** — `issue.status_changed` on every transition, `issue.commented` on
-  every comment, and `issue.handoff` on every baton pass or owner ping, each
-  emitted **once** with topic `issue:<id>` and audience `public`. The thread
-  view subscribes to the exact topic (`issue:<id>`); the board subscribes to the
-  wildcard (`issue:*`); the orchestrator and the notifications reactor listen
-  too. One topic, many subscribers — no dual-emit.
+- **Events** — `issue.opened` on creation (its `ownerId` payload is how the
+  notifications reactor auto-watches the owner), `issue.status_changed` on every
+  transition, `issue.commented` on every comment, and `issue.handoff` on every
+  baton pass or owner ping, each emitted **once** with topic `issue:<id>` and
+  audience `public`. The thread view subscribes to the exact topic
+  (`issue:<id>`); the board subscribes to the wildcard (`issue:*`); the
+  orchestrator and the notifications reactor listen too. One topic, many
+  subscribers — no dual-emit.
 - **The orchestrator** (`orchestrator.ts`) — the build-lifecycle brain. Pure of
   I/O by injection: it takes a `GitOps` (worktree/git/fs), an agent runtime, and
   a slug generator as dependencies, so its decisions are unit-tested against
@@ -99,7 +104,8 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
 - **The views** (rigging) — the **board** (issues grouped by status, author +
   comment count + the live status line for building issues), the **thread**
   (body, the merged comment/status-change timeline, a composer, status
-  controls), and the **dock** (the persistent Chat/Issues/Agents nav shell).
+  controls), and the **dock** (the persistent app-shell nav —
+  Chat/Issues/Files/Inbox/Agents/Models).
 
 ## Structure
 
@@ -157,12 +163,13 @@ mirrors what Claude Code does: parse `.worktreeinclude` (`.gitignore` syntax —
 comments and blanks dropped; currently just `.env`) and copy each listed path
 from the server's checkout into the new worktree.
 
-**Decoupling.** The service writes only its own two tables. It references other
-services by id (FKs to `users.id` and `agent_sessions.id`, the one-way pattern
-the events and agent schemas already use) and learns about the world through
-events — it never queries those tables. The orchestrator reaches into the agent
-service (to create/reuse sessions) and the users service (to resolve the builder
-id) through their public functions, not their tables.
+**Decoupling.** The service writes only its own four tables (`issues`,
+`issue_comments`, `issue_sessions`, `playbooks`). It references other services
+by id (FKs to `users.id` and `agent_sessions.id`, the one-way pattern the events
+and agent schemas already use) and learns about the world through events — it
+never queries those tables. The orchestrator reaches into the agent service (to
+create/reuse sessions) and the users service (to resolve the builder id) through
+their public functions, not their tables.
 
 ## Decisions
 
@@ -187,7 +194,10 @@ id) through their public functions, not their tables.
   is safe in `main` regardless. **Teardown is guarded by a merge check**: the
   prompt asks the agent to set `done` only after a real merge, but a prompt
   isn't a contract, so before removing the worktree the orchestrator confirms
-  the branch is an ancestor of `main` (`branchMerged`). If it can't confirm, it
+  the merge (`branchMerged`): the branch being an ancestor of `main`, **or** —
+  because PRs land here by squash merge, which makes a new commit so the branch
+  tip is never an ancestor — a merged PR for the branch per
+  `gh pr list --head <branch> --state merged`. If it can't confirm either, it
   leaves the worktree standing rather than orphan an in-flight PR.
 - **The builder's identity is a command prefix, not a process env.** The
   orchestrator seeds the prompt with
@@ -198,7 +208,7 @@ id) through their public functions, not their tables.
   not the operator. `SKYLARK_ACTOR` is **unauthenticated by design** — the CLI
   trusts whatever id it's handed — and is safe only because shell access to the
   host _is_ host access on a single-laptop ship; it gets a real entitlement
-  check when the crew-filter primitive lands.
+  check if the ship ever grows past shell-is-host trust.
 - **Build context is recorded, not derived.** `branchName`/`worktreePath` are
   columns set on first build and reused thereafter; each agent's session is a
   row in `issue_sessions`. The branch is generated **once** (the slug LLM call
@@ -249,12 +259,12 @@ id) through their public functions, not their tables.
   remains.
 - **Playbook entrypoints boot from `users.profileId`.** The playbook names WHO
   starts; how that agent boots is the agent's own profile — one source of truth,
-  the same one a handoff target uses. Corollary: the seeding wires the `builder`
-  and `hand` crew members to their profiles (the chat default is never right for
-  them), and `ensureOrchestrator` converges crew + profiles + playbooks on every
-  boot so entrypoint resolution never runs against half-seeded config. An issue
-  whose playbook (or entrypoint agent) is gone falls back to the legacy builder
-  path, loudly.
+  the same one a handoff target uses. Corollary: the seeding wires the
+  `builder`, `hand`, and `babysitter` crew members to their profiles (the chat
+  default is never right for them), and `ensureOrchestrator` converges crew +
+  profiles + playbooks on every boot so entrypoint resolution never runs against
+  half-seeded config. An issue whose playbook (or entrypoint agent) is gone
+  falls back to the legacy builder path, loudly.
 - **`playbookId` is nullable, and null MEANS build.** No backfill, no required
   field on every door: a bare `issue new`, every pre-playbooks issue, and every
   agent that never heard of playbooks all keep their meaning. The default is
@@ -265,7 +275,10 @@ id) through their public functions, not their tables.
   `npm run agent seed` (and `convergeAll: true` programmatically) is the
   factory-reset door that rewrites the standard rows to their declared shape. A
   seeder that silently converges on boot un-does the very edits the editors
-  invite — that bug shipped once in review and must not ship again.
+  invite — that bug shipped once in review and must not ship again. Ensure mode
+  has exactly one exception: newly-standard members are APPENDED to an existing
+  standard playbook's roster (the factory flow must stay whole when the standard
+  roster grows), while every other edit survives.
 - **The build prompt is keyed on the playbook NAME — a known crack.** The
   entrypoint's turn prompt is `buildPrompt` iff the playbook is literally named
   `build`, else `generalPrompt`; the work contract therefore lives in two places
@@ -273,50 +286,26 @@ id) through their public functions, not their tables.
   is the one code-shaped playbook. The intended refit: one uniform turn prompt
   (issue brief + CLI contract) with the ship-feature contract living only in the
   builder's profile/skill — do that before cloning build-like playbooks.
-- **What's verified vs. deferred.** The orchestrator's decision logic — create/
-  reuse/remove worktrees, start/resume/cancel sessions, idempotency, the
-  defensive done-refresh, status-line writing, the bus-note handler, and startup
-  reconciliation — is unit-tested against fake git/runtime/slug
-  (`orchestrator.test.ts`). The **live end-to-end builder** (a real LLM building
-  real code in a real worktree to a real merged PR) is exercised **manually**,
-  not in CI, because it needs a network, an API key, and a writable git remote.
-  The cross-process event reaction _is_ verified manually too (a CLI transition
-  in one process waking the orchestrator in the dev server). Startup
-  reconciliation resumes building issues with a dead in-process session; it does
-  **not** try to detect a session that died mid-turn in _this_ process (the
-  runtime already drops a failed session and a fresh turn rebuilds it).
-- **A `builder` crew member, single-tenant for now.** Builder sessions act as
-  the seeded `builder` agent user. No crew column on the issues tables yet — the
-  ship is single-tenant until the crew-filter primitive lands (see
-  [`../zine.md`](../zine.md)); `visibility` is the seam it will attach to.
+- **The live end-to-end builder is exercised manually, not in CI.** The
+  orchestrator's decision logic is unit-tested against fake git/runtime/slug
+  (`orchestrator.test.ts`), but a real LLM building real code to a real merged
+  PR needs a network, an API key, and a writable git remote — so that path (and
+  the cross-process event reaction) is verified by running the ship.
+- **The board is public by design.** Issues carry `visibility` (`public` for
+  now) as the seam for anything narrower later; unlike chats and sessions, an
+  issue is crew-wide news, so no RLS policy hides it.
 
 ## Changelog
 
-- **#4** — The build split: the `babysitter` crew agent + profile (read+bash;
-  waits on CI via the `background` tool; merges or hands a fix brief back), the
-  `build` playbook roster becomes builder + babysitter, and the builder's
-  contract ends at an open PR + a baton. Ensure-mode seeding gains its one
-  exception: newly-standard members are APPENDED to an existing standard
-  playbook (the factory flow must be whole) while every other edit survives.
-
-- **#3** — Playbooks: the `playbooks` table (roster + entrypoint as data),
-  `issues.playbookId` (null = build), the seeded `build` and `general` playbooks
-  (+ the `hand` crew agent and `general` profile), entrypoint-driven
-  orchestration (`generalPrompt` for non-build playbooks), roster-guarded
-  handoffs, `--playbook` on `issue new` + `issue playbooks`, the board's
-  playbook select, the Agents → Playbooks editor tab, and boot-time seeding
-  convergence in `ensureOrchestrator`.
-- **#2** — Owners and the baton: `ownerId` split from `authorId` (defaulting to
-  the creator; `--owner` on `issue new`), `issue_sessions` (one session per
-  issue × agent, replacing the single `issues.session_id` — the RLS visibility
-  function re-pointed in migration 0014), and `handoff` (the `issue.handoff`
-  event, the CLI command, orchestrator-driven baton turns in the shared
-  worktree, OWNER pings via notifications). Groundwork for playbooks.
-- **#1** — The message board and building agents: the `issues` +
-  `issue_comments` tables, a pure state machine, `issue.status_changed` /
-  `issue.commented` events, the `npm run issue` CLI, the event-driven
-  orchestrator (worktree + builder lifecycle, reacting to the ship's log,
-  idempotent, with a defensive self-refresh on `done` and startup
-  reconciliation), the web doors, the board + thread views, and the dock
-  (Chat/Issues/Agents nav, Agents a placeholder for M4). A `builder` crew member
-  is seeded for builder sessions to act as.
+- **#4** — The build split: the `babysitter` agent + profile joins the `build`
+  playbook, the builder's contract ends at an open PR + a baton, and ensure-mode
+  seeding gains its append exception.
+- **#3** — Playbooks: roster + entrypoint as data, `issues.playbookId` (null =
+  build), the `hand` agent + `general` playbook, the Playbooks editor tab, and
+  boot-time seeding convergence.
+- **#2** — Owners and the baton: `ownerId` split from `authorId`,
+  `issue_sessions` (one per issue × agent), and `handoff` (agent turns + OWNER
+  pings).
+- **#1** — The message board and building agents: tables, the pure state
+  machine, issue events, the CLI, the event-driven orchestrator, the web doors,
+  the board + thread views, and the dock.

@@ -1,6 +1,6 @@
 # Chat
 
-_chat zine — issue #1_
+_chat zine — issue #67_
 
 ## tl;dr
 
@@ -31,11 +31,29 @@ the rigging.
 - **Orchestrator** (`orchestrator.ts`) — turns a posted message into agent
   replies: who should answer, drive each one's session, lift the assistant text
   back into the chat. `handleBusNote` is its ship-log subscription (a posted
-  message drives the reply); `reconcile` is startup recovery. Injected runtime,
-  so the decisions are unit-tested against PGlite with a fake.
+  message drives the reply); `wake` runs a briefing turn when a notification
+  arrives; `reconcile` is startup recovery. Injected runtime, so the decisions
+  are unit-tested against PGlite with a fake.
+- **turnContext** — the situational header every agent turn opens with: who the
+  agent is, which chat this is, and the concrete
+  `npm run issue -- new … --chat <id>` command for filing work (which is what
+  routes the issue's notifications back to this conversation). Repeated per turn
+  — cheap, and it survives session compaction.
+- **The waker** (`waker.ts`) — the bridge from notifications to a sleeping
+  agent: debounces a flurry (10s) into one wake per (agent, origin chat), routes
+  each notification to its issue's `originChatId`, and drives the orchestrator's
+  `wake` with the batch briefed. A batch is marked read only AFTER its wake
+  succeeds — a failed wake leaves the rows unread to retry; notifications with
+  no route home are consumed without a wake.
+- **CHAT_MODEL** — a chat agent's backing session boots with the strong model:
+  `SKYLARK_CHAT_MODEL`, else the preferred hosted model when its provider key
+  exists, else the local default (`chatModelRef` in the agent service). Chat is
+  the planning surface; builders stay on `DEFAULT_MODEL`.
 - **The live shell** (`orchestrator-live.ts`) — the impure wiring:
-  `ensureChatOrchestrator` boots it into the server process with the real
-  runtime, subscribes it to `shipLogBus`, and runs reconciliation. `v8 ignore`d.
+  `ensureChatOrchestrator` boots the orchestrator into the server process on
+  `systemDb` with `createServerRuntime` (live pi.dev sessions, or the fake when
+  `SKYLARK_FAKE_RUNTIME` is set), subscribes it to the ship's log, arms the
+  waker, and ensures the notifications reactor runs. `v8 ignore`d.
 - **Doors** — `server.ts` (the web doors; the front-door route is the chat UI).
 
 ## Structure
@@ -55,6 +73,15 @@ handler would hear a message posted from another process.
 agents, so a reply can't cascade into a loop). In a **1:1** (one human + one
 agent) the agent always answers; in a **group** only the agents whose handle is
 `@mentioned` do.
+
+**A wake, end to end.** An agent files an issue from a chat (`--chat` records
+the provenance) → the work moves and the notifications reactor writes the agent
+an inbox row → the waker's debounce gathers the flurry, groups it by the issue's
+`originChatId`, and calls the orchestrator's `wake` → a normal turn on the
+agent's backing session, prompted with the briefing (plus any chat messages it
+hasn't seen), whose reply lands in the chat like any other. Then the batch is
+marked read. This is what closes the planning loop: file → build → woken to
+review and file the next piece.
 
 **Identity.** Every door resolves the acting user with `currentActor()` (see the
 users zine) — you never tell the system it's you. Creating a chat always
@@ -99,12 +126,10 @@ agent.
 
 ## Changelog
 
-- **#2** — The reply path moves onto the ship's log: a posted message drives the
-  agent reply through the orchestrator's `handleBusNote` subscription (the
-  event-driven path the issues orchestrator uses) instead of an inline call from
-  the web door, and `reconcile` recovers a reply a restart interrupted. A new
-  `orchestrator-live.ts` boots + subscribes it into the server process.
-- **#1** — The chat service: chats, members (= visibility), messages; the
-  response rules (1:1 auto, group @mention); backing agent sessions; the
-  front-door view with a live working placeholder. The ship's front door is now
-  chat with the crew; the agent session monitor moved to the Agents view.
+- **#67** — The wake loop: `wake` on the orchestrator, the debounced per-(agent,
+  origin-chat) waker, `turnContext` on every turn, and chat sessions booting on
+  `CHAT_MODEL`.
+- **#2** — The reply path moves onto the ship's log (`handleBusNote` +
+  `reconcile`), booted by `orchestrator-live.ts`.
+- **#1** — The chat service: chats, members (= visibility), messages, response
+  rules (1:1 auto, group @mention), backing agent sessions, the front-door view.

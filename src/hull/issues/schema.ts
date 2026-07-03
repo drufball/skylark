@@ -11,7 +11,7 @@ import { agentSessions } from '@hull/agent/schema'
 import { chats } from '@hull/chat/schema'
 import { users } from '@hull/users/schema'
 
-// The issues service owns these three tables: the ship's message board. An
+// The issues service owns these four tables: the ship's message board. An
 // issue is a unit of work or discussion — a forum thread that can become a
 // build. Agents are launched off an issue into ONE shared worktree, each with
 // its own session (issue_sessions), passing a baton between them via handoffs;
@@ -25,9 +25,10 @@ import { users } from '@hull/users/schema'
 // schemas already use. The issues service never *queries* those tables; it
 // learns about the world through events and only records the ids it owns.
 //
-// No crew column yet: the crew primitive's compile-time filter (see hull/zine.md)
-// isn't built, so the ship is single-tenant. `visibility` is here as room to
-// grow, defaulting to public; crew-scoping attaches when the primitive lands.
+// The board is public by design — an issue is crew-wide news, so no RLS policy
+// hides it. `visibility` is here as room to grow, defaulting to public. The
+// issue_sessions link table IS RLS-guarded (migration 0015): a link flips a
+// session public, so inserting one requires seeing that session already.
 
 /**
  * A playbook: how an issue gets worked. A roster of agent crew members allowed

@@ -114,9 +114,10 @@ bringing it back.
 
 ```
 skylark/
-├── hull/      # the foundation — tiny, stable, shared by every ship afloat
-├── rigging/   # the stdlib — built ON TOP of the hull; carries as much weight as possible
-└── home/      # yours — your services, your apps, your experiments, your chaos
+└── src/
+    ├── hull/      # the foundation — tiny, stable, shared by every ship afloat
+    ├── rigging/   # the stdlib — built ON TOP of the hull; carries as much weight as possible
+    └── home/      # yours — your services, your apps, your experiments, your chaos
 ```
 
 (We needed a better name than "stdlib." It's the **rigging**: everything built
@@ -146,7 +147,10 @@ every concern comes with a fix attached.
 
 ## Status
 
-🚧 **Day one.** This README is the charter; the ship is being built in the open.
-If any of the above made your heart beat faster — welcome aboard.
+🚧 **Under sail, being built in the open** — some seventy PRs in. The hull holds
+durable agents, the ship's log, the crew (with row-level access in the water),
+chat, the issues board with building agents, shared files, and notifications
+that wake agents back into the conversation. This README is still the charter;
+if any of the above made your heart beat faster — welcome aboard.
 
 Fair winds and following seas. ☀️⛵

@@ -5,9 +5,10 @@ import { pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 // dot). Every actor that does anything on the ship — sends a message, emits an
 // event — resolves to a row here, so `actorId` columns elsewhere point at it.
 //
-// This is the data half of the crew primitive. The compile-time crew-filter
-// helper (the "every row knows its crew" enforcement from src/zine.md) is NOT
-// built yet — see hull/users/zine.md for the honest deferral.
+// This is the data half of the crew primitive. The enforcement half is
+// Postgres Row-Level Security in the db foundation: the app connects as the
+// non-superuser app_user and doors run under withActor, so policies filter
+// every query to what the acting user may see (see hull/db/zine.md).
 
 /** Someone aboard the ship — a human or an agent. */
 export const users = pgTable('users', {
@@ -20,9 +21,10 @@ export const users = pgTable('users', {
   /** Whether this crew member is a person or one of the ship's agents. */
   type: text('type', { enum: ['human', 'agent'] }).notNull(),
   /**
-   * Nullable link to an agent's profile. Plain column for now — the agent
-   * profiles it will reference arrive in a later milestone, so there's no FK
-   * yet, deliberately.
+   * Nullable link to an agent's profile (agent_profiles.id). A plain column
+   * with no FK, deliberately: the agent schema already FKs users for its
+   * agentUserId, and a reverse FK here would make the schemas import each
+   * other (see hull/users/zine.md).
    */
   profileId: text('profile_id'),
   createdAt: timestamp('created_at', { withTimezone: true })

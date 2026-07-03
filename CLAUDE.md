@@ -31,8 +31,13 @@ Start here:
 ./scripts/ensure-ollama  install/start Ollama, auto-pick & pull a model that fits (best-effort)
 npm run local-model      detect|select|catalog — what model fits this machine
 npm run dev              start the ship (port 3000)
+npm run agent            the agent service CLI (sessions, seed, profiles, extensions)
+npm run users            the users service CLI (seed, list, whoami)
+npm run issue            the issues service CLI (new, list, show, comment, handoff, …)
+npm run files            the files service CLI (list, read, write, rm)
 npm run check            format:check + lint + knip + typecheck + test — "is the ship sound"
 npm test                 vitest — runs on PGlite, needs no database
+npm run smoke            playwright — boots the REAL server on the fake runtime + smoke db
 npm run coverage         vitest --coverage — global gate (threshold in vitest.config.ts)
 npm run coverage:diff    diff-cover (via uvx): are the lines you changed vs main tested?
 npm run coverage:check   coverage + coverage:diff — both gates, what the agent runs
@@ -41,7 +46,7 @@ npm run lint             eslint .            (lint:fix to autofix)
 npm run format           prettier --write .  (format:check to verify)
 npm run typecheck        tsc --noEmit
 npm run db:up            start local Postgres (Docker)
-npm run db:generate      drizzle-kit: migration from src/schema.ts  (· db:migrate to apply)
+npm run db:generate      drizzle-kit: migration from every src/**/schema.ts  (· db:migrate to apply)
 npm run generate-routes  regenerate src/routeTree.gen.ts (gitignored)
 npm run mutate           Stryker mutation test, whole project (periodic sweep)
 npm run mutate:diff      mutation-test only the files this branch changed vs main
@@ -62,8 +67,8 @@ to `.env` only to use a hosted model.
 - **create-service** — adding a service: folder shape, which deck, wiring,
   tests.
 - **author-zine** — writing or updating a zine: sections + principles.
-- **mutation-review** — reviews a PR's test quality via mutation testing (runs
-  in CI via `tessl launch skill --cloud`).
+- **mutation-review** — reviews a PR's test quality via mutation testing (a CI
+  workflow via `tessl launch skill --cloud`; currently disabled).
 
 All skills live in the `skylark-builder` plugin (`plugins/skylark-builder/`) and
 are installed via `tessl install`.
@@ -74,14 +79,15 @@ Vitest. Service logic is database-agnostic, so DB tests run against in-memory
 PGlite — no external database (example: `src/hull/health/service.test.ts`). Work
 **red-green TDD**: write a failing test first then make it pass.
 
-Two coverage gates (`npm run coverage`, `npm run coverage:diff`) and mutation
-testing (`npm run mutate:diff`) run both locally and in CI — scope and rationale
-live in `vitest.config.ts` and `stryker.config.mjs`. Every PR also draws
-advisory **agentic reviews**: a **change review** (five `tessl/code-review`
-lenses via `tessl change review`) and a **mutation review** (via
-`tessl launch skill --cloud`). Comment `@tessl-change-review` or
-`@mutation-review` on a PR to re-run either. The weekly sweeps and their secrets
-are documented in `.github/workflows/`.
+Two coverage gates (`npm run coverage`, `npm run coverage:diff`) run both
+locally and in per-PR CI; mutation testing runs locally (`npm run mutate:diff`)
+and as a weekly full-project sweep (`npm run mutate`), not per PR — scope and
+rationale live in `vitest.config.ts` and `stryker.config.mjs`. Every PR also
+draws an advisory **change review** (five `tessl/code-review` lenses via
+`tessl change review`); comment `@tessl-change-review` on a PR to re-run it. The
+**mutation review** workflow (via `tessl launch skill --cloud`) is currently
+disabled. The weekly sweeps and their secrets are documented in
+`.github/workflows/`.
 
 ## Working notes
 
