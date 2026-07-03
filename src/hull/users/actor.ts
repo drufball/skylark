@@ -22,9 +22,15 @@ import type { UserRow } from './schema'
 /** Cookie that overrides the web actor for testing as a different human. */
 export const ACTOR_COOKIE = 'skylark_actor'
 
+/** The slice of the environment the actor rules read (process.env fits). */
+export interface ActorEnv {
+  SKYLARK_ACTOR?: string | undefined
+  SKYLARK_OPERATOR?: string | undefined
+}
+
 /** The ship's operator handle: env override (SKYLARK_OPERATOR), neutral default. */
-export function operatorHandle(): string {
-  return process.env.SKYLARK_OPERATOR ?? 'captain'
+export function operatorHandle(env: ActorEnv = process.env): string {
+  return env.SKYLARK_OPERATOR ?? 'captain'
 }
 
 /** The operator as a seed-crew row — what the impure edges hand to seedCrew. */
@@ -36,7 +42,42 @@ export function operatorSeed(): { handle: string; displayName: string } {
   }
 }
 
-/* v8 ignore start -- impure edge: reads request cookies / process env, exercised via the doors */
+/**
+ * The db- and env-parameterized rule behind cliActor, unit-tested directly:
+ * an explicit SKYLARK_ACTOR userId wins outright (an unknown id resolves to
+ * undefined, never a fallback — a mistyped agent identity must not quietly
+ * become the operator); otherwise the operator handle is looked up. Returns
+ * undefined when nothing resolves — the caller decides whether that's fatal.
+ */
+export async function cliActorOn(
+  db: Database,
+  env: ActorEnv,
+): Promise<UserRow | undefined> {
+  const explicitId = env.SKYLARK_ACTOR
+  if (explicitId) return getUserById(db, explicitId)
+  const handle = resolveActorHandle({
+    context: 'cli',
+    cookieHandle: undefined,
+    operator: operatorHandle(env),
+  })
+  return getUserByHandle(db, handle)
+}
+
+/**
+ * Fail closed: the resolved actor, or the seeding error every CLI door
+ * shares. Split from withCliActor so the decision is unit-tested.
+ */
+export function requireActor(me: UserRow | undefined): UserRow {
+  if (!me)
+    throw new Error(
+      'No actor resolved — seed the crew (`npm run users seed`) or set SKYLARK_ACTOR.',
+    )
+  return me
+}
+
+/* v8 ignore start -- impure edge: reads request cookies / the process env and
+   module-level db, exercised via the doors. The rules these edges follow
+   (resolveActorHandle, cliActorOn, requireActor) are unit-tested above. */
 /** Resolve the acting user for a web request. Throws if the handle is unknown. */
 export async function currentActor(): Promise<UserRow> {
   const cookieHandle = getCookie(ACTOR_COOKIE)
@@ -57,14 +98,7 @@ export async function currentActor(): Promise<UserRow> {
  * resolves to a known row — the caller decides whether that's fatal.
  */
 export async function cliActor(): Promise<UserRow | undefined> {
-  const explicitId = process.env.SKYLARK_ACTOR
-  if (explicitId) return getUserById(db, explicitId)
-  const handle = resolveActorHandle({
-    context: 'cli',
-    cookieHandle: undefined,
-    operator: operatorHandle(),
-  })
-  return getUserByHandle(db, handle)
+  return cliActorOn(db, process.env)
 }
 
 /**
@@ -95,11 +129,7 @@ export async function withCurrentActor<T>(
 export async function withCliActor<T>(
   fn: (db: Database, me: UserRow) => Promise<T>,
 ): Promise<T> {
-  const me = await cliActor()
-  if (!me)
-    throw new Error(
-      'No actor resolved — seed the crew (`npm run users seed`) or set SKYLARK_ACTOR.',
-    )
+  const me = requireActor(await cliActor())
   return withActor(me.id, (tx) => fn(tx, me))
 }
 /* v8 ignore stop */

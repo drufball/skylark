@@ -141,6 +141,41 @@ export function notifyOnly(
 /** The process-wide bus every SSE stream subscribes to. */
 export const shipLogBus = new InProcessBus()
 
+/**
+ * Wire a reactor to the ship's log: ensure the LISTEN connection is open,
+ * subscribe its bus-note handler (a throwing OR rejecting handler is isolated
+ * + logged, so one broken reactor can't starve the bus or leave an unhandled
+ * rejection), and kick reconcile in the BACKGROUND. Recovery is background
+ * work — it must never gate the door that booted the orchestrator — so
+ * reconcile is `void`, not awaited; its failures are logged, not thrown. The
+ * subscription itself is registered synchronously before this returns, so no
+ * note is missed. Returns the unsubscribe.
+ *
+ * `ensureListener` is injectable so the decision logic is unit-tested against
+ * the in-process bus; live callers take the default, the real LISTEN wiring.
+ */
+export function subscribeToShipLog(
+  reactor: ShipLogReactor,
+  label: string,
+  /* v8 ignore next -- the live LISTEN connection, the one impure default */
+  ensureListener: () => void = ensureShipLogListener,
+): () => void {
+  ensureListener()
+  const unsubscribe = shipLogBus.subscribe((note) => {
+    // Promise.resolve().then(...) folds a synchronous throw into the same
+    // logged rejection path as an async one.
+    void Promise.resolve()
+      .then(() => reactor.handleBusNote(note))
+      .catch((err: unknown) => {
+        console.error(`${label} bus handler failed: ${errorMessage(err)}`)
+      })
+  })
+  void reactor.reconcile().catch((err: unknown) => {
+    console.error(`${label} reconcile failed: ${errorMessage(err)}`)
+  })
+  return unsubscribe
+}
+
 /* v8 ignore start -- live LISTEN wiring: a real Postgres connection, not unit-tested */
 
 let listening = false
@@ -187,28 +222,5 @@ export function ensureShipLogListener(): void {
       listening = false
       console.error(`ship_log: LISTEN failed: ${errorMessage(err)}`)
     })
-}
-
-/**
- * Wire a reactor to the ship's log: ensure the LISTEN connection is open,
- * subscribe its bus-note handler (a throwing handler is isolated + logged), and
- * kick reconcile in the BACKGROUND. Recovery is background work — it must never
- * gate the door that booted the orchestrator — so reconcile is `void`, not
- * awaited. The subscription itself is registered synchronously before this
- * returns, so no note is missed.
- */
-export function subscribeToShipLog(
-  reactor: ShipLogReactor,
-  label: string,
-): void {
-  ensureShipLogListener()
-  shipLogBus.subscribe((note) => {
-    void reactor.handleBusNote(note).catch((err: unknown) => {
-      console.error(`${label} bus handler failed: ${errorMessage(err)}`)
-    })
-  })
-  void reactor.reconcile().catch((err: unknown) => {
-    console.error(`${label} reconcile failed: ${errorMessage(err)}`)
-  })
 }
 /* v8 ignore stop */

@@ -19,11 +19,12 @@ import { errorMessage } from '@hull/lib/errors'
 import {
   createOrchestrator,
   parseWorktreeInclude,
-  slugify,
+  slugFromCompletion,
   type GitOps,
   type Orchestrator,
 } from './orchestrator'
 import { seedPlaybooks } from './playbooks'
+import { shq } from './shell'
 import type { IssueRow } from './schema'
 
 /* v8 ignore start -- live wiring: real git/exec/fs, the LLM slug call, and the
@@ -118,43 +119,40 @@ export const nodeGitOps: GitOps = {
 
 /**
  * Generate a short, readable branch slug for an issue with a cheap LLM call.
- * Falls back to slugifying the title if the model is unavailable or errors —
- * the branch is always valid even with no network.
+ * The decision (text-block extraction, the SLUG_FALLBACK rejection, the
+ * error/no-model fallback to the title) is the unit-tested slugFromCompletion;
+ * this edge only decides whether a model call is available at all.
  */
 export async function generateSlug(issue: IssueRow): Promise<string> {
   // Hermetic under the fake-runtime flag: skip the LLM entirely so a build-path
   // smoke test never reaches the network. This is the issues orchestrator's
   // SECOND model entry point (the runtime factory is the other); the flag means
   // "no model call, anywhere", not just "no coding-agent session".
-  if (process.env[FAKE_RUNTIME_ENV]) return slugify(issue.title)
-  try {
-    const model = findHostedModel('anthropic', [
-      'claude-haiku-4-5',
-      'claude-3-5-haiku-latest',
-    ])
-    if (!model) return slugify(issue.title)
-    const result = await completeSimple(model, {
-      systemPrompt:
-        'You produce a short git branch slug (2-4 words, lowercase, hyphenated, ' +
-        'no punctuation) for a software issue. Reply with ONLY the slug.',
-      messages: [
-        {
-          role: 'user',
-          content: `Title: ${issue.title}\n${issue.body}`.slice(0, 500),
-          timestamp: Date.now(),
-        },
-      ],
-    })
-    const text = result.content
-      .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-      .map((c) => c.text)
-      .join(' ')
-    const slug = slugify(text)
-    return slug === 'build' ? slugify(issue.title) : slug
-  } catch (err) {
-    console.warn(`slug LLM call failed, using title: ${errorMessage(err)}`)
-    return slugify(issue.title)
-  }
+  const model = process.env[FAKE_RUNTIME_ENV]
+    ? undefined
+    : findHostedModel('anthropic', [
+        'claude-haiku-4-5',
+        'claude-3-5-haiku-latest',
+      ])
+  return slugFromCompletion(
+    issue.title,
+    model &&
+      (async () =>
+        (
+          await completeSimple(model, {
+            systemPrompt:
+              'You produce a short git branch slug (2-4 words, lowercase, hyphenated, ' +
+              'no punctuation) for a software issue. Reply with ONLY the slug.',
+            messages: [
+              {
+                role: 'user',
+                content: `Title: ${issue.title}\n${issue.body}`.slice(0, 500),
+                timestamp: Date.now(),
+              },
+            ],
+          })
+        ).content),
+  )
 }
 
 let started: Promise<Orchestrator> | undefined
@@ -219,10 +217,5 @@ async function boot(): Promise<Orchestrator> {
 
   subscribeToShipLog(orch, 'issues orchestrator')
   return orch
-}
-
-/** Quote a shell argument (paths/branches) safely for exec. */
-function shq(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 /* v8 ignore stop */

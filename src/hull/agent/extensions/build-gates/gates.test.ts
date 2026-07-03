@@ -5,6 +5,7 @@ import {
   checkPassed,
   blockReason,
   hasUnpushedCommits,
+  shouldWarnUnpushed,
 } from './gates'
 
 describe('build-gates decision logic', () => {
@@ -35,6 +36,16 @@ describe('build-gates decision logic', () => {
       expect(isCommitCommand('git -c user.name=x -c user.email=y commit')).toBe(
         true,
       )
+    })
+
+    it('flags a commit dressed up with a quoted, space-carrying option value', () => {
+      expect(isCommitCommand('git -c user.name="a b" commit -m "y"')).toBe(true)
+      expect(isCommitCommand(`git -c user.name='a b' commit`)).toBe(true)
+      expect(isCommitCommand('git -c "user.name=a b" commit')).toBe(true)
+    })
+
+    it('flags a commit behind a long option with a separated value', () => {
+      expect(isCommitCommand('git --git-dir /x commit')).toBe(true)
     })
 
     it('does not flag non-committing verbs behind the same options', () => {
@@ -87,6 +98,22 @@ describe('build-gates decision logic', () => {
     it('is false when there is no output', () => {
       expect(hasUnpushedCommits('')).toBe(false)
       expect(hasUnpushedCommits('   \n')).toBe(false)
+    })
+  })
+
+  describe('shouldWarnUnpushed', () => {
+    it('warns on a nonzero exit code even with clean output (no upstream set)', () => {
+      expect(shouldWarnUnpushed(128, '')).toBe(true)
+    })
+    it('warns on a null exit code (the process never ran to completion)', () => {
+      expect(shouldWarnUnpushed(null, '')).toBe(true)
+    })
+    it('warns on a clean exit with unpushed commits listed', () => {
+      expect(shouldWarnUnpushed(0, 'abc123 wip\n')).toBe(true)
+    })
+    it('stays quiet on a clean exit with nothing ahead of upstream', () => {
+      expect(shouldWarnUnpushed(0, '')).toBe(false)
+      expect(shouldWarnUnpushed(0, '  \n')).toBe(false)
     })
   })
 })

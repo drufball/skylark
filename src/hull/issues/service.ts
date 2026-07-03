@@ -147,6 +147,60 @@ export function resolveStatusWord(word: string): IssueStatus | undefined {
   }
 }
 
+// --- Web-door input checks ---------------------------------------------------
+// The doors' `.validator((input: {...}) => input)` idiom is a type-cast, not
+// validation; these are the real runtime checks for the MUTATING doors, kept
+// here (not in server.ts) so they're unit-tested. Read doors stay casts — a
+// bad read id just finds nothing.
+
+/** Shape-check an untrusted openIssue payload: a non-blank title is the contract. */
+export function validateOpenIssueInput(input: unknown): {
+  title: string
+  body?: string
+  playbookId?: string
+} {
+  const data = input as {
+    title?: unknown
+    body?: unknown
+    playbookId?: unknown
+  }
+  if (typeof data.title !== 'string' || !data.title.trim())
+    throw new Error('An issue needs a title.')
+  return {
+    title: data.title,
+    body: typeof data.body === 'string' ? data.body : undefined,
+    playbookId:
+      typeof data.playbookId === 'string' ? data.playbookId : undefined,
+  }
+}
+
+/** Shape-check an untrusted comment payload: an issueId and a non-blank body. */
+export function validateCommentInput(input: unknown): {
+  issueId: string
+  body: string
+} {
+  const data = input as { issueId?: unknown; body?: unknown }
+  if (typeof data.issueId !== 'string' || !data.issueId)
+    throw new Error('A comment needs an issueId.')
+  if (typeof data.body !== 'string' || !data.body.trim())
+    throw new Error('A comment needs a body.')
+  return { issueId: data.issueId, body: data.body }
+}
+
+/** Shape-check an untrusted transition payload: an issueId and a known status word. */
+export function validateTransitionInput(input: unknown): {
+  issueId: string
+  to: IssueStatus
+} {
+  const data = input as { issueId?: unknown; status?: unknown }
+  if (typeof data.issueId !== 'string' || !data.issueId)
+    throw new Error('A transition needs an issueId.')
+  const to =
+    typeof data.status === 'string' ? resolveStatusWord(data.status) : undefined
+  if (!to) throw new Error(`Unknown status: ${String(data.status)}`)
+  return { issueId: data.issueId, to }
+}
+
 export async function createIssue(
   db: Database,
   input: {

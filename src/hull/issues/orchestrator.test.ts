@@ -26,6 +26,8 @@ import {
   createOrchestrator,
   generalPrompt,
   parseWorktreeInclude,
+  SLUG_FALLBACK,
+  slugFromCompletion,
   slugify,
   type GitOps,
   type Orchestrator,
@@ -226,6 +228,70 @@ describe('slugify', () => {
   it('falls back to "build" when the input reduces to nothing', () => {
     expect(slugify('!!!')).toBe('build')
     expect(slugify('')).toBe('build')
+  })
+})
+
+describe('slugFromCompletion', () => {
+  const title = 'Fix the login bug'
+
+  it('slugifies the text blocks of a completion (happy path)', async () => {
+    const slug = await slugFromCompletion(title, () =>
+      Promise.resolve([{ type: 'text', text: 'Login Session Fix' }]),
+    )
+    expect(slug).toBe('login-session-fix')
+  })
+
+  it('joins multiple text blocks and skips non-text blocks', async () => {
+    const slug = await slugFromCompletion(title, () =>
+      Promise.resolve([
+        { type: 'thinking', text: 'hmm let me think' },
+        { type: 'text', text: 'login' },
+        { type: 'tool_call' },
+        { type: 'text' }, // a text block with no text must not become "undefined"
+        { type: 'text', text: 'fix' },
+      ]),
+    )
+    expect(slug).toBe('login-fix')
+  })
+
+  it('flattens a fenced/multiline completion into one slug', async () => {
+    const slug = await slugFromCompletion(title, () =>
+      Promise.resolve([{ type: 'text', text: '```\nlogin-fix\n```' }]),
+    )
+    expect(slug).toBe('login-fix')
+  })
+
+  it(`rejects the "${SLUG_FALLBACK}" sentinel and slugifies the title instead`, async () => {
+    // slugify('') === SLUG_FALLBACK — an empty/garbage completion is
+    // indistinguishable from a model that literally answered "build", and
+    // neither should name the branch.
+    const slug = await slugFromCompletion(title, () =>
+      Promise.resolve([{ type: 'text', text: SLUG_FALLBACK }]),
+    )
+    expect(slug).toBe('fix-the-login-bug')
+    const empty = await slugFromCompletion(title, () =>
+      Promise.resolve([{ type: 'text', text: '!!!' }]),
+    )
+    expect(empty).toBe('fix-the-login-bug')
+  })
+
+  it('falls back to the title when the completion throws', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const slug = await slugFromCompletion(title, () =>
+        Promise.reject(new Error('model offline')),
+      )
+      expect(slug).toBe('fix-the-login-bug')
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('model offline'),
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('falls back to the title when no completion is available', async () => {
+    expect(await slugFromCompletion(title, undefined)).toBe('fix-the-login-bug')
   })
 })
 

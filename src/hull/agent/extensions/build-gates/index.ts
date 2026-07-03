@@ -7,8 +7,8 @@ import { isToolCallEventType } from '@earendil-works/pi-coding-agent'
 import {
   blockReason,
   checkPassed,
-  hasUnpushedCommits,
   isCommitCommand,
+  shouldWarnUnpushed,
 } from './gates'
 
 /* v8 ignore start -- live pi.dev extension wiring; the decisions are unit-tested in gates.test.ts */
@@ -54,8 +54,7 @@ const buildGates = (pi: ExtensionAPI): void => {
     const result = await pi.exec('git', ['log', '@{u}..HEAD', '--oneline'], {
       cwd: ctx.cwd,
     })
-    // A nonzero code usually means no upstream is set — also worth flagging.
-    if (result.code !== 0 || hasUnpushedCommits(result.stdout)) {
+    if (shouldWarnUnpushed(result.code, result.stdout)) {
       ctx.ui.notify(
         'Landing gate: this session has committed work that is not pushed/PRd. Push and open a PR before you call it shipped.',
         'warning',

@@ -12,6 +12,7 @@ import { issueTopic } from '@hull/issues/topic'
 import {
   addNotification,
   createNotificationsReactor,
+  deliverToHooks,
   describeNotification,
   isAutoWatchTopic,
   isWatching,
@@ -25,6 +26,7 @@ import {
   watchTopic,
 } from './service'
 import { notifyTopic, userIdFromNotifyTopic } from './topic'
+import type { NotificationRow } from './schema'
 
 describe('notify topic namespace', () => {
   it('round-trips a user id through the topic grammar', () => {
@@ -137,6 +139,48 @@ describe('describeNotification', () => {
         actorHandle: '?',
       }),
     ).toBe('files.staging_merged on files:staging')
+  })
+})
+
+describe('deliverToHooks', () => {
+  const row = {
+    id: 'n1',
+    userId: 'u1',
+    type: 'issue.commented',
+  } as NotificationRow
+
+  it('isolates a throwing hook: the others still fire, the error is logged', () => {
+    const errors = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    try {
+      const delivered: string[] = []
+      const broken = () => {
+        throw new Error('waker offline')
+      }
+      const working = (n: NotificationRow) => {
+        delivered.push(n.id)
+      }
+
+      expect(() => {
+        deliverToHooks([broken, working], row)
+      }).not.toThrow()
+      expect(delivered).toEqual(['n1'])
+      expect(errors).toHaveBeenCalledWith(
+        expect.stringContaining('notification hook failed'),
+      )
+      expect(errors).toHaveBeenCalledWith(
+        expect.stringContaining('waker offline'),
+      )
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('hands every hook the same notification, in registration order', () => {
+    const calls: string[] = []
+    deliverToHooks([() => calls.push('a'), () => calls.push('b')], row)
+    expect(calls).toEqual(['a', 'b'])
   })
 })
 

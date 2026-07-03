@@ -69,6 +69,15 @@ export function parseWorktreeInclude(text: string): string[] {
 }
 
 /**
+ * What slugify answers when the input reduces to nothing — and therefore the
+ * one slug an LLM suggestion can never claim: a model completion that
+ * slugifies to this sentinel is indistinguishable from an empty/garbage
+ * answer, so slugFromCompletion rejects it and names the branch from the
+ * title instead.
+ */
+export const SLUG_FALLBACK = 'build'
+
+/**
  * Turn a human title (or an LLM-suggested phrase) into a git-ref-safe slug:
  * lowercase, alnum runs joined by single hyphens, trimmed, capped. A fallback
  * keeps the branch valid if the input reduces to nothing.
@@ -80,7 +89,41 @@ export function slugify(text: string, max = 40): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, max)
     .replace(/-+$/g, '')
-  return slug || 'build'
+  return slug || SLUG_FALLBACK
+}
+
+/** One block of a model completion, as slugFromCompletion reads it. */
+export interface CompletionBlock {
+  type: string
+  text?: string
+}
+
+/**
+ * The slug decision behind generateSlug (orchestrator-live.ts), pure of the
+ * model call: gather the completion's text blocks, slugify them, and reject
+ * the SLUG_FALLBACK sentinel (an empty or "build" answer must not name the
+ * branch). No completion available (`undefined`), or one that throws, falls
+ * back to slugifying the title — the branch is always valid with no network.
+ */
+export async function slugFromCompletion(
+  title: string,
+  complete: (() => Promise<CompletionBlock[]>) | undefined,
+): Promise<string> {
+  if (!complete) return slugify(title)
+  try {
+    const text = (await complete())
+      .filter(
+        (c): c is { type: 'text'; text: string } =>
+          c.type === 'text' && typeof c.text === 'string',
+      )
+      .map((c) => c.text)
+      .join(' ')
+    const slug = slugify(text)
+    return slug === SLUG_FALLBACK ? slugify(title) : slug
+  } catch (err) {
+    console.warn(`slug LLM call failed, using title: ${errorMessage(err)}`)
+    return slugify(title)
+  }
 }
 
 /**
