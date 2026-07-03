@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   chatModelRef,
+  providerConfigured,
+  providerEnvKey,
   defaultModelRef,
   FALLBACK_DEFAULT_MODEL,
   findHostedModel,
@@ -169,6 +171,42 @@ describe('defaultModelRef', () => {
     expect(defaultModelRef({ SKYLARK_DEFAULT_MODEL: '   ' })).toBe(
       FALLBACK_DEFAULT_MODEL,
     )
+  })
+})
+
+describe('providerConfigured', () => {
+  it('trusts the credential store when it says yes', () => {
+    expect(providerConfigured(() => true, 'anthropic', {})).toBe(true)
+  })
+
+  it("counts the conventional env key when the store says no — the '.env' promise", () => {
+    expect(
+      providerConfigured(() => false, 'anthropic', {
+        ANTHROPIC_API_KEY: 'sk-test',
+      }),
+    ).toBe(true)
+  })
+
+  it('a broken credential store degrades to the env check, never throws', () => {
+    const broken = () => {
+      throw new Error('keychain locked')
+    }
+    expect(
+      providerConfigured(broken, 'anthropic', { ANTHROPIC_API_KEY: 'sk-x' }),
+    ).toBe(true)
+    expect(providerConfigured(broken, 'anthropic', {})).toBe(false)
+  })
+
+  it('no store entry, no env key, blank env key: not configured', () => {
+    expect(providerConfigured(() => false, 'anthropic', {})).toBe(false)
+    expect(
+      providerConfigured(() => false, 'anthropic', { ANTHROPIC_API_KEY: ' ' }),
+    ).toBe(false)
+  })
+
+  it('maps the provider to its conventional env var name', () => {
+    expect(providerEnvKey('anthropic')).toBe('ANTHROPIC_API_KEY')
+    expect(providerEnvKey('z-ai')).toBe('Z_AI_API_KEY')
   })
 })
 

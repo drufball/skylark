@@ -50,6 +50,32 @@ export const PREFERRED_CHAT_MODEL = 'anthropic/claude-fable-5'
  * `isProviderConfigured` is injected (the live wiring passes pi's AuthStorage
  * check) so the preference order is pure and testable.
  */
+/** The conventional env var carrying a provider's API key (ANTHROPIC_API_KEY, …). */
+export function providerEnvKey(provider: string): string {
+  return `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`
+}
+
+/**
+ * Is a provider usable? True when the credential store says so, OR when the
+ * conventional env key is present — pi's `getAuthStatus` reports only its own
+ * store, but its `getApiKey` (and the session run) falls back to the process
+ * env, so the "add a provider key to .env" path must count here too or chat
+ * silently books the local fallback while the key sits unused. A throwing
+ * store degrades to the env check.
+ */
+export function providerConfigured(
+  storeConfigured: (provider: string) => boolean,
+  provider: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  try {
+    if (storeConfigured(provider)) return true
+  } catch {
+    // broken credential store — fall through to the env check
+  }
+  return Boolean(env[providerEnvKey(provider)]?.trim())
+}
+
 export function chatModelRef(
   isProviderConfigured: (providerId: string) => boolean,
   env: NodeJS.ProcessEnv = process.env,
