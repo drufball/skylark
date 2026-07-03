@@ -71,7 +71,9 @@ describe('createFakeSession driven through the runtime', () => {
     const runtime = createAgentRuntime({ db, factory: createFakeSession })
     await createSession(db, { id: 's1', model: 'm' })
 
-    const produced = await runtime.runTurn('s1', 'hello there')
+    const result = await runtime.runTurn('s1', 'hello there')
+    if (result.queued) throw new Error('expected a completed turn, got queued')
+    const produced = result.messages
 
     // The fake emits turn_end + agent_end, so the runtime flushes and returns
     // the user prompt + the canned assistant reply — deterministic, no network.

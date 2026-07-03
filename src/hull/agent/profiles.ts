@@ -93,24 +93,23 @@ export async function listProfiles(db: Database): Promise<AgentProfileRow[]> {
  * Create a profile or update the existing one with the same name. Idempotent by
  * name, so seeding and re-seeding converge on the declared shape while keeping
  * a profile's id (and therefore any session/user pointing at it) stable.
+ * One atomic upsert (not get-then-insert), so two processes seeding at once —
+ * a server boot racing a CLI seed — converge instead of one of them throwing.
  */
 export async function upsertProfile(
   db: Database,
   input: ProfileInput,
 ): Promise<AgentProfileRow> {
-  const existing = await getProfileByName(db, input.name)
-  if (existing) {
-    // Set the whole input (name included — it's the same value we matched on),
-    // so a field added to ProfileInput converges on re-seed without a second
-    // edit here. id/createdAt aren't in ProfileInput, so they're untouched.
-    const [row] = await db
-      .update(agentProfiles)
-      .set(input)
-      .where(eq(agentProfiles.id, existing.id))
-      .returning()
-    return row
-  }
-  return createProfile(db, { id: uuidv7(), ...input })
+  // On conflict, set the whole input (name included — it's the same value we
+  // matched on), so a field added to ProfileInput converges on re-seed without
+  // a second edit here. id/createdAt aren't in the set, so the existing row
+  // keeps them — and everything pointing at the profile's id stays valid.
+  const [row] = await db
+    .insert(agentProfiles)
+    .values({ id: uuidv7(), ...input })
+    .onConflictDoUpdate({ target: agentProfiles.name, set: { ...input } })
+    .returning()
+  return row
 }
 
 /** The fields an extension is registered with (id and createdAt are managed). */
@@ -156,22 +155,23 @@ export async function listExtensions(db: Database): Promise<ExtensionRow[]> {
 /**
  * Register an extension or update the existing one with the same name.
  * Idempotent by name (code moves; the registry row's id stays stable so
- * profiles keep pointing at it), updating path and description.
+ * profiles keep pointing at it), updating path and description. One atomic
+ * upsert (not get-then-insert), so two processes seeding at once — a server
+ * boot racing a CLI seed — converge instead of one of them throwing.
  */
 export async function registerExtension(
   db: Database,
   input: ExtensionInput,
 ): Promise<ExtensionRow> {
-  const existing = await getExtensionByName(db, input.name)
-  if (existing) {
-    const [row] = await db
-      .update(extensions)
-      .set({ description: input.description, path: input.path })
-      .where(eq(extensions.id, existing.id))
-      .returning()
-    return row
-  }
-  return createExtension(db, { id: uuidv7(), ...input })
+  const [row] = await db
+    .insert(extensions)
+    .values({ id: uuidv7(), ...input })
+    .onConflictDoUpdate({
+      target: extensions.name,
+      set: { description: input.description, path: input.path },
+    })
+    .returning()
+  return row
 }
 
 /**

@@ -55,11 +55,15 @@ export const Route = createFileRoute('/')({
 
 function readProgress(
   payload: unknown,
-): { agentUserId: string; line: string } | null {
+): { chatId: string; agentUserId: string; line: string } | null {
   if (typeof payload !== 'object' || payload === null) return null
   const p = payload as Record<string, unknown>
-  if (typeof p.agentUserId === 'string' && typeof p.line === 'string') {
-    return { agentUserId: p.agentUserId, line: p.line }
+  if (
+    typeof p.chatId === 'string' &&
+    typeof p.agentUserId === 'string' &&
+    typeof p.line === 'string'
+  ) {
+    return { chatId: p.chatId, agentUserId: p.agentUserId, line: p.line }
   }
   return null
 }
@@ -71,7 +75,11 @@ function ChatRoute() {
   const router = useRouter()
 
   const [busy, setBusy] = useState(false)
+  // The progress bubble remembers WHICH chat it belongs to: it's cleared by a
+  // posted message, not by switching chats, so without the chatId a bubble
+  // from chat A would keep rendering inside chat B after a switch.
   const [working, setWorking] = useState<{
+    chatId: string
     handle: string
     line: string
   } | null>(null)
@@ -86,7 +94,7 @@ function ChatRoute() {
           const handle =
             members.find((m) => m.userId === progress.agentUserId)?.handle ??
             '?'
-          setWorking({ handle, line: progress.line })
+          setWorking({ chatId: progress.chatId, handle, line: progress.line })
         }
       } else if (event.type === 'chat.message_posted') {
         setWorking(null)
@@ -158,7 +166,11 @@ function ChatRoute() {
         title={thread?.chat.title ?? null}
         members={memberItems}
         messages={messageItems}
-        working={working}
+        working={
+          working && working.chatId === activeId
+            ? { handle: working.handle, line: working.line }
+            : null
+        }
         crew={crewItems}
         composing={composing === true}
         busy={busy}

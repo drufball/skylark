@@ -2,7 +2,11 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { notifyOnly, type NotifyPayload } from '@hull/events/bus'
-import { getEventById, MEMBERS_AUDIENCE } from '@hull/events/service'
+import {
+  getEventById,
+  MEMBERS_AUDIENCE,
+  trustedEvent,
+} from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 import { createSession } from '@hull/agent/service'
 import { CHAT_MODEL, type RunsTurns } from '@hull/agent/runtime'
@@ -142,7 +146,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     // turn writes a handful of durable progress events, never one per delta.
     let lastLine = 'thinking…'
     emitProgress(chatId, agent.userId, lastLine)
-    const produced = await runtime.runTurn(sessionId, prompt, (event) => {
+    const result = await runtime.runTurn(sessionId, prompt, (event) => {
       const line = chatProgressLine(event)
       if (line && line !== lastLine) {
         lastLine = line
@@ -150,7 +154,13 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       }
     })
 
-    const text = assistantTextFrom(produced)
+    // Queued: the prompt was folded into a turn already in flight on this
+    // session, whose eventual reply covers it — post nothing here, or the
+    // agent would double-speak (and an empty result is NOT "the agent had
+    // nothing to say").
+    if (result.queued) return
+
+    const text = assistantTextFrom(result.messages)
     if (text) {
       await addMessage(db, {
         id: uuidv7(),
@@ -253,6 +263,15 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       typeof payload.chatId !== 'string' ||
       typeof payload.messageId !== 'string' ||
       typeof payload.authorId !== 'string'
+    )
+      return
+    // The envelope must agree with the payload: only chat's own event, on the
+    // very chat the payload names, may drive a reply into that chat.
+    if (
+      !trustedEvent(event, {
+        source: 'chat',
+        topic: chatTopic(payload.chatId),
+      })
     )
       return
     const message = await getMessage(db, payload.messageId)

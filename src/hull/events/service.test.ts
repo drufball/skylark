@@ -10,6 +10,7 @@ import {
   getEventById,
   listEventsSince,
   matchesTopic,
+  trustedEvent,
 } from './service'
 
 describe('events service', () => {
@@ -299,6 +300,69 @@ describe('topic pattern matching', () => {
     expect(matchesTopic('issue:123:comment', 'issue:*')).toBe(true)
     expect(matchesTopic('issue:123:comment', 'issue:*:comment')).toBe(true)
     expect(matchesTopic('issue:123:status', 'issue:*:comment')).toBe(false)
+  })
+})
+
+describe('trustedEvent', () => {
+  /** A durable event row to check envelopes against — no db needed. */
+  const event = {
+    id: 'e1',
+    type: 'issue.status_changed',
+    source: 'issues',
+    topic: 'issue:123',
+    audience: 'public',
+    actorId: null,
+    payload: {},
+    createdAt: new Date(),
+  }
+
+  it('returns the event when source, audience, and topic all match', () => {
+    expect(
+      trustedEvent(event, {
+        source: 'issues',
+        audience: 'public',
+        topic: 'issue:123',
+      }),
+    ).toBe(event)
+  })
+
+  it('checks only the source when audience and topic are not expected', () => {
+    // Omitted facets are not checked — the event's own values don't matter.
+    expect(trustedEvent(event, { source: 'issues' })).toBe(event)
+  })
+
+  it('rejects a wrong source even when audience and topic match', () => {
+    expect(
+      trustedEvent(event, {
+        source: 'chat',
+        audience: 'public',
+        topic: 'issue:123',
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects a wrong audience even when source and topic match', () => {
+    expect(
+      trustedEvent(event, {
+        source: 'issues',
+        audience: 'members',
+        topic: 'issue:123',
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects a wrong topic even when source and audience match', () => {
+    expect(
+      trustedEvent(event, {
+        source: 'issues',
+        audience: 'public',
+        topic: 'issue:456',
+      }),
+    ).toBeNull()
+  })
+
+  it('rejects a missing event', () => {
+    expect(trustedEvent(undefined, { source: 'issues' })).toBeNull()
   })
 })
 

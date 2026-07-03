@@ -1,4 +1,4 @@
-import { uuidv7, type AgentMessage } from '@earendil-works/pi-agent-core'
+import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,7 +12,7 @@ import {
   setUserProfile,
 } from '@hull/users/service'
 import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
-import { DEFAULT_MODEL } from '@hull/agent/runtime'
+import { DEFAULT_MODEL, type TurnResult } from '@hull/agent/runtime'
 import {
   createSession,
   getSession,
@@ -28,8 +28,10 @@ import {
   parseWorktreeInclude,
   slugify,
   type GitOps,
+  type Orchestrator,
   type OrchestratorDeps,
 } from './orchestrator'
+import type { IssueStatus } from './schema'
 import { getPlaybookByName, seedPlaybooks } from './playbooks'
 import {
   addComment,
@@ -114,10 +116,10 @@ class FakeRuntime {
     sessionId: string,
     text: string,
     onEvent?: (e: AgentSessionEvent) => void,
-  ): Promise<AgentMessage[]> {
+  ): Promise<TurnResult> {
     this.turns.push({ sessionId, text })
     this.onTurn?.(sessionId, text, onEvent)
-    return Promise.resolve([])
+    return Promise.resolve({ queued: false, messages: [] })
   }
   cancel(sessionId: string): Promise<void> {
     this.cancelled.push(sessionId)
@@ -178,6 +180,20 @@ function makeDeps(over: Partial<OrchestratorDeps> = {}): {
 /** The builder's session id on an issue (via the issue_sessions link). */
 async function builderSessionId(issueId: string): Promise<string> {
   return defined(await getIssueSession(db, issueId, builderId)).sessionId
+}
+
+/**
+ * Move the issue through the service (the durable write + emit every real door
+ * makes), then hand the transition to the orchestrator — the order production
+ * events arrive in, and what the act-on-durable-state guard expects.
+ */
+async function drive(
+  orch: Orchestrator,
+  issueId: string,
+  to: IssueStatus,
+): Promise<void> {
+  await transitionIssue(db, { issueId, to, actorId: authorId })
+  await orch.onStatusChanged(issueId, to)
 }
 
 describe('parseWorktreeInclude', () => {
@@ -288,7 +304,7 @@ describe('orchestrator → building (from open)', () => {
       nano: 'aa11',
     })
 
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
 
     const after = defined(await getIssue(db, issue.id))
     expect(after.branchName).toBe('add-widget-aa11')
@@ -324,15 +340,16 @@ describe('orchestrator → building (from open)', () => {
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'bb22' })
 
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
     const first = defined(await getIssue(db, issue.id))
     const firstSession = defined(
       await getIssueSession(db, issue.id, builderId),
     ).sessionId
 
-    // Mark the worktree as already-existing for the second pass.
+    // Mark the worktree as already-existing for the second pass (a duplicate
+    // event; the issue is still durably building).
     git.existing.add(defined(first.worktreePath))
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
 
     expect(
       defined(await getIssueSession(db, issue.id, builderId)).sessionId,
@@ -353,7 +370,7 @@ describe('orchestrator → building (from open)', () => {
       body: 'please also handle the empty case',
     })
 
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
 
     expect(runtime.turns[0].text).toContain('please also handle the empty case')
     expect(runtime.turns[0].text).toContain('@drufball')
@@ -367,9 +384,14 @@ describe('orchestrator → building (from open)', () => {
     // Two events for the same issue land at once (e.g. reconcile racing a live
     // bus note). Without per-issue serialization both would miss the worktree
     // and create it (and a session) twice.
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
     await Promise.all([
-      orch.onStatusChanged(issue.id, 'open', 'building'),
-      orch.onStatusChanged(issue.id, 'open', 'building'),
+      orch.onStatusChanged(issue.id, 'building'),
+      orch.onStatusChanged(issue.id, 'building'),
     ])
 
     expect(git.added).toHaveLength(1)
@@ -383,8 +405,8 @@ describe('orchestrator → building (from open)', () => {
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'cc33' })
 
-    await orch.onStatusChanged(issue.id, 'open', 'building')
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
+    await orch.onStatusChanged(issue.id, 'building')
 
     expect(generateSlug).toHaveBeenCalledTimes(1)
     const after = defined(await getIssue(db, issue.id))
@@ -397,9 +419,9 @@ describe('orchestrator → open (agent paused)', () => {
     const { deps, git, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'dd44' })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
 
-    await orch.onStatusChanged(issue.id, 'building', 'open')
+    await drive(orch, issue.id, 'open')
 
     expect(git.removed).toEqual([])
     expect(runtime.disposed).toEqual([])
@@ -411,10 +433,10 @@ describe('orchestrator → done (agent merged)', () => {
     const { deps, git, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'ee55' })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
     const built = defined(await getIssue(db, issue.id))
 
-    await orch.onStatusChanged(issue.id, 'building', 'done')
+    await drive(orch, issue.id, 'done')
 
     expect(git.pulls).toBe(1)
     expect(git.migrations).toBe(1)
@@ -427,9 +449,9 @@ describe('orchestrator → done (agent merged)', () => {
     git.merged = false
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'nm66' })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
 
-    await orch.onStatusChanged(issue.id, 'building', 'done')
+    await drive(orch, issue.id, 'done')
 
     // No teardown — the PR isn't in main, so don't orphan it.
     expect(git.removed).toEqual([])
@@ -441,9 +463,9 @@ describe('orchestrator → done (agent merged)', () => {
     git.branchMerged = () => Promise.reject(new Error('git blew up'))
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'mg77' })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
 
-    await orch.onStatusChanged(issue.id, 'building', 'done')
+    await drive(orch, issue.id, 'done')
 
     expect(git.removed).toEqual([])
   })
@@ -453,12 +475,17 @@ describe('orchestrator → done (agent merged)', () => {
     git.pullMain = () => Promise.reject(new Error('diverged'))
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'ff66' })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
     const built = defined(await getIssue(db, issue.id))
 
     // Must resolve, not throw — a failed self-update can't sink the server.
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'done',
+      actorId: authorId,
+    })
     await expect(
-      orch.onStatusChanged(issue.id, 'building', 'done'),
+      orch.onStatusChanged(issue.id, 'done'),
     ).resolves.toBeUndefined()
     // Teardown still happened despite the pull failure.
     expect(git.removed).toEqual([defined(built.worktreePath)])
@@ -471,11 +498,11 @@ describe('orchestrator → closed (human)', () => {
     const { deps, git, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'gg77' })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
     const built = defined(await getIssue(db, issue.id))
     const sessionId = await builderSessionId(issue.id)
 
-    await orch.onStatusChanged(issue.id, 'building', 'closed')
+    await drive(orch, issue.id, 'closed')
 
     expect(runtime.cancelled).toContain(sessionId)
     expect(runtime.disposed).toContain(sessionId)
@@ -487,8 +514,13 @@ describe('orchestrator → closed (human)', () => {
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'hh88' })
 
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'closed',
+      actorId: authorId,
+    })
     await expect(
-      orch.onStatusChanged(issue.id, 'open', 'closed'),
+      orch.onStatusChanged(issue.id, 'closed'),
     ).resolves.toBeUndefined()
     expect(git.removed).toEqual([])
     expect(runtime.cancelled).toEqual([])
@@ -509,7 +541,7 @@ describe('orchestrator status line', () => {
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'ii99' })
 
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await drive(orch, issue.id, 'building')
 
     const after = defined(await getIssue(db, issue.id))
     expect(after.statusLine).toMatch(/bash/)
@@ -599,6 +631,117 @@ describe('orchestrator event subscription', () => {
     expect(git.added).toEqual([])
   })
 
+  it('does nothing for a stale → building event on a since-done issue', async () => {
+    const { deps, git, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'st01' })
+    // The transition emitted a → building event, but the issue moved on to
+    // done before the note was handled (or the event is a replay).
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'done',
+      actorId: authorId,
+    })
+
+    // findStatusEventId returns the OLDEST status event — the → building one.
+    await orch.handleBusNote({
+      id: (await findStatusEventId(db, issue.id)).id,
+      type: ISSUE_STATUS_CHANGED,
+      topic: issueTopic(issue.id),
+    })
+
+    // Durable state says done — no worktree resurrected, no turn fired.
+    expect(git.added).toEqual([])
+    expect(runtime.turns).toEqual([])
+  })
+
+  /** An issue durably in `building`, so a skipped guard would visibly act. */
+  async function buildingIssue(nano: string) {
+    const issue = await createIssue(db, { title: 'X', authorId, nano })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    return issue
+  }
+
+  it('ignores a status_changed event from another source, even with the right topic', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await buildingIssue('sc01')
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: ISSUE_STATUS_CHANGED,
+      source: 'chat', // ONLY the source is wrong
+      topic: issueTopic(issue.id),
+      audience: 'public',
+      payload: { issueId: issue.id, from: 'open', to: 'building' },
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_STATUS_CHANGED,
+      topic: issueTopic(issue.id),
+    })
+    expect(git.added).toEqual([])
+  })
+
+  it('ignores a status_changed event whose topic names a different issue', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await buildingIssue('sc02')
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: ISSUE_STATUS_CHANGED,
+      source: 'issues',
+      topic: 'issue:somewhere-else', // ONLY the topic is wrong
+      audience: 'public',
+      payload: { issueId: issue.id, from: 'open', to: 'building' },
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_STATUS_CHANGED,
+      topic: 'issue:somewhere-else',
+    })
+    expect(git.added).toEqual([])
+  })
+
+  it('drops a status_changed payload with one bad field at a time', async () => {
+    const { deps, git, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await buildingIssue('sc03')
+    const { emitEvent } = await import('@hull/events/bus')
+    const good = { issueId: issue.id, from: 'open', to: 'building' }
+    // Each variant violates exactly ONE payload guard (the envelope stays
+    // consistent with the variant), so no guard can hide behind another.
+    const variants: { payload: unknown; topic: string }[] = [
+      { payload: { ...good, issueId: 42 }, topic: 'issue:42' },
+      { payload: { ...good, from: 'nope' }, topic: issueTopic(issue.id) },
+      { payload: { ...good, to: 'nope' }, topic: issueTopic(issue.id) },
+    ]
+    for (const { payload, topic } of variants) {
+      const row = await emitEvent(db, {
+        type: ISSUE_STATUS_CHANGED,
+        source: 'issues',
+        topic,
+        audience: 'public',
+        payload,
+      })
+      await orch.handleBusNote({
+        id: row.id,
+        type: ISSUE_STATUS_CHANGED,
+        topic,
+      })
+    }
+    expect(git.added).toEqual([])
+    expect(runtime.turns).toEqual([])
+  })
+
   it('drops a status-change event with a malformed payload', async () => {
     const { deps, git } = makeDeps()
     const orch = createOrchestrator(deps)
@@ -631,8 +774,13 @@ describe('orchestrator → done with no build context', () => {
     })
     // Straight to done with no branch/worktree recorded — the no-branchName arm
     // treats it as "nothing to protect" and teardown is a no-op.
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'done',
+      actorId: authorId,
+    })
     await expect(
-      orch.onStatusChanged(issue.id, 'building', 'done'),
+      orch.onStatusChanged(issue.id, 'done'),
     ).resolves.toBeUndefined()
     expect(git.removed).toEqual([])
   })
@@ -654,8 +802,13 @@ describe('orchestrator failure handling', () => {
         nano: 'er01',
       })
       // onStatusChanged fires the turn in the background and must still resolve.
+      await transitionIssue(db, {
+        issueId: issue.id,
+        to: 'building',
+        actorId: authorId,
+      })
       await expect(
-        orch.onStatusChanged(issue.id, 'open', 'building'),
+        orch.onStatusChanged(issue.id, 'building'),
       ).resolves.toBeUndefined()
       // The fire-and-forget turn's rejection is caught and logged — pin the
       // catch, or a dropped `.catch` would only surface as an unhandled
@@ -720,6 +873,22 @@ describe('orchestrator startup reconciliation', () => {
     await orch.reconcile()
 
     // It resumes by running a turn on the existing session.
+    expect(runtime.turns).toHaveLength(1)
+  })
+
+  it('resume re-seeds a building issue directly (what reconcile calls per issue)', async () => {
+    const { deps, git, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'rs01' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+
+    await orch.resume(issue.id)
+
+    expect(git.added).toHaveLength(1)
     expect(runtime.turns).toHaveLength(1)
   })
 
@@ -810,7 +979,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
 
     await handOff(orch, issue, 'babysitter', 'PR #12 is open — take it home')
 
@@ -841,7 +1010,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
 
     await handOff(orch, issue, 'babysitter', 'first pass')
     const first = defined(await getIssueSession(db, issue.id, user.id))
@@ -882,7 +1051,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
 
     await handOff(orch, issue, 'OWNER', 'checks green — merge?')
 
@@ -901,10 +1070,10 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
     await handOff(orch, issue, 'babysitter', 'go')
 
-    await orch.onStatusChanged(issue.id, 'building', 'done')
+    await drive(orch, issue.id, 'done')
 
     const links = await listIssueSessions(db, issue.id)
     expect(links).toHaveLength(2)
@@ -925,7 +1094,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
     // The babysitter is genuinely mid-turn by the time a second pass (which
     // squeaked past the door check before that turn started) is handled.
     await handOff(orch, issue, 'babysitter', 'first pass')
@@ -975,7 +1144,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
     const { emitEvent } = await import('@hull/events/bus')
     // requestHandoff refuses human targets, so this can only be a forged or
     // replayed row — the consumer must re-validate, not trust the emitter.
@@ -1002,6 +1171,120 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
     expect(await getIssueSession(db, issue.id, authorId)).toBeUndefined()
   })
 
+  /** A built issue plus a baton-ready target — the base for forged-event tests. */
+  async function builtWithTarget(orch: Orchestrator, nano: string) {
+    const { user } = await babysitter()
+    const issue = await createIssue(db, { title: 'X', authorId, nano })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'building')
+    /** A payload that WOULD be delivered — each test breaks exactly one field. */
+    const good = {
+      issueId: issue.id,
+      fromUserId: builderId,
+      toUserId: user.id,
+      toHandle: 'babysitter',
+      toOwner: false,
+      message: 'go',
+    }
+    return { issue, user, good }
+  }
+
+  it('ignores a handoff from another source, even with the right topic and audience', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { issue, user, good } = await builtWithTarget(orch, 'hs01')
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: ISSUE_HANDOFF,
+      source: 'chat', // ONLY the source is wrong
+      topic: issueTopic(issue.id),
+      audience: 'public',
+      payload: good,
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+    expect(runtime.turns).toHaveLength(1) // just the build seed
+    expect(await getIssueSession(db, issue.id, user.id)).toBeUndefined()
+  })
+
+  it('ignores a handoff on the wrong audience, even with the right source and topic', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { issue, user, good } = await builtWithTarget(orch, 'hs02')
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: ISSUE_HANDOFF,
+      source: 'issues',
+      topic: issueTopic(issue.id),
+      audience: 'members', // ONLY the audience is wrong
+      payload: good,
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+    expect(runtime.turns).toHaveLength(1)
+    expect(await getIssueSession(db, issue.id, user.id)).toBeUndefined()
+  })
+
+  it('leaves a toOwner baton to the notification path even when the owner is an agent', async () => {
+    // The target here is a real crew AGENT, so the later "sessions never act
+    // as humans" check would NOT drop it — only the toOwner guard stands
+    // between this event and a worktree turn.
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { issue, user, good } = await builtWithTarget(orch, 'hs03')
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: ISSUE_HANDOFF,
+      source: 'issues',
+      topic: issueTopic(issue.id),
+      audience: 'public',
+      payload: { ...good, toOwner: true }, // ONLY toOwner differs
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+    expect(runtime.turns).toHaveLength(1)
+    expect(await getIssueSession(db, issue.id, user.id)).toBeUndefined()
+  })
+
+  it('drops a handoff payload with one non-string field at a time', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { issue, good } = await builtWithTarget(orch, 'hs04')
+    const { emitEvent } = await import('@hull/events/bus')
+    // Each variant breaks exactly ONE field (the envelope stays consistent
+    // with it), so every shape guard is individually load-bearing.
+    const variants: { payload: unknown; topic: string }[] = [
+      { payload: { ...good, issueId: 42 }, topic: 'issue:42' },
+      { payload: { ...good, fromUserId: 42 }, topic: issueTopic(issue.id) },
+      { payload: { ...good, toUserId: 42 }, topic: issueTopic(issue.id) },
+      { payload: { ...good, message: 42 }, topic: issueTopic(issue.id) },
+    ]
+    for (const { payload, topic } of variants) {
+      const row = await emitEvent(db, {
+        type: ISSUE_HANDOFF,
+        source: 'issues',
+        topic,
+        audience: 'public',
+        payload,
+      })
+      await orch.handleBusNote({ id: row.id, type: ISSUE_HANDOFF, topic })
+    }
+    expect(runtime.turns).toHaveLength(1) // just the build seed
+  })
+
   it('ignores a handoff whose envelope disagrees with its payload', async () => {
     const { deps, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
@@ -1012,7 +1295,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
     const { emitEvent } = await import('@hull/events/bus')
     // The payload names this issue, but the event sits on another topic — a
     // forged row must not get to start work on an issue it wasn't emitted on.
@@ -1048,7 +1331,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
     // Emit the handoff while building, but move the issue on before the bus
     // note is handled — the orchestrator must re-check durable state.
     await requestHandoff(db, {
@@ -1091,7 +1374,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
     const { emitEvent } = await import('@hull/events/bus')
     // A handoff event naming a user id that was never (or is no longer) crew —
     // e.g. replayed from another ship's log. Dropped, not crashed on.
@@ -1164,7 +1447,7 @@ describe('orchestrator playbooks', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
 
     const link = defined(await getIssueSession(db, issue.id, hand.id))
     const session = defined(await getSession(db, link.sessionId))
@@ -1189,7 +1472,7 @@ describe('orchestrator playbooks', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
 
     const link = defined(await getIssueSession(db, issue.id, builderId))
     const session = defined(await getSession(db, link.sessionId))
@@ -1213,7 +1496,7 @@ describe('orchestrator playbooks', () => {
       to: 'building',
       actorId: authorId,
     })
-    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await orch.onStatusChanged(issue.id, 'building')
     const { emitEvent } = await import('@hull/events/bus')
     // The builder is a real agent, but not on the general playbook's roster.
     const row = await emitEvent(db, {

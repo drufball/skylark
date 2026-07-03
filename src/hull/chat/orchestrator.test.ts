@@ -97,7 +97,7 @@ function fakeRuntime(db: Database, replyText: string): ChatAgentRuntime {
         role: 'assistant',
         message,
       })
-      return [message as never]
+      return { queued: false, messages: [message as never] }
     },
   }
 }
@@ -222,7 +222,7 @@ describe('chat orchestrator', () => {
           content: [{ type: 'text', text: 'done' }],
         }
         await appendMessage(db, { sessionId, role: 'assistant', message })
-        return [message as never]
+        return { queued: false as const, messages: [message as never] }
       },
     }
 
@@ -273,7 +273,7 @@ describe('chat orchestrator', () => {
           role: 'toolResult',
           message,
         })
-        return [message as never]
+        return { queued: false as const, messages: [message as never] }
       },
     }
     const orch = createChatOrchestrator({ db, runtime: silent })
@@ -281,6 +281,32 @@ describe('chat orchestrator', () => {
 
     // Only the human's message — no empty agent message posted.
     expect(await listMessages(db, chatId)).toHaveLength(1)
+  })
+
+  it('posts nothing (and logs no error) when the turn was queued mid-flight', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    // The agent's session is mid-turn: the prompt is folded into that turn,
+    // whose eventual reply covers it — this call must not post anything, and
+    // "queued" is a normal outcome, not an error.
+    const queued: ChatAgentRuntime = {
+      runTurn: () => Promise.resolve({ queued: true }),
+    }
+    const errSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    try {
+      const orch = createChatOrchestrator({ db, runtime: queued })
+      await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+      // Only the human's message — no empty agent message, no logged error.
+      expect(await listMessages(db, chatId)).toHaveLength(1)
+      expect(errSpy).not.toHaveBeenCalled()
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 
   it('answers only the @mentioned agent in a group', async () => {
@@ -334,12 +360,15 @@ describe('chat orchestrator', () => {
     // uses the return value instead of slicing the durable log.
     const directReturn: ChatAgentRuntime = {
       runTurn: () =>
-        Promise.resolve([
-          {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'from return value' }],
-          },
-        ] as never[]),
+        Promise.resolve({
+          queued: false as const,
+          messages: [
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'from return value' }],
+            },
+          ] as never[],
+        }),
     }
 
     const orch = createChatOrchestrator({ db, runtime: directReturn })
@@ -489,6 +518,76 @@ describe('chat orchestrator', () => {
     expect(await listMessages(db, chatId)).toHaveLength(0)
   })
 
+  it('ignores a posted-message event from another source, even with the right topic', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    const msgId = uuidv7()
+    await addMessage(db, { id: msgId, chatId, authorId: dru, body: 'hi' })
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: CHAT_MESSAGE_POSTED,
+      source: 'issues', // ONLY the source is wrong
+      topic: chatTopic(chatId),
+      audience: 'members',
+      payload: { chatId, messageId: msgId, authorId: dru },
+    })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
+  })
+
+  it('ignores a posted-message event whose topic names a different chat', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    const msgId = uuidv7()
+    await addMessage(db, { id: msgId, chatId, authorId: dru, body: 'hi' })
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: CHAT_MESSAGE_POSTED,
+      source: 'chat',
+      topic: chatTopic('somewhere-else'), // ONLY the topic is wrong
+      audience: 'members',
+      payload: { chatId, messageId: msgId, authorId: dru },
+    })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
+  })
+
+  it('drops a posted-message payload with one non-string field at a time', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    const msgId = uuidv7()
+    await addMessage(db, { id: msgId, chatId, authorId: dru, body: 'hi' })
+    const { emitEvent } = await import('@hull/events/bus')
+    // Each variant breaks exactly ONE field (the envelope stays consistent
+    // with it), so every shape guard is individually load-bearing.
+    const good = { chatId, messageId: msgId, authorId: dru }
+    const variants: { payload: unknown; topic: string }[] = [
+      { payload: { ...good, chatId: 42 }, topic: 'chat:42' },
+      { payload: { ...good, messageId: 42 }, topic: chatTopic(chatId) },
+      { payload: { ...good, authorId: 42 }, topic: chatTopic(chatId) },
+    ]
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    for (const { payload, topic } of variants) {
+      const row = await emitEvent(db, {
+        type: CHAT_MESSAGE_POSTED,
+        source: 'chat',
+        topic,
+        audience: 'members',
+        payload,
+      })
+      await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
+    }
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
+  })
+
   it('reconcile keeps going when one chat reply throws', async () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
@@ -521,7 +620,7 @@ describe('chat orchestrator', () => {
           content: [{ type: 'text', text: replyText }],
         }
         await appendMessage(db, { sessionId, role: 'assistant', message })
-        return [message as never]
+        return { queued: false as const, messages: [message as never] }
       },
     }
   }

@@ -10,7 +10,7 @@ import type { AppendEventInput } from '@hull/events/service'
 import { createUser } from '@hull/users/service'
 
 import { createProfile, registerExtension } from './profiles'
-import { createAgentRuntime, type PiSession } from './runtime'
+import { createAgentRuntime, type PiSession, type TurnResult } from './runtime'
 import type { ResolvedProfile } from './session-config'
 import {
   appendMessage,
@@ -19,6 +19,12 @@ import {
   getSession,
   setStatus,
 } from './service'
+
+/** A completed turn's messages — throws if the call was queued instead. */
+function messagesOf(result: TurnResult): AgentMessage[] {
+  if (result.queued) throw new Error('expected a completed turn, got queued')
+  return result.messages
+}
 
 function deferred() {
   let resolve!: () => void
@@ -420,7 +426,7 @@ describe('agent runtime', () => {
 
     // The turn completes and persists despite every emit throwing.
     const produced = await runtimeBadEmit.runTurn('s1', 'hi')
-    expect(produced).toEqual(expect.any(Array))
+    expect(produced.queued).toBe(false)
     expect(defined(await getSession(db, 's1')).status).toBe('idle')
     expect((await getMessages(db, 's1')).length).toBeGreaterThan(0)
   })
@@ -596,7 +602,7 @@ describe('agent runtime', () => {
       })
     }
 
-    const produced = await runtime.runTurn('s1', 'hello')
+    const produced = messagesOf(await runtime.runTurn('s1', 'hello'))
 
     // Returns all messages flushed this turn (pi echoes the user message too).
     expect(produced).toHaveLength(3)
@@ -611,7 +617,7 @@ describe('agent runtime', () => {
     ).toBe('reply two')
   })
 
-  it('returns an empty array when a message is queued (followUp path)', async () => {
+  it('reports { queued: true } when a message is queued (followUp path)', async () => {
     await createSession(db, { id: 's1', model: 'm' })
     const gate = deferred()
     fake.onPrompt = async () => {
@@ -622,8 +628,9 @@ describe('agent runtime', () => {
     await until(() => fake.isStreaming)
     const queued = await runtime.runTurn('s1', 'second')
 
-    // The queued message returns [] immediately.
-    expect(queued).toEqual([])
+    // Explicitly queued — NOT a completed turn that produced no messages, so
+    // callers deciding whether to post a reply can tell the two apart.
+    expect(queued).toEqual({ queued: true })
 
     gate.resolve()
     await first
@@ -648,7 +655,7 @@ describe('agent runtime', () => {
       })
     }
 
-    const produced = await runtime.runTurn('s1', 'go')
+    const produced = messagesOf(await runtime.runTurn('s1', 'go'))
 
     // All messages were durably persisted and returned, despite compaction.
     expect(produced).toHaveLength(3)
