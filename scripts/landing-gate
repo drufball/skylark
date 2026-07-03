@@ -9,7 +9,7 @@
 #         keeps working. Anything we can't verify (no remote, gh missing) fails
 #         OPEN — we never trap the agent over tooling we don't control.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 
 block() { echo "$1" >&2; exit 2; }
 
@@ -18,11 +18,16 @@ block() { echo "$1" >&2; exit 2; }
 # hook touch them.
 [ "${GITHUB_ACTIONS:-}" = "true" ] && exit 0
 
-# Already continuing from a prior landing-gate block? One nudge is enough — let
-# the agent stop rather than risk a loop if it genuinely can't push. (Claude
-# Code also force-overrides a Stop hook after 8 consecutive blocks.)
-active="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String((JSON.parse(s)||{}).stop_hook_active||""))}catch{}})')"
+# One stdin read for both fields: stop_hook_active (loop guard) and the
+# session's cwd — a worktree session must be judged on ITS branch state, not
+# the main checkout's (#uvnm).
+payload="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const p=JSON.parse(s)||{};process.stdout.write(JSON.stringify({active:String(p.stop_hook_active||""),cwd:p.cwd||""}))}catch{process.stdout.write("{\"active\":\"\",\"cwd\":\"\"}")}})')"
+active="$(printf '%s' "$payload" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{process.stdout.write(JSON.parse(s).active)})')"
+hook_cwd="$(printf '%s' "$payload" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{process.stdout.write(JSON.parse(s).cwd)})')"
 [ "$active" = "true" ] && exit 0
+
+# Judge the tree the session actually worked in (see scripts/gate-workdir).
+cd "$("$script_dir/gate-workdir" "$hook_cwd")"
 
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 # Nothing to land on a detached HEAD or directly on main.

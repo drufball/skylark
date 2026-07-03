@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# scripts/gate-workdir — which tree should a gate check? The commit-gate and
+# landing-gate hooks fire for EVERY session, including agents building in git
+# worktrees. Gating those against the main checkout is wrong both ways: a
+# worktree's broken code passes (main is clean) and a dirty main blocks a
+# green worktree commit (#uvnm). Given the hook payload's cwd as $1, print
+# the git toplevel that cwd belongs to; fall back to this project when the
+# cwd is empty, gone, or outside any repository.
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "$0")/.." && pwd)"
+
+cwd="${1:-}"
+if [ -n "$cwd" ]; then
+  if toplevel="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"; then
+    printf '%s\n' "$toplevel"
+    exit 0
+  fi
+fi
+printf '%s\n' "$project_dir"
