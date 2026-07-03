@@ -6,5 +6,6 @@
 - Filer can only claim a chat they're a member of (provenance check in cli.ts).
 
 ## Log
-- 2026-07-03: Re-filed #notz → #z7ja (vite server.watch.ignored for .claude/worktrees, .stryker-tmp) into chat 019f29fd… so the build wake-back can land; owner @drufball, playbook build.
-- 2026-07-03: #mp1q (Inbox UTC timestamps) done — formatLocalTime() in src/rigging/lib/format-local-time.ts (has tests), used by inbox view. Verified merged; no other UTC string-surgery in rigging views. Inbox is the only view rendering timestamps so far.
+- 2026-07-03 maintenance sweep of the build loop, with @drufball. One build at a time until gates are fixed.
+  - #notz → re-filed as #z7ja (vite server.watch.ignored for .claude/worktrees etc., so worktree churn doesn't full-reload the ship / reboot orchestrators). Building.
+  - #8cif → re-filed as #uvnm (commit-gate/landing-gate hooks cd to MAIN checkout instead of the invoking worktree; required before parallel builds). Awaiting Build after #z7ja lands.
