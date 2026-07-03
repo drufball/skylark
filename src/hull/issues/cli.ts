@@ -1,7 +1,7 @@
 import { ensureChatVisible } from '@hull/chat/service'
 import { isMain, runCli } from '@hull/lib/cli'
 import { withCliActor } from '@hull/users/actor'
-import { getUserByHandle, getUserById } from '@hull/users/service'
+import { getUserByHandle, getUserById, handleOf } from '@hull/users/service'
 
 import {
   addComment,
@@ -127,12 +127,8 @@ async function cmdPlaybooks(): Promise<void> {
       all.map(async (p) => ({
         name: p.name,
         description: p.description,
-        entry: (await getUserById(tx, p.entrypointId))?.handle ?? '?',
-        members: await Promise.all(
-          p.memberIds.map(
-            async (id) => (await getUserById(tx, id))?.handle ?? '?',
-          ),
-        ),
+        entry: await handleOf(tx, p.entrypointId),
+        members: await Promise.all(p.memberIds.map((id) => handleOf(tx, id))),
       })),
     )
   })

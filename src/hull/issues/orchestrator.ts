@@ -261,7 +261,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 
   // Serialize all work for a single issue. Events for the same issue can arrive
   // concurrently — a reconcile-on-boot racing a live bus note, a rapid
-  // open→building→open→building — and ensureBuild's check-then-act
+  // open→building→open→building — and ensureEntrypoint's check-then-act
   // (worktreeExists → addWorktree) would otherwise let two passes both miss the
   // worktree and create it (and a second session) twice. A per-issue promise
   // chain makes each issue's transitions run one at a time; different issues
@@ -423,7 +423,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /** Ensure the worktree + the entrypoint's session exist, idempotently. */
-  async function ensureBuild(
+  async function ensureEntrypoint(
     issue: IssueRow,
   ): Promise<{ sessionId: string; entryUserId: string; build: boolean }> {
     const entry = await entryFor(issue)
@@ -477,7 +477,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         // ensure the playbook entrypoint's hand exists (idempotent), then
         // seed/resume the turn with the latest thread — the ship-feature
         // contract for the build playbook, the plain brief for anything else.
-        const { sessionId, entryUserId, build } = await ensureBuild(issue)
+        const { sessionId, entryUserId, build } = await ensureEntrypoint(issue)
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
         const prompt = build
@@ -679,7 +679,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * Startup reconciliation: after a server restart (e.g. the HMR reload a done
    * refresh triggers), an issue can be stuck in `building` with a session row
    * but no live session in this fresh process. Resume each by re-seeding a turn
-   * — idempotent ensureBuild reuses the existing worktree + session.
+   * — idempotent ensureEntrypoint reuses the existing worktree + session.
    */
   async function reconcile(): Promise<void> {
     const all = await listIssues(db)

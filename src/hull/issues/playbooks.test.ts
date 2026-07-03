@@ -76,6 +76,16 @@ describe('upsertPlaybook', () => {
     ).rejects.toThrow(/member/i)
   })
 
+  it('refuses a duplicated roster entry', async () => {
+    await expect(
+      upsertPlaybook(db, {
+        name: 'echo',
+        memberIds: [builderId, builderId],
+        entrypointId: builderId,
+      }),
+    ).rejects.toThrow(/once/i)
+  })
+
   it('refuses a member id that is not crew at all', async () => {
     await expect(
       upsertPlaybook(db, {

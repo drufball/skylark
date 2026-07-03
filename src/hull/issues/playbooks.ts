@@ -39,6 +39,9 @@ async function validateRoster(db: Database, input: PlaybookInput) {
   if (input.memberIds.length === 0) {
     throw new Error('A playbook needs at least one member agent.')
   }
+  if (new Set(input.memberIds).size !== input.memberIds.length) {
+    throw new Error('A playbook roster lists each agent once.')
+  }
   for (const id of input.memberIds) {
     const user = await getUserById(db, id)
     if (!user) throw new Error(`No such crew member: ${id}`)
