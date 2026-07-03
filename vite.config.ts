@@ -24,6 +24,9 @@ const config = defineConfig({
     tanstackStart(),
     viteReact(),
   ],
+  watch: {
+    ignored: ['**/.claude/**', '**/.stryker-tmp/**', '**/reports/**'],
+  },
 })
 
 export default config
