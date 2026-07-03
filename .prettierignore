@@ -9,3 +9,5 @@ src/migrations/
 # The crew's shared documents (the files service auto-merges them to main);
 # they're content, not code — format:check must never fail on a doc.
 src/home/files/
+# Playwright agent-CLI session artifacts — transient, not code
+.playwright-cli/
