@@ -11,8 +11,10 @@ import {
   getPlaybookByName,
   listPlaybooks,
   playbookFor,
+  requirePlaybook,
   seedPlaybooks,
   upsertPlaybook,
+  validatePlaybookInput,
 } from './playbooks'
 import { createIssue } from './service'
 
@@ -31,6 +33,103 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await close()
+})
+
+describe('validatePlaybookInput', () => {
+  it('accepts a well-shaped input, trimming the name and defaulting description', () => {
+    expect(
+      validatePlaybookInput({
+        name: '  review ',
+        memberIds: ['u1'],
+        entrypointId: 'u1',
+      }),
+    ).toEqual({
+      name: 'review',
+      description: '',
+      memberIds: ['u1'],
+      entrypointId: 'u1',
+    })
+  })
+
+  it('keeps a string description and drops a non-string one', () => {
+    expect(
+      validatePlaybookInput({
+        name: 'review',
+        description: 'read and judge',
+        memberIds: ['u1'],
+        entrypointId: 'u1',
+      }).description,
+    ).toBe('read and judge')
+    expect(
+      validatePlaybookInput({
+        name: 'review',
+        description: 42,
+        memberIds: ['u1'],
+        entrypointId: 'u1',
+      }).description,
+    ).toBe('')
+  })
+
+  it('rejects a missing or blank name', () => {
+    expect(() =>
+      validatePlaybookInput({ memberIds: ['u1'], entrypointId: 'u1' }),
+    ).toThrow(/needs a name/)
+    expect(() =>
+      validatePlaybookInput({
+        name: '   ',
+        memberIds: ['u1'],
+        entrypointId: 'u1',
+      }),
+    ).toThrow(/needs a name/)
+  })
+
+  it('rejects memberIds that are not a list of strings', () => {
+    expect(() =>
+      validatePlaybookInput({ name: 'x', entrypointId: 'u1' }),
+    ).toThrow(/memberIds/)
+    expect(() =>
+      validatePlaybookInput({
+        name: 'x',
+        memberIds: ['u1', 7],
+        entrypointId: 'u1',
+      }),
+    ).toThrow(/memberIds/)
+  })
+
+  it('rejects a non-string entrypointId', () => {
+    expect(() =>
+      validatePlaybookInput({ name: 'x', memberIds: ['u1'] }),
+    ).toThrow(/entrypointId/)
+  })
+})
+
+describe('requirePlaybook', () => {
+  it('resolves an existing playbook by name and by id', async () => {
+    await seedPlaybooks(db)
+    const build = defined(await getPlaybookByName(db, BUILD_PLAYBOOK_NAME))
+    expect((await requirePlaybook(db, { name: BUILD_PLAYBOOK_NAME })).id).toBe(
+      build.id,
+    )
+    expect((await requirePlaybook(db, { id: build.id })).name).toBe(
+      BUILD_PLAYBOOK_NAME,
+    )
+  })
+
+  it('throws the friendly error listing what exists', async () => {
+    await seedPlaybooks(db)
+    await expect(requirePlaybook(db, { name: 'bogus' })).rejects.toThrow(
+      /No such playbook: bogus \(have: build, general\)/,
+    )
+    await expect(requirePlaybook(db, { id: uuidv7() })).rejects.toThrow(
+      /No such playbook: .+ \(have: build, general\)/,
+    )
+  })
+
+  it('omits the have-list on a ship with no playbooks at all', async () => {
+    await expect(requirePlaybook(db, { name: 'bogus' })).rejects.toThrow(
+      /^No such playbook: bogus$/,
+    )
+  })
 })
 
 describe('upsertPlaybook', () => {

@@ -9,8 +9,10 @@ import { ensureOrchestrator } from './orchestrator-live'
 import {
   BUILD_PLAYBOOK_NAME,
   listPlaybooks,
+  requirePlaybook,
   seedPlaybooks,
   upsertPlaybook,
+  validatePlaybookInput,
 } from './playbooks'
 import {
   addComment,
@@ -21,9 +23,11 @@ import {
   issueTopic,
   listComments,
   listIssues,
-  resolveStatusWord,
   toBoardCard,
   transitionIssue,
+  validateCommentInput,
+  validateOpenIssueInput,
+  validateTransitionInput,
   type IssueStatusChangedPayload,
   type IssueThread,
   type StatusChange,
@@ -115,11 +119,12 @@ export const getThread = createServerFn({ method: 'GET' })
 
 /** Open a new issue as the current actor. Returns the new id. */
 export const openIssue = createServerFn({ method: 'POST' })
-  .validator(
-    (input: { title: string; body?: string; playbookId?: string }) => input,
-  )
+  .validator(validateOpenIssueInput)
   .handler(async ({ data }) => {
     const actor = await currentActor()
+    // Same friendly existence check as the CLI's --playbook: a bad reference
+    // fails loudly with what DOES exist, not as a silent FK error.
+    if (data.playbookId) await requirePlaybook(db, { id: data.playbookId })
     const issue = await createIssue(db, {
       title: data.title,
       body: data.body,
@@ -170,33 +175,12 @@ export const listPlaybooksView = createServerFn({ method: 'GET' }).handler(
 
 /**
  * Create or update a playbook (matched by name — ids stay stable so issues
- * keep pointing at an edited playbook). Validation (roster of real agents,
- * entrypoint on the roster) lives in the service and its errors surface here.
+ * keep pointing at an edited playbook). The shape check is the service's
+ * validatePlaybookInput; the semantic validation (roster of real agents,
+ * entrypoint on the roster) lives in upsertPlaybook. Both surface here.
  */
 export const savePlaybook = createServerFn({ method: 'POST' })
-  .validator((input: unknown) => {
-    const data = input as {
-      name?: unknown
-      description?: unknown
-      memberIds?: unknown
-      entrypointId?: unknown
-    }
-    if (typeof data.name !== 'string' || !data.name.trim())
-      throw new Error('A playbook needs a name.')
-    if (
-      !Array.isArray(data.memberIds) ||
-      data.memberIds.some((m) => typeof m !== 'string')
-    )
-      throw new Error('memberIds must be a list of user ids.')
-    if (typeof data.entrypointId !== 'string')
-      throw new Error('entrypointId must be a user id.')
-    return {
-      name: data.name.trim(),
-      description: typeof data.description === 'string' ? data.description : '',
-      memberIds: data.memberIds as string[],
-      entrypointId: data.entrypointId,
-    }
-  })
+  .validator(validatePlaybookInput)
   .handler(async ({ data }) => {
     // Resolve the actor like every other mutating door — writing a playbook
     // decides which full-tools agent starts future issues, so it must at
@@ -208,7 +192,7 @@ export const savePlaybook = createServerFn({ method: 'POST' })
 
 /** Comment on an issue as the current actor. */
 export const commentOnIssue = createServerFn({ method: 'POST' })
-  .validator((input: { issueId: string; body: string }) => input)
+  .validator(validateCommentInput)
   .handler(async ({ data }) => {
     const actor = await currentActor()
     await addComment(db, {
@@ -226,15 +210,13 @@ export const commentOnIssue = createServerFn({ method: 'POST' })
  * lifecycle off the bus.
  */
 export const setIssueStatus = createServerFn({ method: 'POST' })
-  .validator((input: { issueId: string; status: string }) => input)
+  .validator(validateTransitionInput)
   .handler(async ({ data }) => {
     bootOrchestrator()
-    const to = resolveStatusWord(data.status)
-    if (!to) throw new Error(`Unknown status: ${data.status}`)
     const actor = await currentActor()
     const moved = await transitionIssue(db, {
       issueId: data.issueId,
-      to,
+      to: data.to,
       actorId: actor.id,
     })
     return { status: moved.status }

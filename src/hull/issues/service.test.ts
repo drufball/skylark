@@ -26,6 +26,9 @@ import {
   setStatusLine,
   toBoardCard,
   transitionIssue,
+  validateCommentInput,
+  validateOpenIssueInput,
+  validateTransitionInput,
   type IssueTransitionError,
 } from './service'
 import type { IssueRow } from './schema'
@@ -111,6 +114,85 @@ describe('resolveStatusWord', () => {
   it('returns undefined for an unknown word', () => {
     expect(resolveStatusWord('frobnicate')).toBeUndefined()
     expect(resolveStatusWord('')).toBeUndefined()
+  })
+})
+
+describe('validateOpenIssueInput — the web door check', () => {
+  it('accepts a title with optional body and playbookId', () => {
+    expect(
+      validateOpenIssueInput({
+        title: 'Fix it',
+        body: 'how',
+        playbookId: 'p1',
+      }),
+    ).toEqual({ title: 'Fix it', body: 'how', playbookId: 'p1' })
+    expect(validateOpenIssueInput({ title: 'Fix it' })).toEqual({
+      title: 'Fix it',
+      body: undefined,
+      playbookId: undefined,
+    })
+  })
+
+  it('rejects a missing, non-string, or blank title', () => {
+    expect(() => validateOpenIssueInput({})).toThrow(/title/)
+    expect(() => validateOpenIssueInput({ title: 7 })).toThrow(/title/)
+    expect(() => validateOpenIssueInput({ title: '   ' })).toThrow(/title/)
+  })
+
+  it('drops non-string body/playbookId rather than passing junk through', () => {
+    expect(
+      validateOpenIssueInput({ title: 'x', body: 9, playbookId: [] }),
+    ).toEqual({ title: 'x', body: undefined, playbookId: undefined })
+  })
+})
+
+describe('validateCommentInput — the web door check', () => {
+  it('accepts an issueId and a non-empty body', () => {
+    expect(validateCommentInput({ issueId: 'i1', body: 'hello' })).toEqual({
+      issueId: 'i1',
+      body: 'hello',
+    })
+  })
+
+  it('rejects a missing issueId', () => {
+    expect(() => validateCommentInput({ body: 'hello' })).toThrow(/issueId/)
+    expect(() => validateCommentInput({ issueId: '', body: 'x' })).toThrow(
+      /issueId/,
+    )
+  })
+
+  it('rejects a missing or blank body', () => {
+    expect(() => validateCommentInput({ issueId: 'i1' })).toThrow(/body/)
+    expect(() => validateCommentInput({ issueId: 'i1', body: '  ' })).toThrow(
+      /body/,
+    )
+  })
+})
+
+describe('validateTransitionInput — the web door check', () => {
+  it('accepts an issueId and a known status word (incl. the close alias)', () => {
+    expect(
+      validateTransitionInput({ issueId: 'i1', status: 'building' }),
+    ).toEqual({ issueId: 'i1', to: 'building' })
+    expect(validateTransitionInput({ issueId: 'i1', status: 'close' })).toEqual(
+      {
+        issueId: 'i1',
+        to: 'closed',
+      },
+    )
+  })
+
+  it('rejects a missing issueId', () => {
+    expect(() => validateTransitionInput({ status: 'open' })).toThrow(/issueId/)
+  })
+
+  it('rejects an unknown or non-string status word', () => {
+    expect(() =>
+      validateTransitionInput({ issueId: 'i1', status: 'frobnicate' }),
+    ).toThrow(/Unknown status: frobnicate/)
+    expect(() => validateTransitionInput({ issueId: 'i1', status: 4 })).toThrow(
+      /Unknown status/,
+    )
   })
 })
 

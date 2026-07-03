@@ -31,6 +31,60 @@ export interface PlaybookInput {
 }
 
 /**
+ * Shape-check an untrusted playbook input (the web door's editor payload)
+ * into a PlaybookInput: a non-blank name (trimmed), memberIds a list of
+ * strings, entrypointId a string; a non-string description becomes ''.
+ * Semantic validation (real agents, entrypoint on the roster) stays in
+ * validateRoster, run by upsertPlaybook. Throws messages meant for whoever
+ * typed the form.
+ */
+export function validatePlaybookInput(input: unknown): PlaybookInput {
+  const data = input as {
+    name?: unknown
+    description?: unknown
+    memberIds?: unknown
+    entrypointId?: unknown
+  }
+  if (typeof data.name !== 'string' || !data.name.trim())
+    throw new Error('A playbook needs a name.')
+  if (
+    !Array.isArray(data.memberIds) ||
+    data.memberIds.some((m) => typeof m !== 'string')
+  )
+    throw new Error('memberIds must be a list of user ids.')
+  if (typeof data.entrypointId !== 'string')
+    throw new Error('entrypointId must be a user id.')
+  return {
+    name: data.name.trim(),
+    description: typeof data.description === 'string' ? data.description : '',
+    memberIds: data.memberIds as string[],
+    entrypointId: data.entrypointId,
+  }
+}
+
+/**
+ * Resolve a playbook by name (the CLI's `--playbook <name>`) or id (the web
+ * door's playbookId), or throw the friendly error that says what DOES exist —
+ * one helper so both doors speak the same copy.
+ */
+export async function requirePlaybook(
+  db: Database,
+  ref: { name: string } | { id: string },
+): Promise<PlaybookRow> {
+  const found =
+    'name' in ref
+      ? await getPlaybookByName(db, ref.name)
+      : await getPlaybook(db, ref.id)
+  if (found) return found
+  const names = (await listPlaybooks(db)).map((p) => p.name)
+  const label = 'name' in ref ? ref.name : ref.id
+  throw new Error(
+    `No such playbook: ${label}` +
+      (names.length > 0 ? ` (have: ${names.join(', ')})` : ''),
+  )
+}
+
+/**
  * Validate a playbook's roster: at least one member, every member a real crew
  * AGENT (a playbook of humans is a meeting, not a strategy), entrypoint on the
  * roster. Throws with a message meant for whoever typed the form/command.

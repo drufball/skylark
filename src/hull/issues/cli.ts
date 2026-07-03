@@ -13,7 +13,7 @@ import {
   transitionIssue,
 } from './service'
 import { requestHandoff } from './handoff'
-import { getPlaybook, getPlaybookByName, listPlaybooks } from './playbooks'
+import { getPlaybook, listPlaybooks, requirePlaybook } from './playbooks'
 import type { IssueStatus } from './schema'
 
 // The default door onto the issues service — the message board, drivable from a
@@ -96,15 +96,8 @@ async function cmdNew(args: string[]): Promise<void> {
     if (ownerHandle && !owner)
       throw new Error(`No such crew member: @${ownerHandle}`)
     const playbook = playbookName
-      ? await getPlaybookByName(tx, playbookName)
+      ? await requirePlaybook(tx, { name: playbookName })
       : undefined
-    if (playbookName && !playbook) {
-      const names = (await listPlaybooks(tx)).map((p) => p.name)
-      throw new Error(
-        `No such playbook: ${playbookName}` +
-          (names.length > 0 ? ` (have: ${names.join(', ')})` : ''),
-      )
-    }
     return createIssue(tx, {
       title,
       body,
