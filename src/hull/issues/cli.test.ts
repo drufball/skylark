@@ -57,5 +57,24 @@ describe('parseNewArgs — strict flag values', () => {
       /--chat requires/,
     )
     expect(() => parseNewArgs(['Fix', '--body'])).toThrow(/--body requires/)
+    expect(() => parseNewArgs(['Fix', '--owner'])).toThrow(/--owner requires/)
+  })
+})
+
+describe('parseNewArgs — owner', () => {
+  it('extracts --owner (a crew handle), with or without the @', () => {
+    expect(parseNewArgs(['Fix', 'it', '--owner', 'tilde'])).toEqual({
+      title: 'Fix it',
+      body: undefined,
+      originChatId: undefined,
+      ownerHandle: 'tilde',
+    })
+    expect(parseNewArgs(['Fix', 'it', '--owner', '@tilde']).ownerHandle).toBe(
+      'tilde',
+    )
+  })
+
+  it('leaves ownerHandle undefined when the flag is absent — owner defaults to the creator downstream', () => {
+    expect(parseNewArgs(['Fix', 'it']).ownerHandle).toBeUndefined()
   })
 })

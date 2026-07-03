@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { asActor, freshDb } from '@hull/db/test-db'
 import { createChat, setMemberSession } from '@hull/chat/service'
-import { createIssue, setBuildContext } from '@hull/issues/service'
+import { createIssue, setIssueSession } from '@hull/issues/service'
 import { createUser } from '@hull/users/service'
 
 import {
@@ -56,10 +56,14 @@ describe('agent session access (RLS)', () => {
     sChat = uuidv7()
     await createSession(db, { id: sBare, model: 'm' }) // no parent → crew-visible
 
-    // An issue's builder session → public (link it via issues.session_id).
+    // An issue's agent session → public (link it via issue_sessions).
     await createSession(db, { id: sIssue, model: 'm' })
     const issue = await createIssue(db, { title: 'build', authorId: alice })
-    await setBuildContext(db, issue.id, { sessionId: sIssue })
+    await setIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: alice,
+      sessionId: sIssue,
+    })
 
     // A chat's backing session → members only (link via chat_members.session_id).
     await createSession(db, { id: sChat, model: 'm' })

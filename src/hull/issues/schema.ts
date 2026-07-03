@@ -1,15 +1,23 @@
-import { index, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import {
+  index,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from 'drizzle-orm/pg-core'
 
 import { agentSessions } from '@hull/agent/schema'
 import { chats } from '@hull/chat/schema'
 import { users } from '@hull/users/schema'
 
-// The issues service owns these two tables: the ship's message board. An issue
-// is a unit of work or discussion — a forum thread that can become a build. A
-// building agent is launched off an issue, drives a worktree to a merged PR, and
-// reports back by commenting and moving the issue's status. Comments and status
-// changes both ride the ship's log (hull/events) so the board updates live and
-// the orchestrator (server-side) can react across processes.
+// The issues service owns these three tables: the ship's message board. An
+// issue is a unit of work or discussion — a forum thread that can become a
+// build. Agents are launched off an issue into ONE shared worktree, each with
+// its own session (issue_sessions), passing a baton between them via handoffs;
+// they report back by commenting and moving the issue's status. Comments,
+// status changes, and handoffs all ride the ship's log (hull/events) so the
+// board updates live and the orchestrator (server-side) can react across
+// processes.
 //
 // FKs reach into other services only by id (authorId → users.id, sessionId →
 // agent_sessions.id) — the same one-way reference pattern the events and agent
@@ -46,6 +54,14 @@ export const issues = pgTable(
     authorId: text('author_id')
       .notNull()
       .references(() => users.id),
+    /**
+     * Who answers for it — a users.id, defaulting to the author at creation.
+     * Split from authorId so an agent can file work on someone else's behalf:
+     * the owner is who `handoff OWNER` pings when the work wants a decision.
+     */
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => users.id),
     /** Visibility key — room to grow; public for now (single-tenant ship). */
     visibility: text('visibility', { enum: ['public'] })
       .notNull()
@@ -54,8 +70,6 @@ export const issues = pgTable(
     branchName: text('branch_name'),
     /** Absolute path to the build worktree, set alongside branchName. */
     worktreePath: text('worktree_path'),
-    /** The builder session driving this issue (→ agent_sessions.id). */
-    sessionId: text('session_id').references(() => agentSessions.id),
     /**
      * The chat this issue was filed from (→ chats.id), when it was filed from
      * one — how a notification about this issue finds its way back to the
@@ -75,6 +89,35 @@ export const issues = pgTable(
       .defaultNow(),
   },
   (table) => [index('issues_status_idx').on(table.status)],
+)
+
+/**
+ * Which agents have a hand on an issue: one session per (issue, agent), every
+ * one of them in the issue's ONE worktree. The builder's session is a row here
+ * like any other; a handoff to another agent adds that agent's row the first
+ * time and reuses it after. Sessions are not deleted on teardown — the link is
+ * cheap history, and the session rows themselves are the durable transcript.
+ */
+export const issueSessions = pgTable(
+  'issue_sessions',
+  {
+    issueId: text('issue_id')
+      .notNull()
+      .references(() => issues.id, { onDelete: 'cascade' }),
+    /** Whose hand this is — a users.id of an agent crew member. */
+    agentUserId: text('agent_user_id')
+      .notNull()
+      .references(() => users.id),
+    /** The agent's session on this issue (→ agent_sessions.id). */
+    sessionId: text('session_id')
+      .notNull()
+      .unique()
+      .references(() => agentSessions.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.issueId, table.agentUserId] })],
 )
 
 /** One comment on an issue — a forum reply, or a builder's note. */
@@ -100,4 +143,5 @@ export const issueComments = pgTable(
 
 export type IssueRow = typeof issues.$inferSelect
 export type IssueCommentRow = typeof issueComments.$inferSelect
+export type IssueSessionRow = typeof issueSessions.$inferSelect
 export type IssueStatus = IssueRow['status']

@@ -1,7 +1,7 @@
 import { ensureChatVisible } from '@hull/chat/service'
 import { isMain, runCli } from '@hull/lib/cli'
 import { withCliActor } from '@hull/users/actor'
-import { getUserById } from '@hull/users/service'
+import { getUserByHandle, getUserById } from '@hull/users/service'
 
 import {
   addComment,
@@ -12,6 +12,7 @@ import {
   resolveStatusWord,
   transitionIssue,
 } from './service'
+import { requestHandoff } from './handoff'
 import type { IssueStatus } from './schema'
 
 // The default door onto the issues service — the message board, drivable from a
@@ -36,16 +37,18 @@ const STATUS_MARK: Record<IssueStatus, string> = {
 }
 
 /**
- * Parse `issue new`'s args: the title, plus optional `--body <text>` and
+ * Parse `issue new`'s args: the title, plus optional `--body <text>`,
  * `--chat <id>` (the chat this issue was filed from — how notifications about
- * it route back to that conversation). A flag present without a value (or with
- * another flag where its value should be) is a loud usage error, not a
+ * it route back to that conversation), and `--owner <handle>` (who answers for
+ * it; defaults to the creator downstream). A flag present without a value (or
+ * with another flag where its value should be) is a loud usage error, not a
  * silently unrouted issue.
  */
 export function parseNewArgs(args: string[]): {
   title: string
   body?: string
   originChatId?: string
+  ownerHandle?: string
 } {
   const rest = [...args]
   const takeFlag = (flag: string): string | undefined => {
@@ -60,20 +63,34 @@ export function parseNewArgs(args: string[]): {
   }
   const body = takeFlag('--body')
   const originChatId = takeFlag('--chat')
-  return { title: rest.join(' ').trim(), body, originChatId }
+  const ownerHandle = takeFlag('--owner')?.replace(/^@/, '')
+  return { title: rest.join(' ').trim(), body, originChatId, ownerHandle }
 }
 
 async function cmdNew(args: string[]): Promise<void> {
-  const { title, body, originChatId } = parseNewArgs(args)
+  const { title, body, originChatId, ownerHandle } = parseNewArgs(args)
   if (!title)
-    throw new Error('usage: issue new <title> [--body <text>] [--chat <id>]')
+    throw new Error(
+      'usage: issue new <title> [--body <text>] [--chat <id>] [--owner <handle>]',
+    )
   const issue = await withCliActor(async (tx, me) => {
     // Provenance must be honest: the filer can only claim a chat they're in.
     // ensureChatVisible probes under the actor's RLS, so a forged or foreign
     // chat id reads as not-a-member — and the wake can't be routed into a
     // conversation the filer never saw.
     if (originChatId) await ensureChatVisible(tx, originChatId)
-    return createIssue(tx, { title, body, originChatId, authorId: me.id })
+    const owner = ownerHandle
+      ? await getUserByHandle(tx, ownerHandle)
+      : undefined
+    if (ownerHandle && !owner)
+      throw new Error(`No such crew member: @${ownerHandle}`)
+    return createIssue(tx, {
+      title,
+      body,
+      originChatId,
+      authorId: me.id,
+      ownerId: owner?.id,
+    })
   })
   process.stdout.write(
     `Opened #${issue.nano} ${DIM}${issue.id}${RESET}\n${issue.title}\n`,
@@ -101,9 +118,10 @@ async function cmdShow(args: string[]): Promise<void> {
     const issue = await resolveIssueRef(tx, ref)
     if (!issue) throw new Error(`No such issue: ${ref}`)
     const author = await getUserById(tx, issue.authorId)
+    const owner = await getUserById(tx, issue.ownerId)
     process.stdout.write(
       `${STATUS_MARK[issue.status]} #${issue.nano} ${issue.title}  ${DIM}[${issue.status}]${RESET}\n` +
-        `${DIM}by @${author?.handle ?? '?'} · ${issue.id}${RESET}\n`,
+        `${DIM}by @${author?.handle ?? '?'} · owner @${owner?.handle ?? '?'} · ${issue.id}${RESET}\n`,
     )
     if (issue.branchName)
       process.stdout.write(`${DIM}branch ${issue.branchName}${RESET}\n`)
@@ -156,6 +174,21 @@ async function cmdStatus(args: string[]): Promise<void> {
   await transitionTo(ref, word)
 }
 
+async function cmdHandoff(args: string[]): Promise<void> {
+  const [ref, target, ...messageParts] = args
+  const message = messageParts.join(' ').trim()
+  if (!ref || !target || !message)
+    throw new Error('usage: issue handoff <id> <agent-handle|OWNER> <message>')
+  const { issue, toHandle, toOwner } = await withCliActor((tx, me) =>
+    requestHandoff(tx, { issueRef: ref, actorId: me.id, target, message }),
+  )
+  process.stdout.write(
+    toOwner
+      ? `#${issue.nano}: owner @${toHandle} pinged. If this was your last action, stop and wait.\n`
+      : `#${issue.nano}: baton passed to @${toHandle}. If this was your last action, stop now.\n`,
+  )
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2)
   switch (command) {
@@ -169,6 +202,8 @@ async function main(): Promise<void> {
       return cmdComment(args)
     case 'status':
       return cmdStatus(args)
+    case 'handoff':
+      return cmdHandoff(args)
     // Friendly verbs: `issue building <id>`, `issue done <id>`, etc.
     case 'building':
     case 'open':
@@ -180,11 +215,12 @@ async function main(): Promise<void> {
     }
     default:
       process.stdout.write(
-        'usage: issue <new|list|show|comment|status|building|open|done|close> …\n' +
-          '  new <title> [--body <text>] [--chat <id>]   open an issue\n' +
+        'usage: issue <new|list|show|comment|handoff|status|building|open|done|close> …\n' +
+          '  new <title> [--body <text>] [--chat <id>] [--owner <handle>]   open an issue\n' +
           '  list                          list issues, newest first\n' +
           '  show <id>                     show an issue, its branch, and its thread\n' +
           '  comment <id> <text>           add a comment\n' +
+          '  handoff <id> <agent> <msg>    pass the baton to an agent (or OWNER to ask the owner)\n' +
           '  status <id> <state>           move status (open|building|done|close)\n' +
           '  building|open|done|close <id> move status (shorthand)\n',
       )

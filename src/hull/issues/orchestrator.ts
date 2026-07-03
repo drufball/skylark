@@ -6,18 +6,22 @@ import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { createSession } from '@hull/agent/service'
 import type { NotifyPayload } from '@hull/events/bus'
 import { getEventById } from '@hull/events/service'
-import { handleOf } from '@hull/users/service'
+import { getUserById, handleOf } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
 import { issuesProgressLine } from '@hull/agent/progress'
 
 import {
   getIssue,
+  getIssueSession,
   ISSUE_STATUS_CHANGED,
   listComments,
   listIssues,
+  listIssueSessions,
   setBuildContext,
+  setIssueSession,
   setStatusLine,
 } from './service'
+import { ISSUE_HANDOFF, type IssueHandoffPayload } from './handoff'
 import type { IssueRow, IssueStatus } from './schema'
 
 /**
@@ -114,7 +118,40 @@ export function buildPrompt(
     'so your comments and transitions are attributed to you:\n' +
     `- When the work is fully merged into main, run: ${issueCmd} done ${issue.nano}\n` +
     `- If you need clarification, post it and pause: ${issueCmd} comment ${issue.nano} "<question>" ` +
-    `then ${issueCmd} open ${issue.nano}, then stop and wait.\n`
+    `then ${issueCmd} open ${issue.nano}, then stop and wait.\n` +
+    `- If you are stuck or the work needs a decision, ask the issue's owner as ` +
+    `your LAST action and stop: ${issueCmd} handoff ${issue.nano} OWNER "<what you did, what you need>"\n`
+  )
+}
+
+/**
+ * The prompt a baton pass seeds/resumes the target agent's session with: who
+ * handed it over and why, plus the same actor-prefixed CLI contract the builder
+ * gets — the target reports back (and hands off further) as ITSELF. The full
+ * thread is deliberately not folded in: the handoff message is the brief, and
+ * `issue show` is one command away. Pure, so the wording is testable.
+ */
+export function handoffPrompt(
+  issue: IssueRow,
+  fromHandle: string,
+  message: string,
+  toUserId: string,
+): string {
+  const issueCmd = `SKYLARK_ACTOR=${toUserId} npm run issue --`
+  return (
+    `@${fromHandle} handed you issue #${issue.nano}.\n\n` +
+    `Title: ${issue.title}\n\n` +
+    `Their message:\n${message}\n\n` +
+    'You are in the issue worktree, shared by every agent on this issue. ' +
+    `Read the full thread with: ${issueCmd} show ${issue.nano}\n\n` +
+    'Do your part, then report back through the issue CLI. Always run it with ' +
+    'the actor prefix shown so your work is attributed to you:\n' +
+    `- Post progress or findings: ${issueCmd} comment ${issue.nano} "<text>"\n` +
+    `- Pass the baton onward as your LAST action, then stop: ` +
+    `${issueCmd} handoff ${issue.nano} <agent-handle> "<what you did, what is needed next>"\n` +
+    `- Ask the issue's owner for a decision or review (also a last action): ` +
+    `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
+    `- When the work is fully merged into main, run: ${issueCmd} done ${issue.nano}\n`
   )
 }
 
@@ -208,7 +245,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * orchestrator must not block the event handler on it. Failures are logged,
    * never thrown — the session row's error status is the runtime's job.
    */
-  function fireBuilderTurn(issueId: string, sessionId: string, text: string) {
+  function fireTurn(issueId: string, sessionId: string, text: string) {
     void runtime
       .runTurn(sessionId, text, (event) => {
         const line = issuesProgressLine(event)
@@ -221,7 +258,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
           )
       })
       .catch((err: unknown) => {
-        console.error(`builder turn ${sessionId} failed: ${errorMessage(err)}`)
+        console.error(`issue turn ${sessionId} failed: ${errorMessage(err)}`)
       })
   }
 
@@ -239,12 +276,10 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /**
-   * Ensure the worktree + builder session exist for an issue, idempotently, and
-   * return the session id and whether the turn should be seeded fresh (build)
-   * or resumed. Generates the branch + worktree on first build; reuses both on
-   * a resume.
+   * Ensure the issue's ONE worktree exists, idempotently, and return its path.
+   * Generates the branch on first build; reuses it (and the worktree) after.
    */
-  async function ensureBuild(issue: IssueRow): Promise<{ sessionId: string }> {
+  async function ensureWorktree(issue: IssueRow): Promise<string> {
     let branchName = issue.branchName
     let worktreePath = issue.worktreePath
 
@@ -263,36 +298,70 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       await git.addWorktree(worktreePath, branchName)
       const patterns = await git.readWorktreeIncludes()
       await git.copyWorktreeIncludes(process.cwd(), worktreePath, patterns)
-      // Persist the branch + worktree the moment they exist on disk — BEFORE
-      // creating the session — so a DB failure on createSession can't strand a
-      // worktree with no branchName recorded (which would re-generate a fresh
-      // slug + a second worktree on the next event). A resume returns here,
-      // finds the worktree present, and skips straight past.
-      await setBuildContext(db, issue.id, { branchName, worktreePath })
     }
+    // Persist idempotently (on a reuse these are the same values) — and BEFORE
+    // any session is created, so a DB failure there can't strand a worktree
+    // with no branchName recorded (which would re-generate a fresh slug + a
+    // second worktree on the next event).
+    await setBuildContext(db, issue.id, { branchName, worktreePath })
+    return worktreePath
+  }
 
-    // Reuse the existing builder session if the issue already has one.
-    let sessionId = issue.sessionId
-    if (!sessionId) {
-      sessionId = uuidv7()
-      const builder = await getProfileByName(db, 'builder')
-      await createSession(db, {
-        id: sessionId,
-        model: DEFAULT_MODEL,
-        title: issue.title,
-        profileId: builder?.id ?? null,
-        cwd: worktreePath,
-        agentUserId: builderUserId,
-      })
-    }
+  /**
+   * Ensure an agent's session on this issue exists (one per issue × agent,
+   * recorded on issue_sessions), in the issue's worktree, booted with the
+   * given profile and the agent's identity. Reused on every later turn.
+   */
+  async function ensureAgentSession(input: {
+    issue: IssueRow
+    agentUserId: string
+    profileId: string | null
+    worktreePath: string
+    title: string
+  }): Promise<string> {
+    const existing = await getIssueSession(
+      db,
+      input.issue.id,
+      input.agentUserId,
+    )
+    if (existing) return existing.sessionId
 
-    await setBuildContext(db, issue.id, { branchName, worktreePath, sessionId })
+    const sessionId = uuidv7()
+    await createSession(db, {
+      id: sessionId,
+      model: DEFAULT_MODEL,
+      title: input.title,
+      profileId: input.profileId,
+      cwd: input.worktreePath,
+      agentUserId: input.agentUserId,
+    })
+    await setIssueSession(db, {
+      issueId: input.issue.id,
+      agentUserId: input.agentUserId,
+      sessionId,
+    })
+    return sessionId
+  }
+
+  /** Ensure the worktree + builder session exist for an issue, idempotently. */
+  async function ensureBuild(issue: IssueRow): Promise<{ sessionId: string }> {
+    const worktreePath = await ensureWorktree(issue)
+    const builder = await getProfileByName(db, 'builder')
+    const sessionId = await ensureAgentSession({
+      issue,
+      agentUserId: builderUserId,
+      profileId: builder?.id ?? null,
+      worktreePath,
+      title: issue.title,
+    })
     return { sessionId }
   }
 
-  /** Tear down the worktree + session for an issue (done/closed). Idempotent. */
+  /** Tear down the worktree + every hand's session (done/closed). Idempotent. */
   async function teardown(issue: IssueRow): Promise<void> {
-    if (issue.sessionId) runtime.dispose(issue.sessionId)
+    for (const hand of await listIssueSessions(db, issue.id)) {
+      runtime.dispose(hand.sessionId)
+    }
     if (issue.worktreePath && (await git.worktreeExists(issue.worktreePath))) {
       await git.removeWorktree(issue.worktreePath)
     }
@@ -330,7 +399,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
         const prompt = buildPrompt(fresh ?? issue, thread, builderUserId)
-        fireBuilderTurn(issueId, sessionId, prompt)
+        fireTurn(issueId, sessionId, prompt)
         break
       }
       case 'open':
@@ -360,11 +429,51 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         break
       }
       case 'closed':
-        // Human cancelled: stop the in-flight turn, dispose, remove the worktree.
-        if (issue.sessionId) await runtime.cancel(issue.sessionId)
+        // Human cancelled: stop every in-flight turn, dispose, remove the worktree.
+        for (const hand of await listIssueSessions(db, issueId)) {
+          await runtime.cancel(hand.sessionId)
+        }
         await teardown(issue)
         break
     }
+  }
+
+  /**
+   * React to a baton pass: ensure the target agent's session exists in the
+   * issue's ONE worktree (booted with the target's own profile + identity) and
+   * fire a turn briefed with the handoff message. Owner pings never land here
+   * — the notifications reactor carries those to an inbox/wake instead.
+   * Re-reads the issue so a stale event (the issue moved on before this note
+   * was handled) is dropped rather than acted on.
+   */
+  async function applyHandoff(payload: IssueHandoffPayload): Promise<void> {
+    const issue = await getIssue(db, payload.issueId)
+    if (!issue) return
+    if (issue.status !== 'building') {
+      console.warn(
+        `handoff on #${issue.nano} dropped: issue is ${issue.status}, not building`,
+      )
+      return
+    }
+    const target = await getUserById(db, payload.toUserId)
+    if (!target) {
+      console.warn(`handoff on #${issue.nano} dropped: no such user`)
+      return
+    }
+    const worktreePath = await ensureWorktree(issue)
+    const sessionId = await ensureAgentSession({
+      issue,
+      agentUserId: target.id,
+      profileId: target.profileId,
+      worktreePath,
+      title: `${issue.title} (@${target.handle})`,
+    })
+    const fromHandle = await handleOf(db, payload.fromUserId)
+    fireTurn(
+      issue.id,
+      sessionId,
+      handoffPrompt(issue, fromHandle, payload.message, target.id),
+    )
   }
 
   /**
@@ -384,27 +493,53 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /**
-   * The ship-log subscription handler: a status_changed note arrived. Read the
-   * full event by id (the note carries only {id,type,topic,audience}), and drive
-   * the transition. Other event types are ignored. With the single-emit model
-   * (topic + audience), each transition arrives exactly once — the dedup
-   * workaround is retired.
+   * The ship-log subscription handler: a status_changed or handoff note
+   * arrived. Read the full event by id (the note carries only
+   * {id,type,topic,audience}), and drive the transition or the baton pass.
+   * Other event types are ignored. With the single-emit model (topic +
+   * audience), each event arrives exactly once — the dedup workaround is
+   * retired. Payload shapes are validated rather than trusted: a replayed or
+   * another ship's event must not sail unchecked into the lifecycle; a bad
+   * payload is dropped quietly.
    */
   async function handleBusNote(note: NotifyPayload): Promise<void> {
-    if (note.type !== ISSUE_STATUS_CHANGED) return
-    const event = await getEventById(db, note.id)
-    if (!event) return
-    const payload = event.payload as {
-      issueId?: unknown
-      from?: unknown
-      to?: unknown
+    if (note.type === ISSUE_STATUS_CHANGED) {
+      const event = await getEventById(db, note.id)
+      if (!event) return
+      const payload = event.payload as {
+        issueId?: unknown
+        from?: unknown
+        to?: unknown
+      }
+      if (typeof payload.issueId !== 'string') return
+      if (!isStatus(payload.from) || !isStatus(payload.to)) return
+      await onStatusChanged(payload.issueId, payload.from, payload.to)
+      return
     }
-    // Validate the shape rather than trust it: today only transitionIssue emits
-    // this, but a replayed or another ship's event must not sail unchecked into
-    // the lifecycle. A bad payload is dropped quietly.
-    if (typeof payload.issueId !== 'string') return
-    if (!isStatus(payload.from) || !isStatus(payload.to)) return
-    await onStatusChanged(payload.issueId, payload.from, payload.to)
+    if (note.type === ISSUE_HANDOFF) {
+      const event = await getEventById(db, note.id)
+      if (!event) return
+      const p = event.payload as Partial<IssueHandoffPayload>
+      if (
+        typeof p.issueId !== 'string' ||
+        typeof p.fromUserId !== 'string' ||
+        typeof p.toUserId !== 'string' ||
+        typeof p.message !== 'string'
+      )
+        return
+      // Owner pings ride the notifications reactor (inbox + agent wake), not a
+      // worktree turn — the owner reviews from wherever they are.
+      if (p.toOwner !== false) return
+      const payload: IssueHandoffPayload = {
+        issueId: p.issueId,
+        fromUserId: p.fromUserId,
+        toUserId: p.toUserId,
+        toHandle: typeof p.toHandle === 'string' ? p.toHandle : '?',
+        toOwner: false,
+        message: p.message,
+      }
+      await serialize(payload.issueId, () => applyHandoff(payload))
+    }
   }
 
   /**

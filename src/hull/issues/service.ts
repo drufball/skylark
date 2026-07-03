@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto'
 
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
@@ -11,8 +11,10 @@ import { issueTopic } from './topic'
 import {
   issueComments,
   issues,
+  issueSessions,
   type IssueCommentRow,
   type IssueRow,
+  type IssueSessionRow,
   type IssueStatus,
 } from './schema'
 
@@ -151,6 +153,8 @@ export async function createIssue(
     title: string
     body?: string
     authorId: string
+    /** Who answers for the issue; defaults to the author (creator owns it). */
+    ownerId?: string
     /** The chat this was filed from (agent wake-ups route back to it). */
     originChatId?: string
     /** Force a nano (tests/seeding); otherwise generated + retried for uniqueness. */
@@ -172,6 +176,7 @@ export async function createIssue(
           title: input.title,
           body: input.body ?? '',
           authorId: input.authorId,
+          ownerId: input.ownerId ?? input.authorId,
           originChatId: input.originChatId,
         })
         .returning()
@@ -179,7 +184,9 @@ export async function createIssue(
         type: ISSUE_OPENED,
         issueId: row.id,
         actorId: input.authorId,
-        payload: { issueId: row.id, title: row.title },
+        // ownerId rides along so the notifications reactor can subscribe the
+        // owner from the start, even when they aren't the one filing.
+        payload: { issueId: row.id, title: row.title, ownerId: row.ownerId },
       })
       return row
     } catch (err) {
@@ -302,9 +309,9 @@ export async function transitionIssue(
 }
 
 /**
- * Record the build context (branch, worktree, builder session) on an issue.
- * Set by the orchestrator on the first → building transition; idempotent — it
- * just overwrites with the latest values, which on a reuse are the same.
+ * Record the build context (branch, worktree) on an issue. Set by the
+ * orchestrator on the first → building transition; idempotent — it just
+ * overwrites with the latest values, which on a reuse are the same.
  */
 export async function setBuildContext(
   db: Database,
@@ -312,13 +319,56 @@ export async function setBuildContext(
   ctx: {
     branchName?: string | null
     worktreePath?: string | null
-    sessionId?: string | null
   },
 ): Promise<void> {
   await db
     .update(issues)
     .set({ ...ctx, updatedAt: new Date() })
     .where(eq(issues.id, issueId))
+}
+
+// --- Issue sessions: which agents have a hand on an issue ---------------------
+
+/**
+ * Record an agent's session on an issue. One session per (issue, agent), for
+ * the issue's whole life: a duplicate set (a resume, a replayed event racing a
+ * live one) is a no-op that keeps the first session — the transcript an agent
+ * already has is worth more than a fresh one.
+ */
+export async function setIssueSession(
+  db: Database,
+  input: { issueId: string; agentUserId: string; sessionId: string },
+): Promise<void> {
+  await db.insert(issueSessions).values(input).onConflictDoNothing()
+}
+
+/** The session an agent holds on an issue, if it has one. */
+export async function getIssueSession(
+  db: Database,
+  issueId: string,
+  agentUserId: string,
+): Promise<IssueSessionRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(issueSessions)
+    .where(
+      and(
+        eq(issueSessions.issueId, issueId),
+        eq(issueSessions.agentUserId, agentUserId),
+      ),
+    )
+  return row
+}
+
+/** Every hand on an issue — what teardown disposes and cancel stops. */
+export async function listIssueSessions(
+  db: Database,
+  issueId: string,
+): Promise<IssueSessionRow[]> {
+  return db
+    .select()
+    .from(issueSessions)
+    .where(eq(issueSessions.issueId, issueId))
 }
 
 /** Write the latest builder progress line shown live on the board/thread. */

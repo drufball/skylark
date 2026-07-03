@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
-import { createUser } from '@hull/users/service'
+import { listEventsSince } from '@hull/events/service'
+import { createUser, setUserProfile } from '@hull/users/service'
 import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
 import { DEFAULT_MODEL } from '@hull/agent/runtime'
 import { createSession, getSession, listSessions } from '@hull/agent/service'
@@ -22,11 +23,15 @@ import {
   addComment,
   createIssue,
   getIssue,
+  getIssueSession,
   ISSUE_STATUS_CHANGED,
   issueTopic,
+  listIssueSessions,
   setBuildContext,
+  setIssueSession,
   transitionIssue,
 } from './service'
+import { ISSUE_HANDOFF, requestHandoff } from './handoff'
 
 // --- Fakes for the injected boundaries -------------------------------------
 
@@ -157,6 +162,11 @@ function makeDeps(over: Partial<OrchestratorDeps> = {}): {
   return { deps, git, runtime }
 }
 
+/** The builder's session id on an issue (via the issue_sessions link). */
+async function builderSessionId(issueId: string): Promise<string> {
+  return defined(await getIssueSession(db, issueId, builderId)).sessionId
+}
+
 describe('parseWorktreeInclude', () => {
   it('keeps real patterns and drops comments + blank lines', () => {
     const text = '# a comment\n\n.env\n  \nsecrets/*.key\n# trailing\n'
@@ -270,11 +280,12 @@ describe('orchestrator → building (from open)', () => {
       { path: '/wt/add-widget-aa11', branch: 'add-widget-aa11' },
     ])
     expect(git.copied).toHaveLength(1)
-    expect(after.sessionId).toBeTruthy()
 
-    // The builder session boots with the builder profile, the worktree cwd, and
-    // the builder agent identity.
-    const session = defined(await getSession(db, defined(after.sessionId)))
+    // The builder's hand on the issue is recorded in issue_sessions, and the
+    // session boots with the builder profile, the worktree cwd, and the builder
+    // agent identity.
+    const link = defined(await getIssueSession(db, issue.id, builderId))
+    const session = defined(await getSession(db, link.sessionId))
     const builderProfile = defined(await getProfileByName(db, 'builder'))
     expect(session.profileId).toBe(builderProfile.id)
     expect(session.cwd).toBe('/wt/add-widget-aa11')
@@ -283,7 +294,7 @@ describe('orchestrator → building (from open)', () => {
 
     // A turn was seeded with a prompt that carries the issue + the CLI contract.
     expect(runtime.turns).toHaveLength(1)
-    expect(runtime.turns[0].sessionId).toBe(defined(after.sessionId))
+    expect(runtime.turns[0].sessionId).toBe(link.sessionId)
     expect(runtime.turns[0].text).toContain('Add a widget')
     expect(runtime.turns[0].text).toContain('npm run issue')
     // The issue CLI is prefixed with the builder's actor id so its comments and
@@ -298,14 +309,17 @@ describe('orchestrator → building (from open)', () => {
 
     await orch.onStatusChanged(issue.id, 'open', 'building')
     const first = defined(await getIssue(db, issue.id))
-    const firstSession = first.sessionId
+    const firstSession = defined(
+      await getIssueSession(db, issue.id, builderId),
+    ).sessionId
 
     // Mark the worktree as already-existing for the second pass.
     git.existing.add(defined(first.worktreePath))
     await orch.onStatusChanged(issue.id, 'open', 'building')
-    const second = defined(await getIssue(db, issue.id))
 
-    expect(second.sessionId).toBe(firstSession)
+    expect(
+      defined(await getIssueSession(db, issue.id, builderId)).sessionId,
+    ).toBe(firstSession)
     expect(git.added).toHaveLength(1) // not added twice
     // Only one builder session total.
     const sessions = await listSessions(db)
@@ -388,7 +402,7 @@ describe('orchestrator → done (agent merged)', () => {
     expect(git.pulls).toBe(1)
     expect(git.migrations).toBe(1)
     expect(git.removed).toEqual([defined(built.worktreePath)])
-    expect(runtime.disposed).toContain(defined(built.sessionId))
+    expect(runtime.disposed).toContain(await builderSessionId(issue.id))
   })
 
   it('leaves the worktree standing if the branch is not actually merged', async () => {
@@ -397,13 +411,12 @@ describe('orchestrator → done (agent merged)', () => {
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'nm66' })
     await orch.onStatusChanged(issue.id, 'open', 'building')
-    const built = defined(await getIssue(db, issue.id))
 
     await orch.onStatusChanged(issue.id, 'building', 'done')
 
     // No teardown — the PR isn't in main, so don't orphan it.
     expect(git.removed).toEqual([])
-    expect(runtime.disposed).not.toContain(defined(built.sessionId))
+    expect(runtime.disposed).not.toContain(await builderSessionId(issue.id))
   })
 
   it('treats an erroring merge check as not-merged and keeps the worktree', async () => {
@@ -432,7 +445,7 @@ describe('orchestrator → done (agent merged)', () => {
     ).resolves.toBeUndefined()
     // Teardown still happened despite the pull failure.
     expect(git.removed).toEqual([defined(built.worktreePath)])
-    expect(runtime.disposed).toContain(defined(built.sessionId))
+    expect(runtime.disposed).toContain(await builderSessionId(issue.id))
   })
 })
 
@@ -443,11 +456,12 @@ describe('orchestrator → closed (human)', () => {
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'gg77' })
     await orch.onStatusChanged(issue.id, 'open', 'building')
     const built = defined(await getIssue(db, issue.id))
+    const sessionId = await builderSessionId(issue.id)
 
     await orch.onStatusChanged(issue.id, 'building', 'closed')
 
-    expect(runtime.cancelled).toContain(defined(built.sessionId))
-    expect(runtime.disposed).toContain(defined(built.sessionId))
+    expect(runtime.cancelled).toContain(sessionId)
+    expect(runtime.disposed).toContain(sessionId)
     expect(git.removed).toEqual([defined(built.worktreePath)])
   })
 
@@ -527,7 +541,6 @@ describe('orchestrator event subscription', () => {
 
     // One transition emits ONE event with topic="issue:<id>" and audience="public".
     // The dedup workaround is retired; the event arrives exactly once.
-    const { listEventsSince } = await import('@hull/events/service')
     const events = await listEventsSince(db, {
       topicPatterns: [`issue:${issue.id}`],
       audience: 'public',
@@ -660,6 +673,10 @@ describe('orchestrator startup reconciliation', () => {
     await setBuildContext(db, issue.id, {
       branchName: 'x-kk11',
       worktreePath: '/wt/x-kk11',
+    })
+    await setIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: builderId,
       sessionId,
     })
 
@@ -671,12 +688,259 @@ describe('orchestrator startup reconciliation', () => {
   })
 })
 
+describe('orchestrator handoff (issue.handoff on the bus)', () => {
+  /** A crew agent with its own profile, ready to receive the baton. */
+  async function babysitter() {
+    const user = await createUser(db, {
+      id: uuidv7(),
+      handle: 'babysitter',
+      displayName: 'Babysitter',
+      type: 'agent',
+    })
+    const chatProfile = defined(await getProfileByName(db, 'chat'))
+    await setUserProfile(db, user.id, chatProfile.id)
+    return { user, profileId: chatProfile.id }
+  }
+
+  /** Build the issue, then hand it from the builder to `toHandle` on the bus. */
+  async function handOff(
+    orch: ReturnType<typeof createOrchestrator>,
+    issue: { id: string; nano: string },
+    toHandle: string,
+    message: string,
+  ) {
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builderId,
+      target: toHandle,
+      message,
+    })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
+    const event = defined(events.find((e) => e.type === ISSUE_HANDOFF))
+    await orch.handleBusNote({
+      id: event.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+  }
+
+  it('boots the target session in the issue worktree and fires the baton turn', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { user, profileId } = await babysitter()
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ho01' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+
+    await handOff(orch, issue, 'babysitter', 'PR #12 is open — take it home')
+
+    // The baton-holder's session: recorded on issue_sessions, booted with the
+    // TARGET's own profile and identity, in the SAME worktree as the builder.
+    const link = defined(await getIssueSession(db, issue.id, user.id))
+    const session = defined(await getSession(db, link.sessionId))
+    expect(session.agentUserId).toBe(user.id)
+    expect(session.profileId).toBe(profileId)
+    expect(session.cwd).toBe('/wt/add-widget-ho01')
+
+    // Turn 1 was the build seed; turn 2 is the baton, carrying the message and
+    // the target's own actor prefix for the issue CLI.
+    expect(runtime.turns).toHaveLength(2)
+    expect(runtime.turns[1].sessionId).toBe(link.sessionId)
+    expect(runtime.turns[1].text).toContain('PR #12 is open — take it home')
+    expect(runtime.turns[1].text).toContain('@builder')
+    expect(runtime.turns[1].text).toContain(`SKYLARK_ACTOR=${user.id}`)
+  })
+
+  it('reuses the target session on a second handoff — one hand per agent per issue', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { user } = await babysitter()
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ho02' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+
+    await handOff(orch, issue, 'babysitter', 'first pass')
+    const first = defined(await getIssueSession(db, issue.id, user.id))
+
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builderId,
+      target: 'babysitter',
+      message: 'second pass',
+    })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
+    const second = defined(
+      events.filter((e) => e.type === ISSUE_HANDOFF).at(-1),
+    )
+    await orch.handleBusNote({
+      id: second.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+
+    expect(
+      defined(await getIssueSession(db, issue.id, user.id)).sessionId,
+    ).toBe(first.sessionId)
+    // build turn + two baton turns, both on the same session.
+    expect(runtime.turns).toHaveLength(3)
+    expect(runtime.turns[2].sessionId).toBe(first.sessionId)
+  })
+
+  it('leaves OWNER handoffs to the notification path — no turn, no session', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ho03' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+
+    await handOff(orch, issue, 'OWNER', 'checks green — merge?')
+
+    // Only the build turn; the owner is pinged via their inbox, not a worktree.
+    expect(runtime.turns).toHaveLength(1)
+    expect(await getIssueSession(db, issue.id, authorId)).toBeUndefined()
+  })
+
+  it('tears down every hand on the issue when it is done', async () => {
+    const { deps, runtime, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { user } = await babysitter()
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ho04' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+    await handOff(orch, issue, 'babysitter', 'go')
+
+    await orch.onStatusChanged(issue.id, 'building', 'done')
+
+    const links = await listIssueSessions(db, issue.id)
+    expect(links).toHaveLength(2)
+    for (const link of links) {
+      expect(runtime.disposed).toContain(link.sessionId)
+    }
+    expect(git.removed).toHaveLength(1)
+    void user
+  })
+
+  it('drops a stale handoff for an issue no longer building', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    await babysitter()
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ho05' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+    // Emit the handoff while building, but move the issue on before the bus
+    // note is handled — the orchestrator must re-check durable state.
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builderId,
+      target: 'babysitter',
+      message: 'go',
+    })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'open',
+      actorId: authorId,
+    })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
+    const event = defined(events.find((e) => e.type === ISSUE_HANDOFF))
+
+    await orch.handleBusNote({
+      id: event.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+
+    expect(runtime.turns).toHaveLength(1) // just the build seed
+  })
+
+  it('drops a handoff whose target user no longer exists', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ho06' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+    const { emitEvent } = await import('@hull/events/bus')
+    // A handoff event naming a user id that was never (or is no longer) crew —
+    // e.g. replayed from another ship's log. Dropped, not crashed on.
+    const row = await emitEvent(db, {
+      type: ISSUE_HANDOFF,
+      source: 'issues',
+      topic: issueTopic(issue.id),
+      audience: 'public',
+      payload: {
+        issueId: issue.id,
+        fromUserId: builderId,
+        toUserId: uuidv7(),
+        toHandle: 'ghost',
+        toOwner: false,
+        message: 'go',
+      },
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+    expect(runtime.turns).toHaveLength(1) // just the build seed
+  })
+
+  it('drops a handoff note with a malformed payload', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: ISSUE_HANDOFF,
+      source: 'issues',
+      topic: 'issue:42',
+      audience: 'public',
+      payload: { issueId: 42, toUserId: null, message: 7 },
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_HANDOFF,
+      topic: 'issue:42',
+    })
+    expect(runtime.turns).toEqual([])
+  })
+})
+
 // Helper: find the status_changed event id for an issue on the public scope.
 async function findStatusEventId(
   database: Database,
   issueId: string,
 ): Promise<{ id: string }> {
-  const { listEventsSince } = await import('@hull/events/service')
   const events = await listEventsSince(database, {
     topicPatterns: ['issue:*'],
     audience: 'public',
