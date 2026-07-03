@@ -2,7 +2,11 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { notifyOnly, type NotifyPayload } from '@hull/events/bus'
-import { getEventById, MEMBERS_AUDIENCE } from '@hull/events/service'
+import {
+  getEventById,
+  MEMBERS_AUDIENCE,
+  trustedEvent,
+} from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 import { createSession } from '@hull/agent/service'
 import { CHAT_MODEL, type RunsTurns } from '@hull/agent/runtime'
@@ -253,6 +257,15 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       typeof payload.chatId !== 'string' ||
       typeof payload.messageId !== 'string' ||
       typeof payload.authorId !== 'string'
+    )
+      return
+    // The envelope must agree with the payload: only chat's own event, on the
+    // very chat the payload names, may drive a reply into that chat.
+    if (
+      !trustedEvent(event, {
+        source: 'chat',
+        topic: chatTopic(payload.chatId),
+      })
     )
       return
     const message = await getMessage(db, payload.messageId)

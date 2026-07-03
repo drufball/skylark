@@ -489,6 +489,76 @@ describe('chat orchestrator', () => {
     expect(await listMessages(db, chatId)).toHaveLength(0)
   })
 
+  it('ignores a posted-message event from another source, even with the right topic', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    const msgId = uuidv7()
+    await addMessage(db, { id: msgId, chatId, authorId: dru, body: 'hi' })
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: CHAT_MESSAGE_POSTED,
+      source: 'issues', // ONLY the source is wrong
+      topic: chatTopic(chatId),
+      audience: 'members',
+      payload: { chatId, messageId: msgId, authorId: dru },
+    })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
+  })
+
+  it('ignores a posted-message event whose topic names a different chat', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    const msgId = uuidv7()
+    await addMessage(db, { id: msgId, chatId, authorId: dru, body: 'hi' })
+    const { emitEvent } = await import('@hull/events/bus')
+    const row = await emitEvent(db, {
+      type: CHAT_MESSAGE_POSTED,
+      source: 'chat',
+      topic: chatTopic('somewhere-else'), // ONLY the topic is wrong
+      audience: 'members',
+      payload: { chatId, messageId: msgId, authorId: dru },
+    })
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
+  })
+
+  it('drops a posted-message payload with one non-string field at a time', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    const msgId = uuidv7()
+    await addMessage(db, { id: msgId, chatId, authorId: dru, body: 'hi' })
+    const { emitEvent } = await import('@hull/events/bus')
+    // Each variant breaks exactly ONE field (the envelope stays consistent
+    // with it), so every shape guard is individually load-bearing.
+    const good = { chatId, messageId: msgId, authorId: dru }
+    const variants: { payload: unknown; topic: string }[] = [
+      { payload: { ...good, chatId: 42 }, topic: 'chat:42' },
+      { payload: { ...good, messageId: 42 }, topic: chatTopic(chatId) },
+      { payload: { ...good, authorId: 42 }, topic: chatTopic(chatId) },
+    ]
+
+    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    for (const { payload, topic } of variants) {
+      const row = await emitEvent(db, {
+        type: CHAT_MESSAGE_POSTED,
+        source: 'chat',
+        topic,
+        audience: 'members',
+        payload,
+      })
+      await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
+    }
+
+    expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
+  })
+
   it('reconcile keeps going when one chat reply throws', async () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })

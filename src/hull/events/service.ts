@@ -66,6 +66,29 @@ export async function getEventById(
 }
 
 /**
+ * The envelope check every ship-log reactor applies before acting on an event:
+ * the durable row's envelope must agree with what the handler is about to do.
+ * `source` is always required; pass `audience`/`topic` to pin those too. The
+ * expected topic usually derives from the PAYLOAD (e.g. issueTopic(payload.
+ * issueId)) — that binding is the point: a row whose topic names a different
+ * entity than its payload is forged or misfiled and must not be acted on.
+ * Returns the event when trusted, null otherwise (a missing event is untrusted
+ * too, so callers can compose this straight onto getEventById).
+ */
+export function trustedEvent(
+  event: EventRow | undefined,
+  expected: { source: string; audience?: string; topic?: string },
+): EventRow | null {
+  if (!event) return null
+  if (event.source !== expected.source) return null
+  if (expected.audience !== undefined && event.audience !== expected.audience)
+    return null
+  if (expected.topic !== undefined && event.topic !== expected.topic)
+    return null
+  return event
+}
+
+/**
  * Events matching topic patterns and audience access, oldest first - the reconnect
  * replay. `sinceId` is a Last-Event-ID cursor: only events with a strictly greater
  * id come back (UUIDv7 ids are monotonic, so "greater" means "later").

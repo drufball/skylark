@@ -5,7 +5,7 @@ import { getProfileByName } from '@hull/agent/profiles'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { createSession, getSession } from '@hull/agent/service'
 import type { NotifyPayload } from '@hull/events/bus'
-import { getEventById } from '@hull/events/service'
+import { getEventById, trustedEvent } from '@hull/events/service'
 import { getUserById, handleOf } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
 import { issuesProgressLine } from '@hull/agent/progress'
@@ -460,21 +460,32 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * can't double-create a worktree/session; re-reads the issue row so the
    * decision is on durable state, not the event payload.
    */
-  function onStatusChanged(
-    issueId: string,
-    from: IssueStatus,
-    to: IssueStatus,
-  ): Promise<void> {
-    return serialize(issueId, () => applyTransition(issueId, from, to))
+  function onStatusChanged(issueId: string, to: IssueStatus): Promise<void> {
+    return serialize(issueId, () => applyTransition(issueId, to))
+  }
+
+  /**
+   * Re-drive a `building` issue's lifecycle (startup reconciliation): the same
+   * serialized applyTransition a live → building event takes, so a resume
+   * racing a bus note for the same issue still can't double-create anything.
+   */
+  function resume(issueId: string): Promise<void> {
+    return serialize(issueId, () => applyTransition(issueId, 'building'))
   }
 
   async function applyTransition(
     issueId: string,
-    _from: IssueStatus,
     to: IssueStatus,
   ): Promise<void> {
     const issue = await getIssue(db, issueId)
     if (!issue) return
+    // Act on durable state, not the event: transitionIssue writes the status
+    // BEFORE emitting, so by handling time the row reads `to` — unless the
+    // issue has since moved on, in which case this event is stale or replayed
+    // and must not re-run side-effects (a stale → building on a since-done
+    // issue would recreate its worktree and fire a turn). Stale events are
+    // normal; drop them quietly.
+    if (issue.status !== to) return
 
     switch (to) {
       case 'building': {
@@ -644,7 +655,16 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       }
       if (typeof payload.issueId !== 'string') return
       if (!isStatus(payload.from) || !isStatus(payload.to)) return
-      await onStatusChanged(payload.issueId, payload.from, payload.to)
+      // The envelope must agree with the payload: only this service's own
+      // event, on the very issue the payload names, may drive the lifecycle.
+      if (
+        !trustedEvent(event, {
+          source: 'issues',
+          topic: issueTopic(payload.issueId),
+        })
+      )
+        return
+      await onStatusChanged(payload.issueId, payload.to)
       return
     }
     if (note.type === ISSUE_HANDOFF) {
@@ -662,9 +682,14 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       // when the durable event came from this service, on the public audience,
       // on the very issue the payload names. A row whose topic points at a
       // different issue must not start work in that issue's worktree.
-      if (event.source !== 'issues') return
-      if (event.audience !== 'public') return
-      if (event.topic !== issueTopic(p.issueId)) return
+      if (
+        !trustedEvent(event, {
+          source: 'issues',
+          audience: 'public',
+          topic: issueTopic(p.issueId),
+        })
+      )
+        return
       // Owner pings ride the notifications reactor (inbox + agent wake), not a
       // worktree turn — the owner reviews from wherever they are.
       if (p.toOwner !== false) return
@@ -705,17 +730,15 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       }
       // Route through the same serialized building path so a reconcile racing a
       // live bus note for the same issue can't double-create its worktree.
-      await onStatusChanged(issue.id, 'building', 'building').catch(
-        (err: unknown) => {
-          console.error(
-            `reconcile ${issue.nano} failed (continuing): ${errorMessage(err)}`,
-          )
-        },
-      )
+      await resume(issue.id).catch((err: unknown) => {
+        console.error(
+          `reconcile ${issue.nano} failed (continuing): ${errorMessage(err)}`,
+        )
+      })
     }
   }
 
-  return { onStatusChanged, handleBusNote, reconcile }
+  return { onStatusChanged, resume, handleBusNote, reconcile }
 }
 
 export type Orchestrator = ReturnType<typeof createOrchestrator>
