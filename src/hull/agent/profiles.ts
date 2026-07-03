@@ -228,8 +228,15 @@ export const CHAT_PROFILE: SeedProfile = {
 export const BUILDER_PROFILE: SeedProfile = {
   name: 'builder',
   systemPrompt:
-    'You build a Skylark ship. Follow the ship-feature skill: red-green TDD, npm run check, branch, PR, shepherd CI, merge. ' +
-    'To wait for CI checks or any long task, call the `background` tool with the command and END YOUR TURN — never block, poll, or `--watch` in the foreground. You are resumed automatically with the result, and then you merge.',
+    'You build a Skylark ship. Follow the ship-feature skill through OPENING ' +
+    'the PR: red-green TDD, npm run check clean, branch, push, open a PR. ' +
+    'Shepherding CI and merging is NOT your job — once the PR is open, hand ' +
+    'the baton to @babysitter through the issue CLI as your last action and ' +
+    'stop. When the babysitter hands a fix brief back to you, fix, push, and ' +
+    'hand the baton back. ' +
+    'To wait on any long local task, call the `background` tool with the ' +
+    'command and END YOUR TURN — never block, poll, or `--watch` in the ' +
+    'foreground; you are resumed automatically with the result.',
   tools: null,
   readContextFiles: true,
   useRepoSkills: true,
@@ -258,6 +265,7 @@ export async function seedProfiles(
     { ...CHAT_PROFILE, extensionIds: [] },
     { ...BUILDER_PROFILE, extensionIds: [buildGates.id] },
     { ...GENERAL_PROFILE, extensionIds: [] },
+    { ...BABYSITTER_PROFILE, extensionIds: [] },
   ]
   for (const profile of standard) {
     if (!converge && (await getProfileByName(db, profile.name))) continue
@@ -284,6 +292,34 @@ export const GENERAL_PROFILE: SeedProfile = {
 }
 
 /**
+ * The PR babysitter — the build playbook's second hand. Takes the baton once
+ * a PR is open, waits on CI without burning a turn (the `background` tool),
+ * and closes the loop: merge and mark the issue done, or hand the baton back
+ * to the builder with a precise fix brief. Read+bash only — it operates `gh`
+ * and the issue CLI; it never writes code (fixes are the builder's job).
+ */
+export const BABYSITTER_PROFILE: SeedProfile = {
+  name: 'babysitter',
+  systemPrompt:
+    'You babysit pull requests for a Skylark ship. You receive an issue whose ' +
+    'PR is already open; you are in the issue worktree, on its branch — ' +
+    '`gh pr view` and `gh pr checks` show your PR. ' +
+    'To wait on CI or reviews, call the `background` tool with the watch ' +
+    'command (e.g. `gh pr checks --watch --interval 30`) and END YOUR TURN — ' +
+    'you are resumed with the result; never poll in the foreground. ' +
+    'Read the review comments when checks settle. When everything is green ' +
+    'and the reviews are handled, confirm the PR is mergeable, merge it ' +
+    '(squash, delete branch), and mark the issue done through the issue CLI. ' +
+    'If CI fails or a review demands code changes, hand the baton back to ' +
+    '@builder with a precise brief of what to fix — you never write code ' +
+    'yourself. If a judgment call is above your pay grade, hand off to OWNER.',
+  tools: ['read', 'bash'],
+  readContextFiles: false,
+  useRepoSkills: false,
+  model: null,
+}
+
+/**
  * Seed the standard profiles + extensions AND wire the crew to them: agents
  * (tilde/bix/dot) without a profile get pointed at `chat`. Idempotent end to
  * end. This is the single callable seam for "set up agent config" — the CLI
@@ -304,6 +340,7 @@ export async function seedAndWireProfiles(
   // entrypoints boot from users.profileId, so these two must be true.
   await wireCrewProfile(db, 'builder', BUILDER_PROFILE.name, chat?.id)
   await wireCrewProfile(db, 'hand', GENERAL_PROFILE.name, chat?.id)
+  await wireCrewProfile(db, 'babysitter', BABYSITTER_PROFILE.name, chat?.id)
 }
 
 /** Point `handle` at `profileName` when its profile is unset or the chat default. */

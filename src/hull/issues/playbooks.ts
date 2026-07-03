@@ -126,35 +126,43 @@ export async function playbookFor(
 }
 
 /**
- * Seed the standard playbooks: `build` (the builder, as ever) and `general`
- * (the hand — full tools, no build contract, does what the issue says). A
- * playbook whose crew member isn't aboard yet is skipped, not fatal —
- * seedCrew (users) and the profile seeding (agent) run first in every boot
- * path, so this is a fresh-database corner, not a live one.
+ * Seed the standard playbooks: `build` (builder implements to an open PR,
+ * babysitter shepherds it home) and `general` (the hand — full tools, no
+ * build contract, does what the issue says). A playbook whose crew isn't
+ * aboard yet is skipped, not fatal — seedCrew (users) and the profile seeding
+ * (agent) run first in every boot path, so this is a fresh-database corner,
+ * not a live one.
  *
  * Boot ENSURES, seed CONVERGES: the every-boot path (`convergeAll: false`)
- * only creates what's missing, so an edit made in the Playbooks tab survives
- * a restart; the explicit CLI seed (`convergeAll: true`) rewrites the
- * standard rows back to their declared shape.
+ * creates missing playbooks and — the one exception to hands-off — APPENDS
+ * newly-standard members to an existing standard playbook's roster. The
+ * factory flow needs its own agents (a builder that hands to a babysitter
+ * the roster refuses is a broken flow), while everything else about the row
+ * (description, extra members, entrypoint) stays exactly as the crew edited
+ * it. The explicit CLI seed (`convergeAll: true`) rewrites the standard rows
+ * back to their declared shape.
  */
 export async function seedPlaybooks(
   db: Database,
   opts: { convergeAll?: boolean } = {},
 ): Promise<void> {
   const standard: {
-    handle: string
+    memberHandles: string[]
+    entryHandle: string
     playbook: Omit<PlaybookInput, 'memberIds' | 'entrypointId'>
   }[] = [
     {
-      handle: 'builder',
+      memberHandles: ['builder', 'babysitter'],
+      entryHandle: 'builder',
       playbook: {
         name: BUILD_PLAYBOOK_NAME,
         description:
-          'Implement it: red-green TDD in a worktree, through CI to a merged PR.',
+          'Implement it: the builder takes it to an open PR, the babysitter shepherds CI to a merge.',
       },
     },
     {
-      handle: 'hand',
+      memberHandles: ['hand'],
+      entryHandle: 'hand',
       playbook: {
         name: 'general',
         description:
@@ -162,15 +170,33 @@ export async function seedPlaybooks(
       },
     },
   ]
-  for (const { handle, playbook } of standard) {
-    if (!opts.convergeAll && (await getPlaybookByName(db, playbook.name))) {
-      continue // already aboard — leave the captain's edits alone
+  for (const { memberHandles, entryHandle, playbook } of standard) {
+    const members = (
+      await Promise.all(memberHandles.map((h) => getUserByHandle(db, h)))
+    ).flatMap((u) => (u ? [u] : []))
+    const entry = members.find((m) => m.handle === entryHandle)
+    if (members.length < memberHandles.length || !entry) continue
+
+    const existing = await getPlaybookByName(db, playbook.name)
+    if (existing && !opts.convergeAll) {
+      // Leave the captain's edits alone — but the factory roster must be
+      // whole, so append any standard member the row predates.
+      const missing = members
+        .map((m) => m.id)
+        .filter((id) => !existing.memberIds.includes(id))
+      if (missing.length > 0) {
+        await upsertPlaybook(db, {
+          name: existing.name,
+          description: existing.description,
+          memberIds: [...existing.memberIds, ...missing],
+          entrypointId: existing.entrypointId,
+        })
+      }
+      continue
     }
-    const entry = await getUserByHandle(db, handle)
-    if (!entry) continue
     await upsertPlaybook(db, {
       ...playbook,
-      memberIds: [entry.id],
+      memberIds: members.map((m) => m.id),
       entrypointId: entry.id,
     })
   }

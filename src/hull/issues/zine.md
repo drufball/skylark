@@ -1,6 +1,6 @@
 # Issues
 
-_issues zine — issue #3_
+_issues zine — issue #4_
 
 ## tl;dr
 
@@ -44,10 +44,11 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   users allowed hands on the issue), `entrypointId` (who a → building seeds).
   Deliberately NOT a state machine: the who-hands-to-whom knowledge lives in the
   agents' own profiles and prompts; the playbook is the guardrail (membership)
-  and the starting gun (entrypoint). Two are seeded — `build` (the builder,
-  ship-feature contract) and `general` (the `hand` crew agent, full tools, the
-  issue's own words as the brief) — and the crew can add more from the Agents →
-  Playbooks tab.
+  and the starting gun (entrypoint). Two are seeded — `build` (the **builder**
+  implements to an open PR, then batons to the **babysitter**, who waits on CI
+  via the `background` tool and merges — or hands a fix brief back) and
+  `general` (the `hand` crew agent, full tools, the issue's own words as the
+  brief) — and the crew can add more from the Agents → Playbooks tab.
 - **Issue session** — a row in `issue_sessions`: `(issueId, agentUserId)` →
   `sessionId`. Which agents have a hand on an issue, one session per (issue,
   agent), every one of them with `cwd` = the issue's ONE worktree. The builder's
@@ -109,10 +110,15 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
 LISTEN connection, which fans onto `shipLogBus` → the orchestrator's
 subscription reads the full event by id and calls `onStatusChanged`. On
 `→ building` it generates a slug (LLM, cheap) into `<slug>-<nano>`, creates the
-worktree if absent, copies the `.worktreeinclude` files in, boots (or reuses) a
-builder session with `cwd` = the worktree and `agentUserId` = the builder, and
-fires a turn seeded with the issue + the ship-feature contract. The turn's live
-events become the issue's `statusLine`.
+worktree if absent, copies the `.worktreeinclude` files in, boots (or reuses)
+the playbook entrypoint's session with `cwd` = the worktree, and fires a turn
+seeded with the issue + the contract (ship-feature-to-an-open-PR for `build`,
+the plain brief otherwise). The turn's live events become the issue's
+`statusLine`. On the `build` playbook the builder ends its part by batoning to
+the babysitter, which waits on `gh pr checks --watch` through the agent
+runtime's `background` tool (its turn ends; the session is resumed with the
+output when the watch exits), then merges and sets `done` — or hands a fix brief
+back to the builder.
 
 **A handoff, end to end.** The builder finishes its part and, as its turn's last
 action, runs
@@ -285,6 +291,13 @@ id) through their public functions, not their tables.
   [`../zine.md`](../zine.md)); `visibility` is the seam it will attach to.
 
 ## Changelog
+
+- **#4** — The build split: the `babysitter` crew agent + profile (read+bash;
+  waits on CI via the `background` tool; merges or hands a fix brief back), the
+  `build` playbook roster becomes builder + babysitter, and the builder's
+  contract ends at an open PR + a baton. Ensure-mode seeding gains its one
+  exception: newly-standard members are APPENDED to an existing standard
+  playbook (the factory flow must be whole) while every other edit survives.
 
 - **#3** — Playbooks: the `playbooks` table (roster + entrypoint as data),
   `issues.playbookId` (null = build), the seeded `build` and `general` playbooks
