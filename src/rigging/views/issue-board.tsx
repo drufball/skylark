@@ -155,6 +155,13 @@ function IssueCard({
   )
 }
 
+/** The empty-value option's label: the default playbook, described. */
+function defaultPlaybookLabel(playbooks: PlaybookOption[]): string {
+  const d = playbooks.find((p) => p.isDefault)
+  if (!d) return 'build (default)'
+  return `${d.name}${d.description ? ` — ${d.description}` : ''} (default)`
+}
+
 function NewIssue({
   busy,
   playbooks,
@@ -223,9 +230,9 @@ function NewIssue({
             aria-label="Playbook"
             className="rounded-md border bg-background px-2 py-1 text-sm"
           >
-            <option value="">
-              {playbooks.find((p) => p.isDefault)?.name ?? 'build'} (default)
-            </option>
+            {/* The default explains itself like every other option — it's the
+                one whose behaviour a crewmate most needs to trust on faith. */}
+            <option value="">{defaultPlaybookLabel(playbooks)}</option>
             {playbooks
               .filter((p) => !p.isDefault)
               .map((p) => (

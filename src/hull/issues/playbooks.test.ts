@@ -118,13 +118,14 @@ describe('upsertPlaybook', () => {
 })
 
 describe('seedPlaybooks', () => {
-  it('seeds build (entry: builder) and general (entry: hand), idempotently', async () => {
+  it('seeds build (builder + babysitter, entry: builder) and general (entry: hand), idempotently', async () => {
     await seedPlaybooks(db)
     await seedPlaybooks(db) // twice is fine
 
+    const babysitter = defined(await getUserByHandle(db, 'babysitter'))
     const build = defined(await getPlaybookByName(db, 'build'))
     expect(build.entrypointId).toBe(builderId)
-    expect(build.memberIds).toContain(builderId)
+    expect(build.memberIds).toEqual([builderId, babysitter.id])
 
     const hand = defined(await getUserByHandle(db, 'hand'))
     const general = defined(await getPlaybookByName(db, 'general'))
@@ -134,6 +135,28 @@ describe('seedPlaybooks', () => {
       'build',
       'general',
     ])
+  })
+
+  it('an ensure run appends newly-standard members to an existing playbook, keeping edits', async () => {
+    // The ship's build playbook predates the babysitter (the M2 shape), and
+    // the crew has customised it: extra member, own description.
+    const babysitter = defined(await getUserByHandle(db, 'babysitter'))
+    await upsertPlaybook(db, {
+      name: 'build',
+      description: 'our build, our rules',
+      memberIds: [builderId, tildeId],
+      entrypointId: builderId,
+    })
+
+    await seedPlaybooks(db) // an ordinary boot
+
+    const build = defined(await getPlaybookByName(db, 'build'))
+    // The factory-required babysitter joined the roster…
+    expect(build.memberIds).toContain(babysitter.id)
+    // …and the captain's edits survived.
+    expect(build.memberIds).toContain(tildeId)
+    expect(build.description).toBe('our build, our rules')
+    expect(build.entrypointId).toBe(builderId)
   })
 
   it('boot seeding never clobbers the captain’s edits — ensure, don’t converge', async () => {

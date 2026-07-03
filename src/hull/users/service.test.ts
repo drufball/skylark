@@ -142,6 +142,7 @@ describe('users service', () => {
       await seedCrew(db)
       const handles = (await listUsers(db)).map((u) => u.handle).sort()
       expect(handles).toEqual([
+        'babysitter',
         'bix',
         'builder',
         'dot',

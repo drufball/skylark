@@ -21,6 +21,7 @@ import {
   seedProfiles,
   seedAndWireProfiles,
   CHAT_PROFILE,
+  BABYSITTER_PROFILE,
   BUILDER_PROFILE,
   GENERAL_PROFILE,
   BUILD_GATES_EXTENSION,
@@ -225,7 +226,17 @@ describe('agent profiles + extensions service', () => {
     expect(general.tools).toBeNull()
     expect(general.extensionIds).toEqual([])
 
-    expect(await listProfiles(db)).toHaveLength(3)
+    // babysitter: read+bash only (it shepherds PRs, never writes code), and
+    // its brief names the background tool for CI waits and the hand-back.
+    const babysitter = defined(
+      await getProfileByName(db, BABYSITTER_PROFILE.name),
+    )
+    expect(babysitter.tools).toEqual(['read', 'bash'])
+    expect(babysitter.extensionIds).toEqual([])
+    expect(babysitter.systemPrompt).toMatch(/background/i)
+    expect(babysitter.systemPrompt).toMatch(/@builder/i)
+
+    expect(await listProfiles(db)).toHaveLength(4)
     expect(await listExtensions(db)).toHaveLength(1)
   })
 
@@ -262,6 +273,12 @@ describe('agent profiles + extensions service', () => {
     const dru = defined(await getUserByHandle(db, 'drufball'))
     expect(tilde.profileId).toBe(chat.id) // agent → chat
     expect(dru.profileId).toBeNull() // human → untouched
-    expect(await listProfiles(db)).toHaveLength(3)
+    expect(await listProfiles(db)).toHaveLength(4)
+
+    // The role crew boot with their own profiles, not the chat default.
+    const babysitter = defined(await getUserByHandle(db, 'babysitter'))
+    expect(babysitter.profileId).toBe(
+      defined(await getProfileByName(db, BABYSITTER_PROFILE.name)).id,
+    )
   })
 })

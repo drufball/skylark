@@ -118,12 +118,14 @@ export function buildPrompt(
     `Title: ${issue.title}\n` +
     (issue.body ? `\n${issue.body}\n` : '') +
     thread +
-    '\n\nFollow the ship-feature skill end to end: red-green TDD, `npm run check` ' +
-    'clean, branch, push, open a PR, shepherd CI and the agentic reviews, and ' +
-    'merge once green. You are already on the issue branch in a dedicated worktree.\n\n' +
+    '\n\nFollow the ship-feature skill through OPENING the PR: red-green TDD, ' +
+    '`npm run check` clean, branch, push, open a PR. You are already on the ' +
+    'issue branch in a dedicated worktree. Shepherding CI and merging is the ' +
+    "babysitter's job, not yours.\n\n" +
     'Report back through the issue CLI. Always run it with the actor prefix shown ' +
     'so your comments and transitions are attributed to you:\n' +
-    `- When the work is fully merged into main, run: ${issueCmd} done ${issue.nano}\n` +
+    `- Once the PR is open, hand the baton as your LAST action and stop: ` +
+    `${issueCmd} handoff ${issue.nano} babysitter "PR #<n> open — <what it does>"\n` +
     `- If you need clarification, post it and pause: ${issueCmd} comment ${issue.nano} "<question>" ` +
     `then ${issueCmd} open ${issue.nano}, then stop and wait.\n` +
     `- If you are stuck or the work needs a decision, ask the issue's owner as ` +
@@ -198,7 +200,10 @@ export function handoffPrompt(
     `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
     // "Complete", not "merged": the baton crosses playbooks, and on a general
     // issue done ≠ a PR. The done-teardown's merge check guards code work.
-    `- When the issue's work is complete, run: ${issueCmd} done ${issue.nano}\n`
+    // LAST action: done tears down every session on the issue, including the
+    // one running this very turn — the ending must be chosen, not a surprise.
+    `- When the issue's work is complete, run ${issueCmd} done ${issue.nano} ` +
+    `as your LAST action, then stop.\n`
   )
 }
 

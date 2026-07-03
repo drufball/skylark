@@ -147,6 +147,9 @@ export const SEED_CREW: readonly {
   // The general deckhand: the `general` playbook's entrypoint — full tools, no
   // build contract, does whatever the issue says.
   { handle: 'hand', displayName: 'Hand', type: 'agent' },
+  // The PR babysitter: the build playbook's second hand — takes the baton at
+  // an open PR, waits on CI via the background tool, merges or hands back.
+  { handle: 'babysitter', displayName: 'Babysitter', type: 'agent' },
 ]
 
 /**

@@ -222,7 +222,7 @@ describe('branchNameFor', () => {
 })
 
 describe('buildPrompt', () => {
-  it('includes the title, body, thread, and actor-prefixed done command', async () => {
+  it('includes the title, body, thread, and the baton to the babysitter', async () => {
     const issue = await createIssue(db, {
       title: 'Make it fast',
       body: 'The board feels sluggish.',
@@ -245,9 +245,13 @@ describe('buildPrompt', () => {
     expect(prompt).toContain(
       '- @dru: start with the query\n- @bix: mind the empty case',
     )
+    // The builder's part ends at an open PR: it hands the baton to the
+    // babysitter and never shepherds or merges itself.
     expect(prompt).toContain(
-      'SKYLARK_ACTOR=builder-1 npm run issue -- done pp01',
+      'SKYLARK_ACTOR=builder-1 npm run issue -- handoff pp01 babysitter',
     )
+    expect(prompt).not.toContain('merge once green')
+    expect(prompt).not.toMatch(/npm run issue -- done/)
   })
 
   it('omits the "Thread so far" block when there are no comments', async () => {
