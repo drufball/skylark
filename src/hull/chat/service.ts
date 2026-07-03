@@ -104,15 +104,23 @@ export async function createChat(
   input: { id: string; title?: string | null; memberIds: string[] },
 ): Promise<ChatRow> {
   return db.transaction(async (tx) => {
-    const [chat] = await tx
-      .insert(chats)
-      .values({ id: input.id, title: input.title ?? null })
-      .returning()
+    // No RETURNING on the chat insert: under RLS, returning a row needs SELECT
+    // visibility (membership), and the membership rows land on the next
+    // statement. Insert blind, add the members, THEN read the row back —
+    // inside one transaction, so a member-creator sees their own chat.
+    await tx.insert(chats).values({ id: input.id, title: input.title ?? null })
     const members = [...new Set(input.memberIds)]
     if (members.length > 0) {
       await tx
         .insert(chatMembers)
-        .values(members.map((userId) => ({ chatId: chat.id, userId })))
+        .values(members.map((userId) => ({ chatId: input.id, userId })))
+    }
+    const chat = (
+      await tx.select().from(chats).where(eq(chats.id, input.id))
+    ).at(0)
+    if (!chat) {
+      // Creating a chat you are not in: RLS hides the row you just made.
+      throw new Error('createChat: the creator must be one of memberIds')
     }
     return chat
   })

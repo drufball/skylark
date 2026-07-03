@@ -63,6 +63,20 @@ describe('chat access (RLS)', () => {
   })
   afterEach(() => close())
 
+  it('a crew member can CREATE a chat they are in — under RLS, like the web door', async () => {
+    // Regression: insert-with-RETURNING needs SELECT visibility, but the
+    // membership rows that grant it land after the chat row. The door path
+    // (withCurrentActor → createChat) must work as a plain crew member.
+    const chatId = uuidv7()
+    const created = await asActor(db, alice, (tx) =>
+      createChat(tx, { id: chatId, memberIds: [alice, bob] }),
+    )
+    expect(created.id).toBe(chatId)
+    // And the creator can immediately read it back.
+    const seen = await asActor(db, alice, (tx) => getChat(tx, chatId))
+    expect(seen?.id).toBe(chatId)
+  })
+
   it('hides a non-member chat’s messages and reveals a member’s', async () => {
     const aliceSeesC2 = await asActor(db, alice, (tx) => listMessages(tx, c2))
     expect(aliceSeesC2).toEqual([]) // alice is not in c2
