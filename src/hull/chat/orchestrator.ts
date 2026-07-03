@@ -21,6 +21,7 @@ import {
   messagesSinceAgent,
   setMemberSession,
   targetsForMessage,
+  type ChatMemberView,
 } from './service'
 
 /**
@@ -57,6 +58,24 @@ export function assistantTextFrom(messages: unknown[]): string {
     .map((item) => item.text)
     .join('\n\n')
     .trim()
+}
+
+/**
+ * The situational header every agent turn opens with: which chat this is, who
+ * the agent is, and the concrete command for filing work — including `--chat`,
+ * which is what routes the issue's notifications back to this conversation so
+ * the agent gets woken here as the work moves. Repeated per turn (cheap, and
+ * it survives session compaction).
+ */
+export function turnContext(input: {
+  chatId: string
+  handle: string
+  userId: string
+}): string {
+  return `[You are @${input.handle} in chat ${input.chatId}.
+To file work for the ship, use bash:
+  SKYLARK_ACTOR=${input.userId} npm run issue -- new "<title>" --body "<details>" --chat ${input.chatId}
+You will be woken in this chat as filed issues move, to review and follow up.]`
 }
 
 export interface ChatOrchestratorDeps {
@@ -106,28 +125,28 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     })
   }
 
-  /** Run one agent's reply: feed unseen messages, take a turn, post the text. */
-  async function reply(chatId: string, agentUserId: string): Promise<void> {
-    const members = await listMembers(db, chatId)
-    const agent = members.find((m) => m.userId === agentUserId)
-    if (!agent) return
-
+  /**
+   * Drive one turn of an agent member's backing session with `prompt`, showing
+   * live progress in the chat and posting the assistant's text back as the
+   * agent's message. The shared spine of `reply` (a human spoke) and `wake`
+   * (a notification arrived) — the two differ only in what the prompt says.
+   */
+  async function driveTurn(
+    chatId: string,
+    agent: ChatMemberView,
+    prompt: string,
+  ): Promise<void> {
     const sessionId = await ensureSession(chatId, agent)
-    const unseen = await messagesSinceAgent(db, chatId, agentUserId)
-    if (unseen.length === 0) return
-    const prompt = formatTranscript(
-      unseen.map((m) => ({ handle: m.authorHandle, body: m.body })),
-    )
 
     // One "thinking…" up front, then a line per meaningful step — deduped, so a
     // turn writes a handful of durable progress events, never one per delta.
     let lastLine = 'thinking…'
-    emitProgress(chatId, agentUserId, lastLine)
+    emitProgress(chatId, agent.userId, lastLine)
     const produced = await runtime.runTurn(sessionId, prompt, (event) => {
       const line = chatProgressLine(event)
       if (line && line !== lastLine) {
         lastLine = line
-        emitProgress(chatId, agentUserId, line)
+        emitProgress(chatId, agent.userId, line)
       }
     })
 
@@ -136,10 +155,59 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       await addMessage(db, {
         id: uuidv7(),
         chatId,
-        authorId: agentUserId,
+        authorId: agent.userId,
         body: text,
       })
     }
+  }
+
+  /** Run one agent's reply: feed unseen messages, take a turn, post the text. */
+  async function reply(chatId: string, agentUserId: string): Promise<void> {
+    const members = await listMembers(db, chatId)
+    const agent = members.find((m) => m.userId === agentUserId)
+    if (!agent) return
+
+    const unseen = await messagesSinceAgent(db, chatId, agentUserId)
+    if (unseen.length === 0) return
+    const prompt = `${turnContext({
+      chatId,
+      handle: agent.handle,
+      userId: agent.userId,
+    })}\n\n${formatTranscript(
+      unseen.map((m) => ({ handle: m.authorHandle, body: m.body })),
+    )}`
+    await driveTurn(chatId, agent, prompt)
+  }
+
+  /**
+   * Wake an agent in a chat with a briefing (the notifications door composes
+   * it): run a turn on its backing session and post the reply here — the same
+   * spine as an ordinary reply, with the briefing in place of a human message.
+   * Any chat messages the agent hasn't seen ride along so the wake turn has
+   * full context.
+   */
+  async function wake(
+    chatId: string,
+    agentUserId: string,
+    briefing: string,
+  ): Promise<void> {
+    const members = await listMembers(db, chatId)
+    const agent = members.find((m) => m.userId === agentUserId)
+    if (agent?.type !== 'agent') return
+
+    const unseen = await messagesSinceAgent(db, chatId, agentUserId)
+    const meanwhile =
+      unseen.length > 0
+        ? `\n\nMeanwhile in this chat:\n${formatTranscript(
+            unseen.map((m) => ({ handle: m.authorHandle, body: m.body })),
+          )}`
+        : ''
+    const prompt = `${turnContext({
+      chatId,
+      handle: agent.handle,
+      userId: agent.userId,
+    })}\n\n${briefing}${meanwhile}`
+    await driveTurn(chatId, agent, prompt)
   }
 
   /**
@@ -237,7 +305,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     })
   }
 
-  return { respond, reply, handleBusNote, reconcile }
+  return { respond, reply, wake, handleBusNote, reconcile }
 }
 
 export type ChatOrchestrator = ReturnType<typeof createChatOrchestrator>

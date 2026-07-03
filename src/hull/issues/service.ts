@@ -151,6 +151,8 @@ export async function createIssue(
     title: string
     body?: string
     authorId: string
+    /** The chat this was filed from (agent wake-ups route back to it). */
+    originChatId?: string
     /** Force a nano (tests/seeding); otherwise generated + retried for uniqueness. */
     nano?: string
     /** Injectable generator so the collision-retry path is testable. */
@@ -170,6 +172,7 @@ export async function createIssue(
           title: input.title,
           body: input.body ?? '',
           authorId: input.authorId,
+          originChatId: input.originChatId,
         })
         .returning()
       await announce(db, {

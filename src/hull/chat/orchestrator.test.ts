@@ -506,4 +506,92 @@ describe('chat orchestrator', () => {
     expect(errSpy).toHaveBeenCalled()
     errSpy.mockRestore()
   })
+
+  /** A fake runtime that records every prompt it was driven with. */
+  function promptRecordingRuntime(replyText: string): ChatAgentRuntime & {
+    prompts: string[]
+  } {
+    const prompts: string[] = []
+    return {
+      prompts,
+      async runTurn(sessionId, text) {
+        prompts.push(text)
+        const message = {
+          role: 'assistant',
+          content: [{ type: 'text', text: replyText }],
+        }
+        await appendMessage(db, { sessionId, role: 'assistant', message })
+        return [message as never]
+      },
+    }
+  }
+
+  it('opens every reply turn with the situational context (chat id + how to file work)', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'plan?' })
+
+    const runtime = promptRecordingRuntime('here is the plan')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.respond({ chatId, authorId: dru, body: 'plan?' })
+
+    const [prompt] = runtime.prompts
+    expect(prompt).toContain(`chat ${chatId}`)
+    expect(prompt).toContain('@tilde')
+    expect(prompt).toContain(
+      `SKYLARK_ACTOR=${tilde} npm run issue -- new "<title>" --body "<details>" --chat ${chatId}`,
+    )
+    // The actual conversation still follows the header.
+    expect(prompt).toContain('@dru: plan?')
+  })
+
+  it('wake runs a briefed turn and posts the reply as the agent', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+
+    const runtime = promptRecordingRuntime('the build looks good — reviewing')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.wake(chatId, tilde, '1 update: @builder moved it: open → done')
+
+    const [prompt] = runtime.prompts
+    expect(prompt).toContain('@builder moved it: open → done')
+    expect(prompt).toContain(`chat ${chatId}`) // wake turns get the header too
+
+    const messages = await listMessages(db, chatId)
+    expect(messages.map((m) => `${m.authorHandle}:${m.body}`)).toEqual([
+      'tilde:the build looks good — reviewing',
+    ])
+  })
+
+  it('wake folds unseen chat messages into the briefing turn', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: dru,
+      body: 'ps: also check the docs',
+    })
+
+    const runtime = promptRecordingRuntime('on it')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.wake(chatId, tilde, 'the briefing')
+
+    const [prompt] = runtime.prompts
+    expect(prompt).toContain('the briefing')
+    expect(prompt).toContain('Meanwhile in this chat:')
+    expect(prompt).toContain('@dru: ps: also check the docs')
+  })
+
+  it('wake refuses a target that is not an agent member of the chat', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+
+    const runtime = promptRecordingRuntime('never')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.wake(chatId, dru, 'briefing') // a human
+    await orch.wake(chatId, bix, 'briefing') // an agent, but not a member
+    expect(runtime.prompts).toHaveLength(0)
+    expect(await listMessages(db, chatId)).toHaveLength(0)
+  })
 })

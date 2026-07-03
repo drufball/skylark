@@ -35,28 +35,33 @@ const STATUS_MARK: Record<IssueStatus, string> = {
 }
 
 /**
- * Parse the title and optional --body flag from issue new args.
- * Returns [title, body] where body is undefined if not provided.
+ * Parse `issue new`'s args: the title, plus optional `--body <text>` and
+ * `--chat <id>` (the chat this issue was filed from — how notifications about
+ * it route back to that conversation).
  */
-export function parseNewArgs(args: string[]): [string, string | undefined] {
-  const bodyFlagIndex = args.indexOf('--body')
-  if (bodyFlagIndex === -1) {
-    return [args.join(' ').trim(), undefined]
+export function parseNewArgs(args: string[]): {
+  title: string
+  body?: string
+  originChatId?: string
+} {
+  const rest = [...args]
+  const takeFlag = (flag: string): string | undefined => {
+    const at = rest.indexOf(flag)
+    if (at === -1) return undefined
+    const [, value] = rest.splice(at, 2)
+    return value
   }
-
-  const body = args[bodyFlagIndex + 1]
-  const titleParts = [
-    ...args.slice(0, bodyFlagIndex),
-    ...args.slice(bodyFlagIndex + 2),
-  ]
-  return [titleParts.join(' ').trim(), body]
+  const body = takeFlag('--body')
+  const originChatId = takeFlag('--chat')
+  return { title: rest.join(' ').trim(), body, originChatId }
 }
 
 async function cmdNew(args: string[]): Promise<void> {
-  const [title, body] = parseNewArgs(args)
-  if (!title) throw new Error('usage: issue new <title> [--body <text>]')
+  const { title, body, originChatId } = parseNewArgs(args)
+  if (!title)
+    throw new Error('usage: issue new <title> [--body <text>] [--chat <id>]')
   const issue = await withCliActor((tx, me) =>
-    createIssue(tx, { title, body, authorId: me.id }),
+    createIssue(tx, { title, body, originChatId, authorId: me.id }),
   )
   process.stdout.write(
     `Opened #${issue.nano} ${DIM}${issue.id}${RESET}\n${issue.title}\n`,
@@ -164,7 +169,7 @@ async function main(): Promise<void> {
     default:
       process.stdout.write(
         'usage: issue <new|list|show|comment|status|building|open|done|close> …\n' +
-          '  new <title> [--body <text>]   open an issue\n' +
+          '  new <title> [--body <text>] [--chat <id>]   open an issue\n' +
           '  list                          list issues, newest first\n' +
           '  show <id>                     show an issue, its branch, and its thread\n' +
           '  comment <id> <text>           add a comment\n' +
