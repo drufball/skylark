@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
-import { listEventsSince } from '@hull/events/service'
+import { events } from '@hull/events/schema'
+import { listEventsSince, REPLAY_PAGE_SIZE } from '@hull/events/service'
 import { createIssue, addComment, transitionIssue } from '@hull/issues/service'
 import { createUser } from '@hull/users/service'
 import { issueTopic } from '@hull/issues/topic'
@@ -196,7 +197,16 @@ describe('notifications service', () => {
       topicPatterns: [notifyTopic(alice)],
       audience: 'members',
     })
-    expect(announced.some((e) => e.type === NOTIFICATION_CREATED)).toBe(true)
+    const created = defined(
+      announced.find((e) => e.type === NOTIFICATION_CREATED),
+    )
+    // The announcement carries the row's essentials so a live subscriber can
+    // update without a read-back — not an empty payload.
+    expect(created.payload).toEqual({
+      notificationId: inbox[0].id,
+      type: 'issue.commented',
+      topic: 'issue:aa11',
+    })
   })
 
   it('unread tracking: listUnread oldest-first, markAllRead clears', async () => {
@@ -495,6 +505,144 @@ describe('notifications service', () => {
     })
     await reactor.handleBusNote({ id: event.id, type: event.type })
     expect(await unreadCount(db, bob)).toBe(0)
+  })
+
+  it('fires the delivery hook once per recipient, not again on a duplicate delivery', async () => {
+    // The hook deliberately never touches the row it's handed: a broken
+    // idempotency guard would invoke it a second time (with no row), and this
+    // counter must observe that regardless of what the argument looks like.
+    let hookCalls = 0
+    const reactor = createNotificationsReactor({
+      db,
+      onNotified: () => {
+        hookCalls++
+      },
+    })
+    const issue = await createIssue(db, { title: 'x', authorId: bob })
+    await watchTopic(db, alice, issueTopic(issue.id))
+    await addComment(db, { issueId: issue.id, authorId: bob, body: 'hi' })
+    const events_ = await listEventsSince(db, {
+      topicPatterns: [issueTopic(issue.id)],
+      audience: 'public',
+    })
+    const comment = defined(events_.find((e) => e.type === 'issue.commented'))
+
+    await reactor.handleBusNote({ id: comment.id, type: comment.type })
+    await reactor.handleBusNote({ id: comment.id, type: comment.type })
+
+    expect(hookCalls).toBe(1)
+  })
+
+  it('a public event on a non-auto-watch topic never subscribes the actor', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    const event = await emitEvent(db, {
+      type: 'file.changed',
+      source: 'files',
+      topic: 'file:notes.md',
+      audience: 'public',
+      actorId: bob,
+      payload: { path: 'notes.md', action: 'write' },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    expect(await isWatching(db, bob, 'file:notes.md')).toBe(false)
+  })
+
+  it('only issue.opened subscribes the payload ownerId — a comment naming one does not', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    const event = await emitEvent(db, {
+      type: 'issue.commented',
+      source: 'issues',
+      topic: 'issue:i5',
+      audience: 'public',
+      actorId: bob,
+      payload: { issueId: 'i5', ownerId: alice },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    // The actor auto-watches (acting = caring)…
+    expect(await isWatching(db, bob, 'issue:i5')).toBe(true)
+    // …but a payload ownerId only earns a watch on issue.opened.
+    expect(await isWatching(db, alice, 'issue:i5')).toBe(false)
+  })
+
+  it('reconcile ignores actorless events and payload owners on non-opened events', async () => {
+    await db.insert(events).values({
+      id: uuidv7(),
+      type: 'issue.commented',
+      source: 'issues',
+      topic: 'issue:r1',
+      audience: 'public',
+      actorId: null,
+      payload: { issueId: 'r1', ownerId: alice },
+    })
+    const reactor = createNotificationsReactor({ db })
+    await reactor.reconcile() // must not throw on the null actor
+    expect(await isWatching(db, alice, 'issue:r1')).toBe(false)
+    expect(await listWatchers(db, 'issue:r1')).toEqual([])
+  })
+
+  it('reconcile pages past a full first page of the durable log', async () => {
+    // Exactly one full page of filler, then one more event carrying the watch:
+    // reconcile must fetch a second page to see it. Rows are inserted directly
+    // (ids chosen to sort after any uuidv7) so the test stays fast.
+    const filler = Array.from({ length: REPLAY_PAGE_SIZE }, (_, i) => ({
+      id: `zz-page-${String(i).padStart(4, '0')}`,
+      type: 'issue.commented',
+      source: 'issues',
+      topic: 'issue:page',
+      audience: 'public',
+      actorId: null,
+      payload: {},
+    }))
+    await db.insert(events).values(filler)
+    await db.insert(events).values({
+      id: 'zz-page-beyond',
+      type: 'issue.commented',
+      source: 'issues',
+      topic: 'issue:beyond',
+      audience: 'public',
+      actorId: bob,
+      payload: {},
+    })
+
+    const reactor = createNotificationsReactor({ db })
+    await reactor.reconcile()
+
+    expect(await isWatching(db, bob, 'issue:beyond')).toBe(true)
+  })
+
+  it('a forged handoff cannot remove a legitimate watcher from the fan-out', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    // Bob legitimately watches issue:i9. A forged baton pass on that topic
+    // names a DIFFERENT issueId with bob as target — the payload disagrees
+    // with the topic, so it must not get to drop bob from the recipients.
+    await watchTopic(db, bob, 'issue:i9')
+    const mover = uuidv7()
+    await createUser(db, {
+      id: mover,
+      handle: 'builder',
+      displayName: 'Builder',
+      type: 'agent',
+    })
+    const event = await emitEvent(db, {
+      type: 'issue.handoff',
+      source: 'issues',
+      topic: 'issue:i9',
+      audience: 'public',
+      actorId: mover,
+      payload: {
+        issueId: 'i-other',
+        fromUserId: mover,
+        toUserId: bob,
+        toHandle: 'bob',
+        toOwner: false,
+        message: 'forged',
+      },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    expect(await unreadCount(db, bob)).toBe(1)
   })
 
   it('invokes the delivery hook per notification, and survives its failure', async () => {
