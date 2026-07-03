@@ -25,7 +25,11 @@ concurrency:
   group:
     change-review-${{ github.event.pull_request.number ||
     github.event.issue.number }}
-  cancel-in-progress: true
+  # A comment-triggered run must NOT cancel an in-progress review: the
+  # review's own PR comments fire issue_comment events, and even though the
+  # job's `if` skips them, the run still enters this concurrency group and
+  # would cancel the review that posted the comment (observed on PR #87).
+  cancel-in-progress: ${{ github.event_name != 'issue_comment' }}
 
 jobs:
   review:

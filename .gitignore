@@ -44,3 +44,5 @@ playwright-report/
 .claude/worktrees/
 .worktrees/
 worktrees/
+# Playwright agent-CLI session artifacts (snapshots, console logs)
+.playwright-cli/
