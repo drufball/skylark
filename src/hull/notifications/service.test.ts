@@ -70,6 +70,63 @@ describe('describeNotification', () => {
     ).toBe('@builder moved it: open → building')
   })
 
+  it('renders a handoff with the baton message', () => {
+    expect(
+      describeNotification({
+        type: 'issue.handoff',
+        topic: 'issue:aa11',
+        payload: {
+          toHandle: 'babysitter',
+          toOwner: false,
+          message: 'PR #12 is open — take it home',
+        },
+        actorHandle: 'builder',
+      }),
+    ).toBe(
+      '@builder passed the baton to @babysitter: PR #12 is open — take it home',
+    )
+    // Third person even for owner pings: the line fans out to bystander
+    // watchers too, so "handed this to YOU" would lie to everyone but the owner.
+    expect(
+      describeNotification({
+        type: 'issue.handoff',
+        topic: 'issue:aa11',
+        payload: {
+          toHandle: 'drufball',
+          toOwner: true,
+          message: 'checks green — merge?',
+        },
+        actorHandle: 'builder',
+      }),
+    ).toBe(
+      '@builder needs @drufball (the owner) to look: checks green — merge?',
+    )
+  })
+
+  it('keeps a handoff line to one bounded line, however long the message', () => {
+    const line = describeNotification({
+      type: 'issue.handoff',
+      topic: 'issue:aa11',
+      payload: {
+        toHandle: 'drufball',
+        toOwner: true,
+        message: 'first line of a long brief\nsecond line never shows',
+      },
+      actorHandle: 'builder',
+    })
+    expect(line).toContain('first line of a long brief')
+    expect(line).not.toContain('second line')
+    const longMessage = 'w'.repeat(500)
+    expect(
+      describeNotification({
+        type: 'issue.handoff',
+        topic: 'issue:aa11',
+        payload: { toHandle: 'x', toOwner: false, message: longMessage },
+        actorHandle: 'builder',
+      }).length,
+    ).toBeLessThan(220)
+  })
+
   it('keeps an unknown event type legible', () => {
     expect(
       describeNotification({
@@ -310,6 +367,116 @@ describe('notifications service', () => {
     // No backfilled notifications — old news would flood late watchers.
     expect(await unreadCount(db, bob)).toBe(0)
     expect(await unreadCount(db, alice)).toBe(0)
+  })
+
+  it('an owner handoff reaches the owner even if they never watched the issue', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    // Alice owns the issue but has never acted on or watched it.
+    const event = await emitEvent(db, {
+      type: 'issue.handoff',
+      source: 'issues',
+      topic: 'issue:i1',
+      audience: 'public',
+      actorId: bob,
+      payload: {
+        issueId: 'i1',
+        fromUserId: bob,
+        toUserId: alice,
+        toHandle: 'alice',
+        toOwner: true,
+        message: 'checks green — merge?',
+      },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    const inbox = await listNotifications(db, alice)
+    expect(inbox).toHaveLength(1)
+    expect(inbox[0].type).toBe('issue.handoff')
+  })
+
+  it('a baton handoff never doubles into the target inbox — the orchestrator drives them', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    // Bob (the target) watches the issue from earlier acting; Alice watches too.
+    await watchTopic(db, bob, 'issue:i2')
+    await watchTopic(db, alice, 'issue:i2')
+    const mover = uuidv7()
+    await createUser(db, {
+      id: mover,
+      handle: 'builder',
+      displayName: 'Builder',
+      type: 'agent',
+    })
+    const event = await emitEvent(db, {
+      type: 'issue.handoff',
+      source: 'issues',
+      topic: 'issue:i2',
+      audience: 'public',
+      actorId: mover,
+      payload: {
+        issueId: 'i2',
+        fromUserId: mover,
+        toUserId: bob,
+        toHandle: 'bob',
+        toOwner: false,
+        message: 'go',
+      },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    // The bystander watcher hears the baton move; the target does not — a
+    // fired turn plus an inbox wake would double-drive it.
+    expect(await unreadCount(db, alice)).toBe(1)
+    expect(await unreadCount(db, bob)).toBe(0)
+  })
+
+  it('opening an issue for another owner watches that owner from the start', async () => {
+    const reactor = createNotificationsReactor({ db })
+    // Bob files an issue that Alice owns — she should hear where it goes even
+    // before she ever touches it.
+    const issue = await createIssue(db, {
+      title: 'owned elsewhere',
+      authorId: bob,
+      ownerId: alice,
+    })
+    await reactToLog(reactor)
+    expect(await isWatching(db, alice, issueTopic(issue.id))).toBe(true)
+  })
+
+  it('ignores a handoff payload whose issueId disagrees with the event topic', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    // A forged row on one issue's topic naming another issueId must not get to
+    // pick recipients: alice is neither watching nor legitimately targeted.
+    const event = await emitEvent(db, {
+      type: 'issue.handoff',
+      source: 'issues',
+      topic: 'issue:i9',
+      audience: 'public',
+      actorId: bob,
+      payload: {
+        issueId: 'i-other',
+        fromUserId: bob,
+        toUserId: alice,
+        toHandle: 'alice',
+        toOwner: true,
+        message: 'forged',
+      },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    expect(await unreadCount(db, alice)).toBe(0)
+  })
+
+  it('reconcile recovers owner watches, not just actor watches', async () => {
+    // An issue is filed FOR alice while no reactor is subscribed — her watch is
+    // durable intent and must survive the restart just like the actor's.
+    const issue = await createIssue(db, {
+      title: 'owned elsewhere, filed offline',
+      authorId: bob,
+      ownerId: alice,
+    })
+    const reactor = createNotificationsReactor({ db })
+    await reactor.reconcile()
+    expect(await isWatching(db, alice, issueTopic(issue.id))).toBe(true)
   })
 
   it('never fans out a members-scoped event, even to a planted watch', async () => {

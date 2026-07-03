@@ -19,8 +19,14 @@ import {
   ISSUE_OPENED,
   ISSUE_STATUS_CHANGED,
 } from '@hull/issues/service'
-import { ISSUE_TOPIC_PATTERN, ISSUE_TOPIC_PREFIX } from '@hull/issues/topic'
+import { ISSUE_HANDOFF } from '@hull/issues/handoff'
+import {
+  ISSUE_TOPIC_PATTERN,
+  ISSUE_TOPIC_PREFIX,
+  issueTopic,
+} from '@hull/issues/topic'
 import { errorMessage } from '@hull/lib/errors'
+import { firstLine, truncate } from '@hull/lib/text'
 
 import { notifications, watches, type NotificationRow } from './schema'
 import { notifyTopic } from './topic'
@@ -70,6 +76,9 @@ export function describeNotification(input: {
     title?: unknown
     from?: unknown
     to?: unknown
+    toHandle?: unknown
+    toOwner?: unknown
+    message?: unknown
   }
   switch (type) {
     case ISSUE_OPENED:
@@ -82,6 +91,21 @@ export function describeNotification(input: {
       return typeof payload.from === 'string' && typeof payload.to === 'string'
         ? `@${actorHandle} moved it: ${payload.from} → ${payload.to}`
         : `@${actorHandle} changed the status`
+    case ISSUE_HANDOFF: {
+      // One bounded line: the brief's first line, capped — an inbox row is a
+      // headline, not the brief itself. Always third-person: an owner ping
+      // fans out to bystander watchers too, and this function has no recipient
+      // context, so "handed this to YOU" would lie to everyone but the owner.
+      const brief =
+        typeof payload.message === 'string'
+          ? truncate(firstLine(payload.message), 160)
+          : ''
+      const toHandle =
+        typeof payload.toHandle === 'string' ? payload.toHandle : '?'
+      if (payload.toOwner === true)
+        return `@${actorHandle} needs @${toHandle} (the owner) to look: ${brief}`
+      return `@${actorHandle} passed the baton to @${toHandle}: ${brief}`
+    }
     default:
       return `${type} on ${topic}`
   }
@@ -261,8 +285,40 @@ export function createNotificationsReactor(deps: {
     if (event.actorId && isAutoWatchTopic(event.topic)) {
       await watchTopic(db, event.actorId, event.topic)
     }
+    // An issue opened for another owner watches that owner from the start —
+    // they answer for the work, so they hear where it goes without ever
+    // having to act on it first.
+    if (event.type === ISSUE_OPENED && isAutoWatchTopic(event.topic)) {
+      const ownerId = (event.payload as { ownerId?: unknown }).ownerId
+      if (typeof ownerId === 'string') {
+        await watchTopic(db, ownerId, event.topic)
+      }
+    }
 
-    for (const watcher of await listWatchers(db, event.topic)) {
+    // Handoffs adjust the recipients around the watch list: an OWNER ping must
+    // reach the owner even if they never watched, and a baton pass must NOT
+    // also land in the target's inbox — the issues orchestrator is already
+    // driving them a turn, and an inbox wake on top would double-drive. The
+    // payload is only honored when it agrees with the event's own topic: a
+    // forged row naming a foreign issueId doesn't get to pick recipients.
+    const recipients = new Set(await listWatchers(db, event.topic))
+    if (event.type === ISSUE_HANDOFF) {
+      const p = event.payload as {
+        issueId?: unknown
+        toUserId?: unknown
+        toOwner?: unknown
+      }
+      if (
+        typeof p.toUserId === 'string' &&
+        typeof p.issueId === 'string' &&
+        event.topic === issueTopic(p.issueId)
+      ) {
+        if (p.toOwner === true) recipients.add(p.toUserId)
+        else recipients.delete(p.toUserId)
+      }
+    }
+
+    for (const watcher of recipients) {
       if (watcher === event.actorId) continue // your own action isn't news
       const row = await addNotification(db, {
         userId: watcher,
@@ -303,6 +359,18 @@ export function createNotificationsReactor(deps: {
         sinceId = event.id
         if (event.actorId && event.topic && isAutoWatchTopic(event.topic)) {
           await watchTopic(db, event.actorId, event.topic)
+        }
+        // Owner watches are durable intent too: an issue opened for a distinct
+        // owner while no reactor was subscribed still ends up watched by them.
+        if (
+          event.type === ISSUE_OPENED &&
+          event.topic &&
+          isAutoWatchTopic(event.topic)
+        ) {
+          const ownerId = (event.payload as { ownerId?: unknown }).ownerId
+          if (typeof ownerId === 'string') {
+            await watchTopic(db, ownerId, event.topic)
+          }
         }
       }
       if (page.length < REPLAY_PAGE_SIZE) break

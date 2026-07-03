@@ -5,6 +5,7 @@ import type { Database } from '@hull/db/client'
 import { listEventsSince } from '@hull/events/service'
 import { defined, freshDb } from '@hull/db/test-db'
 import { createChat } from '@hull/chat/service'
+import { createSession } from '@hull/agent/service'
 import { createUser } from '@hull/users/service'
 
 import {
@@ -13,12 +14,15 @@ import {
   createIssue,
   generateNano,
   getIssue,
+  getIssueSession,
   listComments,
   listIssues,
+  listIssueSessions,
   nextStatus,
   resolveIssueRef,
   resolveStatusWord,
   setBuildContext,
+  recordIssueSession,
   setStatusLine,
   toBoardCard,
   transitionIssue,
@@ -182,6 +186,37 @@ describe('createIssue', () => {
     expect(fetched?.body).toBe('')
   })
 
+  it('defaults the owner to the creator when none is named', async () => {
+    const issue = await createIssue(db, { title: 'Mine by default', authorId })
+    expect(issue.ownerId).toBe(authorId)
+  })
+
+  it('records an explicit owner distinct from the author', async () => {
+    const owner = await createUser(db, {
+      id: uuidv7(),
+      handle: 'tilde',
+      displayName: 'Tilde',
+      type: 'agent',
+    })
+    const issue = await createIssue(db, {
+      title: 'Filed for tilde',
+      authorId,
+      ownerId: owner.id,
+    })
+    expect(issue.authorId).toBe(authorId)
+    expect(issue.ownerId).toBe(owner.id)
+  })
+
+  it('announces the owner on issue.opened so the reactor can watch them', async () => {
+    const issue = await createIssue(db, { title: 'watched', authorId })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
+    const opened = events.find((e) => e.type === 'issue.opened')
+    expect(opened?.payload).toMatchObject({ ownerId: authorId })
+  })
+
   it('retries on a nano collision so two issues never share one', async () => {
     // Force the first generated nano, then a distinct one. We seed an issue
     // holding "aaaa", then make the generator return "aaaa" once before "bbbb".
@@ -317,10 +352,10 @@ describe('view-data shaping (pure)', () => {
       body: 'sparkle',
       status: 'building',
       authorId: 'u1',
+      ownerId: 'u1',
       visibility: 'public',
       branchName: 'add-widget-aa11',
       worktreePath: '/wt/add-widget-aa11',
-      sessionId: 's1',
       originChatId: null,
       statusLine: 'on it',
       createdAt: new Date(),
@@ -379,12 +414,11 @@ describe('view-data shaping (pure)', () => {
 })
 
 describe('setBuildContext + setStatusLine', () => {
-  it('records branch/worktree/session on first build', async () => {
+  it('records branch/worktree on first build', async () => {
     const issue = await createIssue(db, { title: 'x', authorId })
     await setBuildContext(db, issue.id, {
       branchName: 'add-widget-aa12',
       worktreePath: '/home/me/skylark/worktrees/add-widget-aa12',
-      sessionId: null,
     })
     const after = defined(await getIssue(db, issue.id))
     expect(after.branchName).toBe('add-widget-aa12')
@@ -398,5 +432,78 @@ describe('setBuildContext + setStatusLine', () => {
     await setStatusLine(db, issue.id, 'running npm run check')
     const after = defined(await getIssue(db, issue.id))
     expect(after.statusLine).toBe('running npm run check')
+  })
+})
+
+describe('issue sessions — one per (issue, agent)', () => {
+  async function agentWithSession(handle: string) {
+    const user = await createUser(db, {
+      id: uuidv7(),
+      handle,
+      displayName: handle,
+      type: 'agent',
+    })
+    const session = await createSession(db, {
+      id: uuidv7(),
+      model: 'claude-sonnet-5',
+      agentUserId: user.id,
+    })
+    return { user, session }
+  }
+
+  it('records and reads back the session an agent holds on an issue', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    const { user, session } = await agentWithSession('builder')
+    await recordIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: user.id,
+      sessionId: session.id,
+    })
+    const link = defined(await getIssueSession(db, issue.id, user.id))
+    expect(link.sessionId).toBe(session.id)
+  })
+
+  it('keeps one session per (issue, agent): a duplicate set is a no-op', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    const { user, session } = await agentWithSession('builder')
+    const other = await createSession(db, {
+      id: uuidv7(),
+      model: 'claude-sonnet-5',
+      agentUserId: user.id,
+    })
+    await recordIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: user.id,
+      sessionId: session.id,
+    })
+    await recordIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: user.id,
+      sessionId: other.id,
+    })
+    const link = defined(await getIssueSession(db, issue.id, user.id))
+    expect(link.sessionId).toBe(session.id)
+  })
+
+  it('lists every hand on an issue, and nothing from other issues', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    const bystander = await createIssue(db, { title: 'y', authorId })
+    const a = await agentWithSession('builder')
+    const b = await agentWithSession('babysitter')
+    await recordIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: a.user.id,
+      sessionId: a.session.id,
+    })
+    await recordIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: b.user.id,
+      sessionId: b.session.id,
+    })
+    const links = await listIssueSessions(db, issue.id)
+    expect(links.map((l) => l.sessionId).sort()).toEqual(
+      [a.session.id, b.session.id].sort(),
+    )
+    expect(await listIssueSessions(db, bystander.id)).toEqual([])
   })
 })

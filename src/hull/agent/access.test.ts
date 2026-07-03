@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { asActor, freshDb } from '@hull/db/test-db'
 import { createChat, setMemberSession } from '@hull/chat/service'
-import { createIssue, setBuildContext } from '@hull/issues/service'
+import { createIssue, recordIssueSession } from '@hull/issues/service'
 import { createUser } from '@hull/users/service'
 
 import {
@@ -56,10 +56,14 @@ describe('agent session access (RLS)', () => {
     sChat = uuidv7()
     await createSession(db, { id: sBare, model: 'm' }) // no parent → crew-visible
 
-    // An issue's builder session → public (link it via issues.session_id).
+    // An issue's agent session → public (link it via issue_sessions).
     await createSession(db, { id: sIssue, model: 'm' })
     const issue = await createIssue(db, { title: 'build', authorId: alice })
-    await setBuildContext(db, issue.id, { sessionId: sIssue })
+    await recordIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: alice,
+      sessionId: sIssue,
+    })
 
     // A chat's backing session → members only (link via chat_members.session_id).
     await createSession(db, { id: sChat, model: 'm' })
@@ -102,5 +106,27 @@ describe('agent session access (RLS)', () => {
     expect(
       (await asActor(db, alice, (tx) => getMessages(tx, sChat))).length,
     ).toBe(1)
+  })
+
+  it('refuses a planted issue_sessions row — the link that would flip a private session public', async () => {
+    // app_can_see_session reads "does an issue point at this session?" from
+    // issue_sessions, so a row there IS the key to a session. Bob (not a
+    // member of the chat) plants a link from an issue to the chat's backing
+    // session; the insert policy must refuse it, or the transcript above goes
+    // crew-public.
+    const issue = await createIssue(db, { title: 'plant', authorId: bob })
+    await expect(
+      asActor(db, bob, (tx) =>
+        recordIssueSession(tx, {
+          issueId: issue.id,
+          agentUserId: bob,
+          sessionId: sChat,
+        }),
+      ),
+    ).rejects.toThrow()
+    // And the door stays shut.
+    expect(
+      await asActor(db, bob, (tx) => getSession(tx, sChat)),
+    ).toBeUndefined()
   })
 })
