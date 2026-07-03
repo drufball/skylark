@@ -34,9 +34,9 @@ export default defineConfig(
     files: ['**/*.{js,cjs,mjs}'],
     extends: [tseslint.configs.disableTypeChecked],
   },
-  // Node scripts outside the app (CI publishers, tooling).
+  // Node scripts outside the app (CI publishers, repo tooling).
   {
-    files: ['.github/**/*.mjs'],
+    files: ['.github/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: {
       globals: { console: 'readonly', process: 'readonly', fetch: 'readonly' },
     },

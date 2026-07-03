@@ -13,7 +13,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LCOV="coverage/lcov.info"
+# Base ref: origin/main if present (CI), else main (local) — same fallback as
+# scripts/mutate-diff. Override with COMPARE_BRANCH=<ref>.
 COMPARE_BRANCH="${COMPARE_BRANCH:-origin/main}"
+git rev-parse --verify --quiet "$COMPARE_BRANCH" >/dev/null || COMPARE_BRANCH=main
 FAIL_UNDER="${DIFF_COVERAGE_MIN:-90}"
 
 if ! command -v uvx >/dev/null 2>&1; then

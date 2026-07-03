@@ -82,6 +82,56 @@ describe('shouldMergeStaging', () => {
   })
 })
 
+describe('createFilesRepo refuses a repoRoot git does not own', () => {
+  const layout = {
+    filesDir: 'files',
+    mainBranch: 'main',
+    stagingBranch: 'files/staging',
+  }
+  const change = [{ path: 'a.md', content: 'x' }]
+  const author = { name: 'fixture', email: 'fixture@test' }
+
+  it('refuses to commit when repoRoot is not a git repository', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'skylark-notrepo-'))
+    try {
+      const repo = createFilesRepo({ repoRoot: dir, ...layout })
+      await expect(repo.commitToStaging(change, author, 'm')).rejects.toThrow(
+        /repository/i,
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to commit when repoRoot is a subdirectory of a repo — git would act on the enclosing one', async () => {
+    const { repoRoot } = await tempRepo()
+    try {
+      const repo = createFilesRepo({
+        repoRoot: join(repoRoot, 'files'),
+        ...layout,
+      })
+      await expect(repo.commitToStaging(change, author, 'm')).rejects.toThrow(
+        /repository root/i,
+      )
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses to merge from a subdirectory of a repo', async () => {
+    const { repoRoot } = await tempRepo()
+    try {
+      const repo = createFilesRepo({
+        repoRoot: join(repoRoot, 'files'),
+        ...layout,
+      })
+      await expect(repo.mergeStaging()).rejects.toThrow(/repository root/i)
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('files service over a real git repo', () => {
   let repoRoot: string
   let git: GitRunner

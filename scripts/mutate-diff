@@ -22,16 +22,16 @@ git rev-parse --verify --quiet "$BASE" >/dev/null || {
 MERGE_BASE="$(git merge-base "$BASE" HEAD)"
 
 # Changed (added/modified, never deleted) source files Stryker can mutate —
-# kept in lockstep with the `mutate` globs in stryker.config.mjs. (A while-read
-# loop, not `mapfile`, so this runs on macOS's stock bash 3.2 too.)
+# filtered through test-excludes.mjs itself (via changed-mutatable.mjs), the
+# same single source of truth the full sweep uses, so this gate can't drift
+# from it. (A while-read loop, not `mapfile`, so this runs on macOS's stock
+# bash 3.2 too.)
 FILES=()
 while IFS= read -r f; do
   [ -n "$f" ] && FILES+=("$f")
 done < <(
   git diff --name-only --diff-filter=d "$MERGE_BASE" -- 'src/' \
-    | grep -E '\.(ts|tsx)$' \
-    | grep -Ev '\.test\.(ts|tsx)$|/server\.ts$|/schema\.ts$|^src/hull/db/client\.ts$|^src/router\.tsx$|^src/routes/|^src/routeTree\.gen\.ts$|^src/rigging/components/ui/' \
-    || true
+    | node scripts/changed-mutatable.mjs
 )
 
 if [ "${#FILES[@]}" -eq 0 ]; then

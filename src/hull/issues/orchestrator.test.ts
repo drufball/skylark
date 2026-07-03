@@ -643,12 +643,31 @@ describe('orchestrator failure handling', () => {
     const { deps } = makeDeps()
     const runtime = deps.runtime as FakeRuntime
     runtime.runTurn = () => Promise.reject(new Error('boom'))
-    const orch = createOrchestrator(deps)
-    const issue = await createIssue(db, { title: 'X', authorId, nano: 'er01' })
-    // onStatusChanged fires the turn in the background and must still resolve.
-    await expect(
-      orch.onStatusChanged(issue.id, 'open', 'building'),
-    ).resolves.toBeUndefined()
+    const errSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    try {
+      const orch = createOrchestrator(deps)
+      const issue = await createIssue(db, {
+        title: 'X',
+        authorId,
+        nano: 'er01',
+      })
+      // onStatusChanged fires the turn in the background and must still resolve.
+      await expect(
+        orch.onStatusChanged(issue.id, 'open', 'building'),
+      ).resolves.toBeUndefined()
+      // The fire-and-forget turn's rejection is caught and logged — pin the
+      // catch, or a dropped `.catch` would only surface as an unhandled
+      // rejection blamed elsewhere.
+      await vi.waitFor(() => {
+        expect(errSpy).toHaveBeenCalledWith(
+          expect.stringContaining('failed: boom'),
+        )
+      })
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 
   it('a reconcile that fails on one issue continues past it', async () => {

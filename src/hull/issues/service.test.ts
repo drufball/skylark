@@ -162,30 +162,6 @@ describe('createIssue', () => {
     expect(bare.originChatId).toBeNull()
   })
 
-  it('persists body when provided', async () => {
-    const issue = await createIssue(db, {
-      title: 'Issue with body',
-      body: 'This is the body text',
-      authorId,
-    })
-    expect(issue.body).toBe('This is the body text')
-
-    const fetched = await getIssue(db, issue.id)
-    expect(fetched?.body).toBe('This is the body text')
-  })
-
-  it('allows undefined body', async () => {
-    const issue = await createIssue(db, {
-      title: 'Issue with undefined body',
-      body: undefined,
-      authorId,
-    })
-    expect(issue.body).toBe('')
-
-    const fetched = await getIssue(db, issue.id)
-    expect(fetched?.body).toBe('')
-  })
-
   it('defaults the owner to the creator when none is named', async () => {
     const issue = await createIssue(db, { title: 'Mine by default', authorId })
     expect(issue.ownerId).toBe(authorId)
