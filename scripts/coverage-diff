@@ -33,6 +33,10 @@ if git remote | grep -q '^origin$'; then
   git fetch --quiet origin main 2>/dev/null || true
 fi
 
+# Base-ref fallback AFTER the fetch had its chance: origin/main if present
+# (CI), else main (local, no remote). Same fallback as scripts/mutate-diff.
+git rev-parse --verify --quiet "$COMPARE_BRANCH" >/dev/null || COMPARE_BRANCH=main
+
 echo "→ diff coverage vs ${COMPARE_BRANCH} (fail under ${FAIL_UNDER}%)"
 exec uvx diff-cover "$LCOV" \
   --compare-branch="$COMPARE_BRANCH" \

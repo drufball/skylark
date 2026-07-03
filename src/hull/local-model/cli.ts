@@ -68,6 +68,4 @@ async function main(): Promise<void> {
   }
 }
 
-/* v8 ignore start -- CLI entrypoint wiring */
 if (isMain(import.meta.url)) runCli(main)
-/* v8 ignore stop */

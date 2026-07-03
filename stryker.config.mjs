@@ -9,7 +9,11 @@
 // PR review in .github/workflows/mutation-review.yml). Reports land in reports/
 // and are gitignored.
 
-import { SHARED_EXCLUDES, STRYKER_ONLY_EXCLUDES } from './test-excludes.mjs'
+import {
+  MUTATE_SOURCES,
+  SHARED_EXCLUDES,
+  STRYKER_ONLY_EXCLUDES,
+} from './test-excludes.mjs'
 
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 export default {
@@ -28,8 +32,7 @@ export default {
   // ignore`d files still have their ignored regions mutated here, since Stryker
   // can't read the pragma.
   mutate: [
-    'src/**/*.ts',
-    'src/**/*.tsx',
+    ...MUTATE_SOURCES,
     ...SHARED_EXCLUDES.map((p) => `!${p}`),
     ...STRYKER_ONLY_EXCLUDES.map((p) => `!${p}`),
   ],
@@ -38,4 +41,9 @@ export default {
   // fails a build over a low score — the crew (and the PR review agent) judge.
   thresholds: { high: 80, low: 60, break: null },
   tempDirName: '.stryker-tmp',
+
+  // Keep tool state out of the sandbox copy: the tests never touch it, and the
+  // `tessl install` symlinks under .claude/skills and .agents/skills abort the
+  // copy (ENOTSUP).
+  ignorePatterns: ['/.claude', '/.agents', '/.tessl', '/plugins', '/reports'],
 }

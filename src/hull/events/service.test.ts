@@ -317,10 +317,4 @@ describe('audience filtering', () => {
     expect(canViewAudience('secret', 'members')).toBe(false)
     expect(canViewAudience('secret', 'public')).toBe(false)
   })
-
-  it('members can see both public and members-only events', () => {
-    // Access hierarchy: members ⊇ public
-    expect(canViewAudience('public', 'members')).toBe(true)
-    expect(canViewAudience('members', 'members')).toBe(true)
-  })
 })

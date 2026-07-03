@@ -73,7 +73,9 @@ describe('0013/0014 upgrade — the owner + issue_sessions backfill', () => {
     } finally {
       await client.close()
     }
-  })
+    // Replays the whole migration chain on PGlite — slow on a loaded machine
+    // (a mutation sweep saturating the cores pushed it past the default 5s).
+  }, 30_000)
 
   it('leaves a legacy session with no agent identity behind, without failing the migration', async () => {
     const client = new PGlite()
@@ -102,5 +104,7 @@ describe('0013/0014 upgrade — the owner + issue_sessions backfill', () => {
     } finally {
       await client.close()
     }
-  })
+    // Replays the whole migration chain on PGlite — slow on a loaded machine
+    // (a mutation sweep saturating the cores pushed it past the default 5s).
+  }, 30_000)
 })

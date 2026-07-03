@@ -57,10 +57,10 @@ export const Route = createFileRoute('/api/stream')({
         const encoder = new TextEncoder()
 
         const stream = new ReadableStream<Uint8Array>({
-          /* v8 ignore start -- impure ReadableStream lifecycle: controller,
-             encoder, heartbeat timer, abort + dead-socket teardown. The
-             subscribe/replay/flush coordination it drives is runShipLogStream,
-             unit-tested in replay-stream.test.ts. */
+          // Impure ReadableStream lifecycle: controller, encoder, heartbeat
+          // timer, abort + dead-socket teardown. The subscribe/replay/flush
+          // coordination it drives is runShipLogStream, unit-tested in
+          // replay-stream.test.ts.
           async start(controller) {
             let open = true
             let heartbeat: ReturnType<typeof setInterval> | undefined
@@ -114,7 +114,6 @@ export const Route = createFileRoute('/api/stream')({
               close()
             }
           },
-          /* v8 ignore stop */
         })
 
         return new Response(stream, {

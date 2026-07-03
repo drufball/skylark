@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
@@ -116,6 +116,30 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
     return `${filesDir}/${path}`
   }
 
+  /**
+   * Refuse to act unless `repoRoot` IS the repository git resolves. Git
+   * discovers its repo by walking upward from cwd, so a repoRoot that is a
+   * plain directory inside some other checkout would silently aim every
+   * commit, merge, and branch delete at a repo this service does not own.
+   * Checked once, before any ref-mutating command; fail-closed thereafter.
+   */
+  let ownRepoChecked: Promise<void> | undefined
+  function assertOwnRepo(): Promise<void> {
+    ownRepoChecked ??= (async () => {
+      const top = (await git(['rev-parse', '--show-toplevel'])).trim()
+      const [actual, expected] = await Promise.all([
+        realpath(top),
+        realpath(repoRoot),
+      ])
+      if (actual !== expected) {
+        throw new Error(
+          `files repo refuses to run git: ${repoRoot} is not the repository root (git resolves ${top})`,
+        )
+      }
+    })()
+    return ownRepoChecked
+  }
+
   async function stagingExists(): Promise<boolean> {
     try {
       await git(['show-ref', '--verify', `refs/heads/${stagingBranch}`])
@@ -185,6 +209,7 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
     },
 
     async commitToStaging(changes, author, message) {
+      await assertOwnRepo()
       const exists = await stagingExists()
       const baseRef = exists ? stagingBranch : mainBranch
       const baseCommit = (await git(['rev-parse', baseRef])).trim()
@@ -261,6 +286,7 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
     },
 
     async mergeStaging() {
+      await assertOwnRepo()
       try {
         await git(['merge', '--no-edit', stagingBranch], {
           env: {

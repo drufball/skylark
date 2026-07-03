@@ -133,25 +133,32 @@ describe('notifyOnly', () => {
   it('publishes ephemeral data with its topic + audience to the in-process bus', async () => {
     const { notifyOnly, shipLogBus } = await import('./bus')
     const received: NotifyPayload[] = []
-    shipLogBus.subscribe((n) => {
+    const unsubscribe = shipLogBus.subscribe((n) => {
       received.push(n)
     })
 
-    notifyOnly({
-      type: 'chat.agent_progress',
-      source: 'chat',
-      topic: 'chat:c1',
-      audience: 'members',
-      payload: { line: 'thinking…' },
-    })
+    try {
+      notifyOnly({
+        type: 'chat.agent_progress',
+        source: 'chat',
+        topic: 'chat:c1',
+        audience: 'members',
+        payload: { line: 'thinking…' },
+      })
 
-    // The note carries the topic + audience facets so the SSE route can gate
-    // it exactly like a durable event, plus the full ephemeral data.
-    expect(received).toHaveLength(1)
-    expect(received[0]).toMatchObject({ topic: 'chat:c1', audience: 'members' })
-    expect(received[0].ephemeral).toMatchObject({
-      source: 'chat',
-      payload: { line: 'thinking…' },
-    })
+      // The note carries the topic + audience facets so the SSE route can gate
+      // it exactly like a durable event, plus the full ephemeral data.
+      expect(received).toHaveLength(1)
+      expect(received[0]).toMatchObject({
+        topic: 'chat:c1',
+        audience: 'members',
+      })
+      expect(received[0].ephemeral).toMatchObject({
+        source: 'chat',
+        payload: { line: 'thinking…' },
+      })
+    } finally {
+      unsubscribe()
+    }
   })
 })

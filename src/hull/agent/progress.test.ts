@@ -156,7 +156,5 @@ describe('issuesProgressLine', () => {
       args: { path: 'x' },
     } as unknown as AgentSessionEvent)
     expect(line).toMatch(/read/)
-    // No command detail, but still a valid line
-    expect(line).toBeTruthy()
   })
 })
