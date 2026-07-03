@@ -1,8 +1,7 @@
-import { type PgDatabase, type PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
-import { runAsActor } from './with-actor'
+import { type Database, runAsActor } from './with-actor'
 import { resolveAppUrl, resolveDatabaseUrl } from './url'
 
 // Two connections, two roles. The ship runs as the non-superuser `app_user`, so
@@ -30,11 +29,10 @@ export const db: PostgresJsDatabase = drizzle(appClient)
 const systemClient = postgres(resolveDatabaseUrl(), { max: 5 })
 export const systemDb: PostgresJsDatabase = drizzle(systemClient)
 
-// The database type service logic should accept. The live `db` above and the
-// in-memory PGlite client used in tests both satisfy it, and it exposes the full
-// query builder (`.select().from(...)`). Typing a service's db parameter as this
-// is what keeps the service driver-agnostic and testable against PGlite.
-export type Database = PgDatabase<PgQueryResultHKT>
+// The database type service logic should accept — defined next to runAsActor
+// (see with-actor.ts), re-exported here because `@hull/db/client` is where
+// every service already looks for it.
+export type { Database } from './with-actor'
 
 /**
  * Run a unit of work as a crew member, with Row-Level Security filtering every

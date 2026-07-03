@@ -106,7 +106,7 @@ describe('upsertPlaybook', () => {
   })
 
   it('refuses a human member — playbooks are agent rosters', async () => {
-    const human = defined(await getUserByHandle(db, 'drufball'))
+    const human = defined(await getUserByHandle(db, 'captain'))
     await expect(
       upsertPlaybook(db, {
         name: 'mixed',

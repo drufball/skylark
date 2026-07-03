@@ -13,7 +13,7 @@ import type { UserRow } from './schema'
  *
  * - **Web** (`currentActor()`): a dev cookie override (`skylark_actor`, naming a
  *   known handle, for testing as different humans) wins, else the configured
- *   operator (`SKYLARK_OPERATOR`, default "drufball").
+ *   operator (`SKYLARK_OPERATOR`, default "captain").
  * - **CLI** (`cliActor()`): an explicit `SKYLARK_ACTOR=<userId>` wins outright —
  *   that's how an agent process declares its own identity — otherwise it falls
  *   back to the operator handle, the same default the web uses.
@@ -22,9 +22,18 @@ import type { UserRow } from './schema'
 /** Cookie that overrides the web actor for testing as a different human. */
 export const ACTOR_COOKIE = 'skylark_actor'
 
-/** The ship's operator handle: env override, default "drufball". */
+/** The ship's operator handle: env override (SKYLARK_OPERATOR), neutral default. */
 export function operatorHandle(): string {
-  return process.env.SKYLARK_OPERATOR ?? 'drufball'
+  return process.env.SKYLARK_OPERATOR ?? 'captain'
+}
+
+/** The operator as a seed-crew row — what the impure edges hand to seedCrew. */
+export function operatorSeed(): { handle: string; displayName: string } {
+  const handle = operatorHandle()
+  return {
+    handle,
+    displayName: handle.charAt(0).toUpperCase() + handle.slice(1),
+  }
 }
 
 /* v8 ignore start -- impure edge: reads request cookies / process env, exercised via the doors */

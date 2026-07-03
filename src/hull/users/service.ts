@@ -131,13 +131,17 @@ export async function assignDefaultAgentProfile(
     .where(and(eq(users.type, 'agent'), isNull(users.profileId)))
 }
 
-/** The crew every fresh ship is seeded with: the operator plus the three agents. */
-export const SEED_CREW: readonly {
+/**
+ * The agents every fresh ship is seeded with. The human operator is NOT here —
+ * their handle is the ship's own configuration (SKYLARK_OPERATOR, see
+ * operatorHandle in actor.ts), so seedCrew takes it as input. Nothing personal
+ * is nailed into the hull.
+ */
+export const SEED_AGENTS: readonly {
   handle: string
   displayName: string
   type: UserType
 }[] = [
-  { handle: 'drufball', displayName: 'Dru', type: 'human' },
   { handle: 'tilde', displayName: 'Tilde', type: 'agent' },
   { handle: 'bix', displayName: 'Bix', type: 'agent' },
   { handle: 'dot', displayName: 'Dot', type: 'agent' },
@@ -153,12 +157,21 @@ export const SEED_CREW: readonly {
 ]
 
 /**
- * Seed the standard crew, idempotently: insert any missing handle, leave
- * existing rows untouched (so a hand-edited displayName or id survives). Safe to
- * run on a fresh database or an established one, any number of times.
+ * Seed the standard crew, idempotently: the operator (a human — pass
+ * `operatorSeed()` from actor.ts at the impure edges) plus the standard
+ * agents. Inserts any missing handle, leaves existing rows untouched (so a
+ * hand-edited displayName or id survives). Safe to run on a fresh database or
+ * an established one, any number of times.
  */
-export async function seedCrew(db: Database): Promise<void> {
-  for (const member of SEED_CREW) {
+export async function seedCrew(
+  db: Database,
+  operator: { handle: string; displayName: string } = {
+    handle: 'captain',
+    displayName: 'Captain',
+  },
+): Promise<void> {
+  const members = [{ ...operator, type: 'human' as UserType }, ...SEED_AGENTS]
+  for (const member of members) {
     const existing = await getUserByHandle(db, member.handle)
     if (existing) continue
     await createUser(db, { id: uuidv7(), ...member })

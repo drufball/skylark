@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, ne } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import { firstLine, truncate } from '@hull/lib/text'
@@ -86,6 +86,28 @@ export async function listSessions(
     .from(agentSessions)
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(agentSessions.lastMessageAt))
+}
+
+/**
+ * Which of these sessions have a turn in flight right now? The question other
+ * services ask (issues' handoff gate: "is the baton taken?") without reading
+ * this service's table — sessions stay the agent service's own business.
+ */
+export async function runningSessionIds(
+  db: Database,
+  sessionIds: string[],
+): Promise<string[]> {
+  if (sessionIds.length === 0) return []
+  const rows = await db
+    .select({ id: agentSessions.id })
+    .from(agentSessions)
+    .where(
+      and(
+        inArray(agentSessions.id, sessionIds),
+        eq(agentSessions.status, 'running'),
+      ),
+    )
+  return rows.map((r) => r.id)
 }
 
 export async function setStatus(

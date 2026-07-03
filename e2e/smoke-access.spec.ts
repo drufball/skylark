@@ -12,8 +12,8 @@ import { createUser, getUserByHandle } from '../src/hull/users/service'
 // Crew-access smoke: the connection-flip's end-to-end proof. The app now
 // connects as the non-superuser `app_user`, so RLS gates the LIVE stream — not
 // just the unit suite (asActor) or the in-code door checks. As the SUPERUSER
-// (bypassing RLS) we plant a private chat that does NOT include drufball (the
-// default web actor); then, over the running app, drufball must see none of its
+// (bypassing RLS) we plant a private chat that does NOT include the operator
+// (the default web actor); then, over the running app, the operator must see none of its
 // events while a member sees them. If the flip wired a path wrong this is what
 // catches it: a leak (fail-open) here, or an empty member view (fail-closed).
 
@@ -64,7 +64,7 @@ test.beforeAll(async () => {
     const tilde = await getUserByHandle(sysDb, 'tilde')
     if (!tilde) throw new Error('tilde not seeded — global-setup should have')
     const chatId = uuidv7()
-    // sam + an agent, deliberately WITHOUT drufball.
+    // sam + an agent, deliberately WITHOUT the operator.
     await createChat(sysDb, { id: chatId, memberIds: [sam, tilde.id] })
     await addMessage(sysDb, {
       id: uuidv7(),
@@ -81,7 +81,7 @@ test.beforeAll(async () => {
 test('the live stream hides a private chat from a non-member', async ({
   browser,
 }) => {
-  // Default web actor is drufball, who is NOT in the chat.
+  // Default web actor is the operator, who is NOT in the chat.
   const page = await browser.newPage()
   await page.goto('/')
   const frames = await collectFrames(page, privateChatTopic, 2500)

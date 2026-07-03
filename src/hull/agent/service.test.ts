@@ -10,6 +10,7 @@ import {
   getMessages,
   getSession,
   listSessions,
+  runningSessionIds,
   setStatus,
   titleFromMessage,
 } from './service'
@@ -150,6 +151,22 @@ describe('agent service persistence', () => {
           (s) => s.id,
         ),
       ).toEqual(['new', 'mid'])
+    })
+  })
+
+  describe('runningSessionIds', () => {
+    it('answers which of the given sessions have a turn in flight', async () => {
+      await createSession(db, { id: 'r1', model: 'm' })
+      await createSession(db, { id: 'r2', model: 'm' })
+      await createSession(db, { id: 'idle', model: 'm' })
+      await setStatus(db, 'r1', 'running')
+      await setStatus(db, 'r2', 'running')
+
+      // Only the asked-about ids come back — r2 runs but wasn't asked about.
+      expect(await runningSessionIds(db, ['r1', 'idle', 'ghost'])).toEqual([
+        'r1',
+      ])
+      expect(await runningSessionIds(db, [])).toEqual([])
     })
   })
 })

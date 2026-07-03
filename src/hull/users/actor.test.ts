@@ -9,9 +9,9 @@ describe('operatorHandle', () => {
     else process.env.SKYLARK_OPERATOR = original
   })
 
-  it('defaults to drufball when unset', () => {
+  it('defaults to the neutral captain when unset', () => {
     delete process.env.SKYLARK_OPERATOR
-    expect(operatorHandle()).toBe('drufball')
+    expect(operatorHandle()).toBe('captain')
   })
 
   it('honors the SKYLARK_OPERATOR override', () => {

@@ -1,7 +1,17 @@
 import { sql } from 'drizzle-orm'
+import { type PgDatabase, type PgQueryResultHKT } from 'drizzle-orm/pg-core'
 
-import type { Database } from './client'
 import { APP_ROLE } from './url'
+
+/**
+ * The database type service logic should accept. The live `db` (client.ts) and
+ * the in-memory PGlite client used in tests both satisfy it, and it exposes
+ * the full query builder (`.select().from(...)`). Typing a service's db
+ * parameter as this is what keeps the service driver-agnostic and testable
+ * against PGlite. Defined here (not client.ts, which re-exports it) so the
+ * db foundation's import graph stays acyclic: client → with-actor, one way.
+ */
+export type Database = PgDatabase<PgQueryResultHKT>
 
 // Run a unit of work AS a specific crew member, so Postgres Row-Level Security
 // filters every query to what that actor may see (see migrations/0007). This is
