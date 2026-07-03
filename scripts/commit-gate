@@ -23,6 +23,20 @@ hook_cwd="$(printf '%s' "$payload" | node -e 'let s="";process.stdin.on("data",d
 # Run the check in the tree being committed (see scripts/gate-workdir).
 cd "$("$script_dir/gate-workdir" "$hook_cwd")"
 
+# Defensive: if this tree has no node_modules, run setup first. A worktree
+# created by the orchestrator but never properly initialized (#m5qt) would
+# otherwise crash on `npm run check` with ERR_MODULE_NOT_FOUND.
+if [ ! -d node_modules ]; then
+  echo "→ commit-gate: node_modules missing, running setup first..." >&2
+  if ! "$script_dir/setup" >&2; then
+    {
+      echo ""
+      echo "⚠ setup failed — this worktree can't run npm commands. Fix it before committing. (commit-gate)"
+    } >&2
+    exit 2
+  fi
+fi
+
 # Gate only git add / git commit — allowing global options before the verb
 # (`git -C path add`, `git -c k=v commit`, quoted values with spaces like
 # `git -c user.name="a b" commit`) and a leading separator (`… && git commit`).
