@@ -156,6 +156,7 @@ export async function generateSlug(issue: IssueRow): Promise<string> {
 }
 
 let started: Promise<Orchestrator> | undefined
+let unsubscribe: (() => void) | undefined
 
 /**
  * Boot the orchestrator into the server process (idempotent): wire it to the
@@ -172,6 +173,9 @@ let started: Promise<Orchestrator> | undefined
  *
  * The builder agent identity is the `builder` crew user if present, else the
  * operator — so SKYLARK_ACTOR is always a real id the issue CLI can attribute.
+ *
+ * HMR-safe: cleans up the old subscription on Vite reload so one orchestrator
+ * doesn't stack to N on N reloads (the #xwh2 bug).
  */
 export function ensureOrchestrator(): Promise<Orchestrator> {
   started ??= boot().catch((err: unknown) => {
@@ -182,6 +186,11 @@ export function ensureOrchestrator(): Promise<Orchestrator> {
 }
 
 async function boot(): Promise<Orchestrator> {
+  // On HMR reload, module state resets but the InProcessBus subscription
+  // persists (it's in a different module). Clean up the old one first.
+  unsubscribe?.()
+  unsubscribe = undefined
+
   // ENSURE the config the orchestrator runs on — crew, profiles, playbooks —
   // every boot, idempotently. hoist seeds the crew too, but the server must
   // not depend on how it was launched: entrypoint resolution reads
@@ -215,7 +224,17 @@ async function boot(): Promise<Orchestrator> {
     generateSlug,
   })
 
-  subscribeToShipLog(orch, 'issues orchestrator')
+  unsubscribe = subscribeToShipLog(orch, 'issues orchestrator')
   return orch
+}
+
+// HMR cleanup: unsubscribe on reload so the old orchestrator doesn't stack
+// with the new one. Vite calls dispose() before reloading the module.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    unsubscribe?.()
+    unsubscribe = undefined
+    started = undefined
+  })
 }
 /* v8 ignore stop */
