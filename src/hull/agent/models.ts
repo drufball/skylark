@@ -1,11 +1,7 @@
 import { getModels, getProviders } from '@earendil-works/pi-ai'
 import type { Api, KnownProvider, Model } from '@earendil-works/pi-ai'
 
-import { DEFAULT_OLLAMA_BASE_URL, ollamaBaseUrl } from '@hull/lib/ollama'
-
-// Re-exported: the Ollama URL helpers live in hull/lib (shared with the
-// local-model service) but are part of this module's public surface.
-export { DEFAULT_OLLAMA_BASE_URL, ollamaBaseUrl }
+import { ollamaBaseUrl } from '@hull/lib/ollama'
 
 // Provider-aware model resolution. A stored model is a string the runtime hands
 // to pi.dev; this module turns that string into a concrete pi `Model`, picking

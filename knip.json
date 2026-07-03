@@ -11,13 +11,10 @@
   ],
   "project": ["src/**/*.{ts,tsx}", "e2e/**/*.ts", "scripts/*.mjs"],
   "ignoreExportsUsedInFile": true,
-  "ignore": ["src/rigging/components/ui/**"],
   "ignoreDependencies": [
     "tailwindcss",
     "tw-animate-css",
     "@tailwindcss/typography",
-    "@tanstack/react-router-ssr-query",
-    "@tanstack/router-plugin",
     "@stryker-mutator/api"
   ]
 }

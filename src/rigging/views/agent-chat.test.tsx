@@ -17,27 +17,28 @@ function renderView(props: Partial<AgentChatViewProps> = {}) {
   const onSend = vi.fn()
   const onCancel = vi.fn()
   const onSelect = vi.fn()
-  const onNew = vi.fn()
   const result = render(
     <AgentChatView
       sessions={[]}
       items={[]}
       running={false}
       busy={false}
+      emptyTitle="Session monitor"
+      emptyHint="Pick a session to watch."
       onSend={onSend}
       onCancel={onCancel}
       onSelect={onSelect}
-      onNew={onNew}
       {...props}
     />,
   )
-  return { ...result, onSend, onCancel, onSelect, onNew }
+  return { ...result, onSend, onCancel, onSelect }
 }
 
 describe('AgentChatView', () => {
-  it('shows the empty state with no active session', () => {
+  it('shows the empty-state copy with no active session', () => {
     renderView()
-    expect(screen.getByText(/your first mate is aboard/i)).toBeDefined()
+    expect(screen.getByText('Session monitor')).toBeDefined()
+    expect(screen.getByText('Pick a session to watch.')).toBeDefined()
   })
 
   it('renders each kind of transcript item', () => {
@@ -108,12 +109,6 @@ describe('AgentChatView', () => {
     expect(container.querySelector('.text-destructive')).not.toBeNull()
   })
 
-  it('starts a new chat from the New button', () => {
-    const { onNew } = renderView()
-    fireEvent.click(screen.getByRole('button', { name: /new chat/i }))
-    expect(onNew).toHaveBeenCalled()
-  })
-
   it('sends a trimmed message on Enter and clears the box', () => {
     const { onSend } = renderView({ activeId: 's1' })
     const box = screen.getByPlaceholderText(/message your first mate/i)
@@ -154,26 +149,5 @@ describe('AgentChatView', () => {
   it('surfaces an error message', () => {
     renderView({ activeId: 's1', error: 'overloaded' })
     expect(screen.getByText('overloaded')).toBeDefined()
-  })
-
-  // The monitor variant (the Agents surface) reuses the view without onNew and
-  // with its own empty-state copy.
-  it('hides the New button and uses custom empty copy when onNew is omitted', () => {
-    render(
-      <AgentChatView
-        sessions={[]}
-        items={[]}
-        running={false}
-        busy={false}
-        emptyTitle="Session monitor"
-        emptyHint="Pick a session to watch."
-        onSend={vi.fn()}
-        onCancel={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    )
-    expect(screen.queryByRole('button', { name: /new chat/i })).toBeNull()
-    expect(screen.getByText('Session monitor')).toBeDefined()
-    expect(screen.getByText('Pick a session to watch.')).toBeDefined()
   })
 })

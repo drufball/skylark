@@ -27,15 +27,9 @@ import {
 // inline), and both the message and the agent's live progress reach the browser
 // over the ship's log (SSE), scoped to the chat.
 
-/**
- * Ensure the chat orchestrator is booted + subscribed to the ship's log in this
- * process (idempotent). Synchronous — the subscription is registered before this
- * returns and reconcile runs in the background — so opening the app recovers any
- * agent reply a restart interrupted without blocking the door.
- */
-function bootChatOrchestrator(): void {
-  ensureChatOrchestrator()
-}
+// ensureChatOrchestrator boots + subscribes the chat orchestrator in this
+// process (idempotent, synchronous) — the doors below call it so opening the
+// app recovers any agent reply a restart interrupted, without blocking.
 
 /** Everyone aboard — the picker for who's in a chat (the crew list is public). */
 export const listChatCrew = createServerFn({ method: 'GET' }).handler(() =>
@@ -44,7 +38,7 @@ export const listChatCrew = createServerFn({ method: 'GET' }).handler(() =>
 
 /** The current actor's chats, newest first — the sidebar. */
 export const listChats = createServerFn({ method: 'GET' }).handler(() => {
-  bootChatOrchestrator()
+  ensureChatOrchestrator()
   return withCurrentActor(async (tx, me) => {
     const chats = await listChatSummaries(tx, me.id)
     return { me: { id: me.id, handle: me.handle }, chats }
@@ -103,7 +97,7 @@ export const postChatMessage = createServerFn({ method: 'POST' })
   .handler(({ data }) => {
     // Subscribe the orchestrator BEFORE the post, so the message's ship-log
     // event is heard and drives the reply — off the bus, not inline here.
-    bootChatOrchestrator()
+    ensureChatOrchestrator()
     return withCurrentActor(async (tx, me) => {
       // A non-member can't see the chat → clean refusal (the chat_messages
       // WITH CHECK policy would reject the insert regardless).

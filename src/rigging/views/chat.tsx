@@ -162,8 +162,7 @@ function ActiveChat({
     <>
       <header className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <span className="font-medium">
-          {title ??
-            chatName({ title, memberHandles: members.map((m) => m.handle) })}
+          {chatName({ title, memberHandles: members.map((m) => m.handle) })}
         </span>
         <div className="flex flex-wrap items-center gap-1">
           {members.map((m) => (

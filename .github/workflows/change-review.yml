@@ -144,10 +144,6 @@ jobs:
         if: steps.review-policy.outputs.should-run == 'true'
         timeout-minutes: 20
         working-directory: _pr
-        env:
-          REVIEW_OUTPUT: ${{ env.REVIEW_OUTPUT }}
-          REVIEW_SKILLS: ${{ env.REVIEW_SKILLS }}
-          REVIEW_BASE: ${{ env.REVIEW_BASE }}
         run: |
           set -euo pipefail
           read -r -a REVIEW_SKILL_REFS <<< "$REVIEW_SKILLS"
@@ -171,8 +167,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
-          REVIEW_ACTION: ${{ env.REVIEW_ACTION }}
-          REVIEW_OUTPUT: ${{ env.REVIEW_OUTPUT }}
           OUT: review-publish.json
         run: node ../_workflow/.github/change-review/publish-review.mjs
 
