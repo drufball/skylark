@@ -8,6 +8,8 @@ import {
   blockReason,
   checkPassed,
   isCommitCommand,
+  needsSetup,
+  setupLogMessage,
   shouldWarnUnpushed,
 } from './gates'
 
@@ -44,9 +46,31 @@ const buildGates = (pi: ExtensionAPI): void => {
     }
   })
 
-  // session-start: bootstrap a fresh worktree (idempotent).
+  // session-start: bootstrap a fresh worktree (idempotent). Check the result
+  // so setup failures are visible, not swallowed — a worktree with no
+  // node_modules makes every subsequent npm/gate command crash (#m5qt).
   pi.on('session_start', async (_event, ctx: ExtensionContext) => {
-    await pi.exec('./scripts/setup', [], { cwd: ctx.cwd })
+    // Only run setup if it's actually needed (node_modules missing), so we
+    // don't slow down every session resume with redundant npm installs.
+    if (!needsSetup(ctx.cwd)) {
+      console.log('session_start: node_modules present, skipping setup')
+      return
+    }
+
+    console.log('session_start: running ./scripts/setup...')
+    const result = await pi.exec('./scripts/setup', [], { cwd: ctx.cwd })
+    const message = setupLogMessage(result.code, result.stdout + result.stderr)
+    console.log(message)
+
+    // If setup failed, notify the agent through the UI so it knows something
+    // went wrong and can report it rather than continuing blindly (#m5qt).
+    if (result.code !== 0) {
+      ctx.ui.notify(
+        `Worktree setup failed — ./scripts/setup exited ${String(result.code)}. ` +
+          `Check the logs and report this in the issue thread rather than proceeding.`,
+        'error',
+      )
+    }
   })
 
   // landing-gate: at shutdown, warn about committed-but-unpushed work.

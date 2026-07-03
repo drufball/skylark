@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { truncate } from '@hull/lib/text'
 
 /**
@@ -62,4 +65,36 @@ export function shouldWarnUnpushed(
   stdout: string,
 ): boolean {
   return code !== 0 || hasUnpushedCommits(stdout)
+}
+
+/**
+ * Does this directory need `./scripts/setup` run? True when node_modules
+ * doesn't exist, indicating a fresh worktree that hasn't had dependencies
+ * installed yet. Used by both the session_start hook (to ensure setup runs)
+ * and the commit-gate (to be defensive before running `npm run check`).
+ */
+export function needsSetup(cwd: string): boolean {
+  try {
+    return !existsSync(join(cwd, 'node_modules'))
+  } catch {
+    // If we can't even check (permissions, nonexistent dir, etc), assume
+    // setup is needed — better to run setup unnecessarily than skip it.
+    return true
+  }
+}
+
+/**
+ * Format a log message about setup's result: success or failure with details.
+ * Used by the session_start hook to report what happened when it ran setup.
+ */
+export function setupLogMessage(
+  exitCode: number | null,
+  output: string,
+): string {
+  if (exitCode === 0) {
+    return 'session_start: ./scripts/setup succeeded'
+  }
+  const code = exitCode === null ? 'killed' : `exit ${String(exitCode)}`
+  const tail = truncate(output.trim(), 500)
+  return `session_start: ./scripts/setup failed (${code})\n\n${tail}`
 }
