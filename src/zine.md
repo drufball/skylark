@@ -1,6 +1,6 @@
 # The Ship
 
-_src zine — issue #1_
+_src zine — issue #6_
 
 ## tl;dr
 
@@ -22,9 +22,9 @@ with Tailwind and shadcn.
 - **Rigging** — the stdlib: the design system, plus default views and
   components.
 - **Home** — your sovereign space. Empty in a fresh clone.
-- **Serving layer** — the `src/` root (`router.tsx`, `routes/`, `schema.ts`).
-  The composition root: it assembles the running app by pulling views and
-  services in from the decks.
+- **Serving layer** — the `src/` root (`router.tsx`, `routes/`, `schema.ts`,
+  `migrations/`). The composition root: it assembles the running app by pulling
+  views and services in from the decks.
 - **Service** — the native unit of work: data + logic + doors. Created via the
   `create-service` skill.
 - **Server function** — a function (`createServerFn`) that always runs on the
@@ -36,8 +36,8 @@ with Tailwind and shadcn.
   auto-discovers every `src/**/schema.ts`, so there's nothing to wire by hand.
 - **Crew** — the people and agents aboard; the identity the whole system is
   scoped to. The data model and actor resolution live in the hull's users
-  service; the compile-time crew-filter enforcement is still deferred (see
-  [`hull/zine.md`](hull/zine.md)).
+  service; access is enforced with Postgres Row-Level Security in the hull's db
+  foundation (see [`hull/zine.md`](hull/zine.md)).
 - **The ship's log** — the durable event bus services emit to and subscribe on,
   in the hull's events service (see [`hull/zine.md`](hull/zine.md)).
 - **Files** — the crew's shared documents: real files in the repo
@@ -90,35 +90,17 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
-- **#6** — The planning loop closes. Chat agents run on a strong hosted model
-  when a key is configured (builders stay local); named agents get persistent
-  memory (`agents/<handle>/` in the shared files, folded into every session
-  boot) and a Crew tab; the **files** service lands (staged git-backed docs +
-  the Files surface, [`hull/files/zine.md`](hull/files/zine.md)); and
-  **notifications** land (inbox + watches + the Inbox surface,
-  [`hull/notifications/zine.md`](hull/notifications/zine.md)) — through which an
-  agent that files an issue from a chat (`--chat` provenance) is **woken in that
-  chat** as the work moves, to review and file the next piece.
-- **#5** — Chat becomes the ship's front door (`/`): conversations between crew
-  (humans and agents), in the hull's chat service
-  ([`hull/chat/zine.md`](hull/chat/zine.md)), with membership as visibility and
-  agent replies driven through backing sessions. The front door opens your most
-  recent chat. Every door now resolves the acting user with `currentActor()`, so
-  the system knows it's you without being told.
-- **#4** — The **Agents** surface fills the dock's last slot: create/edit agent
-  profiles, and monitor sessions (the old front-door chat ux, which was only
-  ever a session monitor, moved here) — unstick a wedged one with a direct
-  message.
-- **#3** — The message board and building agents land in the hull's issues
-  service ([`hull/issues/zine.md`](hull/issues/zine.md)): issues with a
-  lifecycle, and an event-driven orchestrator that reacts to the ship's log to
-  drive a builder agent through a git worktree to a merged PR. The rigging gains
-  a board, an issue thread, and the **dock** — a persistent app-shell nav
-  (Chat/Issues, with an Agents slot for later).
-- **#2** — Two named-but-unbuilt components become real, in the hull: the ship's
-  log (a durable event bus, so "everything is an event" works across processes
-  and reconnects) and the crew (users + actor resolution; the crew-filter
-  enforcement stays deferred). See [`hull/zine.md`](hull/zine.md).
-- **#1** — The keel: TanStack Start app, `src/` serving layer over hull/rigging/
-  home, Drizzle + Postgres (PGlite in tests), Tailwind + shadcn. A hello-world
-  slice (route → server function → Drizzle → Postgres) proves the wiring.
+- **#6** — The planning loop closes: files + notifications services, agent
+  memory, agent wake-ups back into the origin chat, hosted chat model.
+- **#5** — Chat becomes the ship's front door
+  ([`hull/chat/zine.md`](hull/chat/zine.md)); every door resolves the actor with
+  `currentActor()`.
+- **#4** — The Agents surface: create/edit profiles + the session monitor (moved
+  from the old front-door chat).
+- **#3** — Issues + building agents
+  ([`hull/issues/zine.md`](hull/issues/zine.md)), the board/thread views, and
+  the dock.
+- **#2** — The ship's log (durable event bus) and the crew (users + actor
+  resolution) land in the hull.
+- **#1** — The keel: TanStack Start, `src/` over hull/rigging/home, Drizzle +
+  Postgres (PGlite in tests), Tailwind + shadcn.

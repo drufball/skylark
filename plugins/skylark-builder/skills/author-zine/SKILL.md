@@ -26,7 +26,9 @@ Every zine uses these, in order:
 - **Components** — the key terms, parts, and concepts. Define the nouns.
 - **Structure** — how the major pieces interact: import direction, data flow.
 - **Decisions** — opinionated choices and non-goals (see the rule below).
-- **Changelog** — issue number + a one-line synopsis of what changed.
+- **Changelog** — issue number + a one-line synopsis of what changed. The zine's
+  header (`_<name> zine — issue #N_`) carries the latest changelog entry's issue
+  number; bump it when you add an entry.
 
 ## Principles
 

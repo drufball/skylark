@@ -17,8 +17,10 @@ import { users } from '@hull/users/schema'
 // pi.dev session that actually talks to Claude is ephemeral and rebuilt from
 // these rows — so a crash loses at most the in-flight turn, never history.
 //
-// No crew column yet: the crew primitive (see hull/zine.md) isn't built, so the
-// ship is single-tenant for now. Crew-scoping attaches here when it lands.
+// Crew-scoping: a session carries the crew member it acts as (agentUserId), and
+// its visibility is enforced with Row-Level Security by where it came from —
+// an issue's session is public, a chat's follows membership, a bare session is
+// crew-visible (migration 0008; see hull/db/zine.md).
 
 /**
  * A reusable agent configuration. A profile is the full recipe the runtime

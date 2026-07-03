@@ -1,16 +1,17 @@
 # The Ship's Log
 
-_events zine — issue #1_
+_events zine — issue #39_
 
 ## tl;dr
 
 The ship's log is a **durable** event bus, with a narrow ephemeral path for
 transient UI. Every service emits to it; anything can subscribe. Most events are
 rows in Postgres — a durable source of truth that replays on reconnect and
-crosses process boundaries. A small class (chat progress, status ticks) use the
-ephemeral `notifyOnly` path: they reach live subscribers in this process but
-aren't persisted, never replay, and never cross to other processes. The default
-is durable; ephemeral is a deliberate opt-in for UI that would clutter the log.
+crosses process boundaries. A narrow class (chat agent progress) uses the
+ephemeral `notifyOnly` path: it reaches live subscribers in this process but
+isn't persisted, never replays, and never crosses to other processes. The
+default is durable; ephemeral is a deliberate opt-in for UI that would clutter
+the log.
 
 Two halves make that work. **Postgres NOTIFY** is the doorbell — a tiny "event
 `X` happened in scope `Y`" announcement that crosses process boundaries
@@ -40,13 +41,23 @@ automatic.
   the full event lives in the row, read back by id.
 - **Notify-only** (`notifyOnly`) — the ephemeral path: publish to the in-process
   bus (so live SSE subscribers receive it) without persisting a row. For
-  transient UI — chat agent progress, status-line ticks — that shouldn't clutter
-  the log or replay on reconnect. In-process only: no `pg_notify`, so other
-  processes never see it.
+  transient UI — chat agent progress — that shouldn't clutter the log or replay
+  on reconnect. In-process only: no `pg_notify`, so other processes never see
+  it. An ephemeral note carries `topic` + `audience` exactly like a durable
+  emit, so the SSE route gates it by the same topic-match + audience +
+  entitlement rules — it can't slip past an access check just because it isn't
+  persisted.
 - **The bus** (`bus.ts`) — the impure shell. One process-wide `InProcessBus` (a
   subscriber set) plus the single dedicated `LISTEN ship_log` connection that
   feeds it. A throwing subscriber is isolated so one broken stream can't starve
   the rest.
+- **Reactor** (`ShipLogReactor` + `subscribeToShipLog`, in `bus.ts`) — the
+  contract for a service that reacts to the log: a `handleBusNote` per note and
+  a `reconcile` for what a restart missed. `subscribeToShipLog` registers the
+  subscription **synchronously** (no note is missed) and kicks `reconcile` in
+  the **background** (recovery never gates the door that booted it). The chat
+  orchestrator, the issues orchestrator, and the notifications reactor all wire
+  in through it.
 - **Service logic** (`service.ts`) — pure, database-agnostic: append an event,
   read one by id, list events matching topic patterns and audience since a
   cursor. Touches only `events`.
@@ -77,10 +88,7 @@ the browser's `EventSource` fires, the `useShipLog` callback runs.
 **One event, one row.** An issue status change emits **once** with
 `topic='issue:<id>'` and `audience='public'`. The board subscribes to `issue:*`
 (all issues); the thread subscribes to `issue:<id>` (one issue). Both patterns
-match the same row — no dual-emit, no deduplication. Separating topic (entity
-stream) from audience (access control) is standard pub/sub architecture (NATS
-subjects, AMQP topic exchanges, Redis PSUBSCRIBE): publish once, subscribe by
-pattern, authorize separately.
+match the same row: publish once, subscribe by pattern, authorize separately.
 
 **Reconnect loses nothing.** The id is the cursor. On reconnect the browser
 sends `Last-Event-ID` (the last id it saw); `runShipLogStream` replays `events`
@@ -127,9 +135,7 @@ Claude wiring.
   control.** An event's topic (e.g., `issue:123`) says which entity stream it
   belongs to; its audience (`public` or `members`) says who may see it.
   Subscribers pattern-match on topics (`issue:*` for all issues) and are
-  filtered by audience access. This retired the dual-emit pattern where issue
-  events were emitted twice (once to `issue:<id>`, once to `public`) so both the
-  thread and board SSE could see them — now one event, one row.
+  filtered by audience access. One logical event → one durable row.
 - **Audience is the coarse facet; per-topic entitlement is the real gate.** The
   `audience` column + `canViewAudience()` answer "what _kind_ of events may a
   member see" (public vs. members-only), and the SSE route treats every
@@ -139,15 +145,17 @@ Claude wiring.
   ([`../access/visibility.ts`](../access/visibility.ts)): topic patterns say
   what the client _asked_ for, entitlement says what they're _allowed_. It
   **probes the parent under the actor's RLS context** — `chat:<id>` reads
-  `chats` (0007), `session:<id>` reads `agent_sessions` (0008), `issue:*` is
-  public — so the policies are the single source of truth, not a copy. This is
-  the per-user entitlement the crew-filter promised, applied on the read path
-  the durable tables can't cover (live + ephemeral events never hit an RLS-gated
-  query). The gate is **memoised per topic for the life of the connection** — a
-  busy chat doesn't re-probe per event — which leaves one known window: a member
-  _removed_ from a chat keeps receiving its events until they reconnect.
-  Accepted for now; the fix when it matters is a short TTL on the memo or
-  invalidating the entry on a `chat.membership_changed` event over the bus.
+  `chats` (0007), `session:<id>` reads `agent_sessions` (0008),
+  `notify:<userId>` admits exactly that user (the topic IS the entitlement),
+  `issue:*` is public — so the policies are the single source of truth, not a
+  copy. This is the per-user entitlement the crew-filter promised, applied on
+  the read path the durable tables can't cover (live + ephemeral events never
+  hit an RLS-gated query). The gate is **memoised per topic for the life of the
+  connection** — a busy chat doesn't re-probe per event — which leaves one known
+  window: a member _removed_ from a chat keeps receiving its events until they
+  reconnect. Accepted for now; the fix when it matters is a short TTL on the
+  memo or invalidating the entry on a `chat.membership_changed` event over the
+  bus.
 - **Agent events are unattributed for now (`actorId` is null).** The runtime
   emits without an actor because a turn is fired server-side without yet
   threading who initiated it. The column and FK exist so attribution can land
@@ -159,37 +167,16 @@ Claude wiring.
 
 ## Changelog
 
-- **#39** — Extract the SSE stream coordination into `replay-stream.ts`
-  (`runShipLogStream` + the pure `noteIsVisible` gate). The order-sensitive
-  subscribe-before-replay → buffer → flush-deduped → go-live handshake was
-  welded to the route's `ReadableStream`, so it could only be exercised against
-  a live socket + Postgres; behind injected boundaries it's now unit-tested with
-  a fake bus + fake DB. Behaviour-preserving; the route keeps only the impure
-  shell. Live durable delivery now swallows a failed row-read (recovered by the
-  next reconnect) instead of risking an unhandled rejection.
-- **#kg43** — Retire the legacy `scope` field entirely, finishing #kg42. The
-  `scope` column, its index, the `scopes` replay API, and `isScopeVisible` are
-  gone; migration 0006 drops the column. `notifyOnly` now carries `topic` +
-  `audience` like a durable emit, so the SSE route gates ephemeral events (chat
-  progress) by the same topic-match + audience rules — an ephemeral note can no
-  longer slip past an access check just because it isn't persisted. A bare SSE
-  connection (no `?topics=`) now subscribes to nothing rather than a `public`
-  catch-all.
-- **#2** — Ephemeral notify-only path (`notifyOnly`) for transient UI: publishes
-  to the in-process bus (live SSE delivery) without persisting a row or firing
-  `pg_notify`. In-process only, never replayed. Chat orchestrator uses it for
-  `agent_progress` events (the "working…" placeholder).
-- **#kg42** — Separate topic from audience; retire dual-emit. Events now have
-  `topic` (entity stream: `issue:123`, `chat:456`) and `audience` (access:
-  `public` or `members`) as distinct fields. Subscribers express interest via
-  topic **patterns** (`issue:*`, `chat:123`) matched by `matchesTopic()`; access
-  is enforced separately via `canViewAudience()` (members ⊇ public). One logical
-  event → one durable row. This retired the dual-emit pattern (issues emitted to
-  both `issue:<id>` and `public`) and removed the scope-dedup workaround in the
-  orchestrator. Migration 0005 adds the columns; the SSE route, board, and
-  thread all use the new pattern-matching API.
-- **#1** — The ship's log: a durable `events` table, `emitEvent` (row +
-  pg_notify), a single LISTEN connection fanning out to SSE clients, the
-  `/api/stream` endpoint with `Last-Event-ID` replay, and the `useShipLog` hook
-  that retires polling. The agent service is its first emitter (message and
-  status events scoped per session).
+- **#39** — SSE stream coordination extracted into `replay-stream.ts`
+  (`runShipLogStream` + `noteIsVisible`), unit-testable behind injected
+  boundaries.
+- **#kg43** — The legacy `scope` field retired (migration 0006); ephemeral notes
+  gain `topic` + `audience` so the SSE route gates them like durable events; a
+  bare SSE connection subscribes to nothing.
+- **#2** — The ephemeral `notifyOnly` path lands, first used for chat
+  `agent_progress`.
+- **#kg42** — Topic and audience become distinct fields (migration 0005),
+  retiring the dual-emit pattern (issues emitted to both `issue:<id>` and
+  `public`).
+- **#1** — The ship's log: the durable `events` table, `emitEvent`, the LISTEN
+  fan-out, `/api/stream` with `Last-Event-ID` replay, and `useShipLog`.

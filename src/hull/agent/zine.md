@@ -1,24 +1,22 @@
 # The Agent
 
-_agent zine — issue #4_
+_agent zine — issue #49_
 
 ## tl;dr
 
 The agent is the ship's first resident — a conversation with Claude, driven by
 the [pi.dev](https://pi.dev) coding agent SDK. How it boots is decided by a
-**profile**: a read-only chat pilot, a full builder, or anything in between.
+**profile**: a read-only chat pilot, a full builder, or anything in between. The
+service lives in the hull, driven from the CLI (`npm run agent`), the Agents
+monitor view, and the chat + issues orchestrators.
 
 The one idea that shapes everything here: **Postgres is the source of truth, not
 the running process.** Every message — what you said, what Claude thought, the
 tools it called, what they returned — is a durable row the moment its turn ends.
 The live pi.dev session that talks to Claude is disposable; it's rebuilt from
-those rows whenever it's needed. Crash the process, eject, pull the power — you
-lose at most the turn that was mid-flight. History is whatever the database says
-it is — the **full** history, even across compaction (see Decisions).
-
-The service lives in the hull and is driven first from the CLI
-(`npm run agent`); the web chat is a view in the rigging on top of the same
-logic.
+those rows whenever it's needed. Crash the process, pull the power — you lose at
+most the turn that was mid-flight. History is whatever the database says it is —
+the **full** history, even across compaction (see Decisions).
 
 ## Components
 
@@ -31,10 +29,12 @@ logic.
   `systemPrompt`, whether to read CLAUDE.md (`readContextFiles`), whether to
   load the repo's skills (`useRepoSkills`), which `extensionIds` to load, and an
   optional `model` override. The runtime resolves a profile into pi.dev session
-  options. Two are seeded: **chat** (read+bash, no context/skills/extensions —
-  the front door, which reads and operates but never writes; to build, it files
-  an issue) and **builder** (full coding tools, CLAUDE.md + skills, the
-  build-gates extension — used by building agents).
+  options. Four are seeded: **chat** (read+bash, no context/skills/extensions —
+  reads and operates but never writes; to build, it files an issue), **builder**
+  (full coding tools, CLAUDE.md + skills, the build-gates extension — implements
+  to an open PR), **general** (full tools, no build contract — the `general`
+  playbook's deckhand), and **babysitter** (read+bash — waits on CI via the
+  `background` tool, merges or hands a fix brief back).
 - **Extension** — a pi.dev TS extension, registered as a row in `extensions`
   (name, description, repo-relative `path`). Profiles reference extensions by
   id. Extensions intercept the agent's lifecycle — pi.dev's answer to the
@@ -68,8 +68,26 @@ logic.
   text length. Consumer formatters (`chatProgressLine`, `issuesProgressLine`)
   compose these for their display policy. The CLI also uses the primitives for
   terminal rendering.
+- **Background jobs** (`background.ts` + the `background` tool) — an agent hands
+  a long-running command (waiting on CI, a slow build) to the manager, ends its
+  turn, and is automatically resumed with the tail of the output when the
+  command exits — instead of blocking or polling in the foreground.
+- **Agent memory** (`memory.ts`) — persistent memory for named agents: each
+  agent crew member owns `agents/<handle>/` in the ship's shared files, and at
+  session boot the runtime folds the folder's index into the system prompt. The
+  agent updates its own memory through the files CLI, attributed as itself.
+- **The runtime seam** (`fake-session.ts`) — `createServerRuntime` is the one
+  place every host (agent door, chat + issues orchestrators) builds a runtime:
+  live pi.dev sessions normally, a deterministic fake when
+  `SKYLARK_FAKE_RUNTIME` is set — which is how the real server smoke-tests chat
+  and build flows with no network.
+- **Ship's-log announcements** — the runtime emits `agent.status` and
+  `agent.message` on topic `session:<id>` as a turn runs, which is what the
+  session monitor and progress consumers subscribe to.
 - **Doors** — `cli.ts` (the default door: also `seed`, `profiles`, `extensions`)
-  and `server.ts` (the web door; the front-door chat boots the chat profile).
+  and `server.ts` (the web door behind the Agents monitor view; chat — the
+  ship's front door — is its own hull service driving this runtime, see
+  [`../chat/zine.md`](../chat/zine.md)).
 - **Shared config** (`config.ts`) — resolves the ship's CLAUDE.md and skill
   directories so the runtime can feed them to the agent: one source of config
   for both the human and the agent.
@@ -163,12 +181,6 @@ idle session, because the truth is in the database, not the registry.
   persistence contract is a foundation you shouldn't have to re-derive per ship.
   The _experience_ of talking to it (the chat UI) is rigging; the durable core
   is hull.
-- **No crew column yet — a known, temporary debt.** `src/zine.md` holds that
-  access is structural: every row knows its crew, by construction. These two
-  tables ship without it because the crew primitive isn't built. This is the one
-  place the ship knowingly defers that invariant; when crew lands (in the hull,
-  per [`hull/zine.md`](../zine.md)), these tables get crew columns and queries
-  get crew filters. Tracked here so the deferral is honest, not silent.
 - **Model resolution is provider-aware; the default is local-first.** A stored
   model is a `provider/modelId` string resolved by [`models.ts`](models.ts): a
   bare id is Anthropic (back-compat with pre-prefix rows), `ollama/…` builds a
@@ -178,15 +190,19 @@ idle session, because the truth is in the database, not the registry.
   fits the machine, or by a crew member to a hosted model (e.g.
   `anthropic/claude-sonnet-4-5`) — and falls back to a small local model so a
   fresh clone runs with no API key. Pinned per session and overridable per
-  profile.
+  profile. Chat sessions are the exception: they boot with `CHAT_MODEL`
+  (`chatModelRef` in [`models.ts`](models.ts)) — `SKYLARK_CHAT_MODEL`, else the
+  preferred hosted model when its provider key is configured, else the local
+  default — because chat is the planning surface and gets the strong model while
+  builders stay local.
 - **A profile decides how an agent boots; the runtime is one engine.** Tools,
   prompt, context, skills, extensions, model — all data on a profile row, not
   hardcoded. One runtime drives a read-only chat pilot and a full builder alike.
   A session with no profile falls back to the pre-profiles default (full tools,
   CLAUDE.md + skills, no extensions), so legacy sessions boot unchanged.
-- **The front door reads but never writes.** The chat profile has only read+bash
-  — the front-door agent operates the ship's services and reads its code, but to
-  build or change something it files an issue. This is the intended end state
+- **Chat agents read but never write.** The chat profile has only read+bash — an
+  agent talking to the crew operates the ship's services and reads its code, but
+  to build or change something it files an issue. This is the intended end state
   ("file an issue to build"), and a deliberate narrowing from issue #1, where
   the only agent had full write tools.
 - **The agent shares the ship's config; hooks become extensions.** CLAUDE.md and
@@ -205,34 +221,16 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
-- **#49** — The web doors are entitlement-gated by session visibility:
-  `getAgentChat` returns null for a session the actor can't see,
-  `listAgentSessions` filters to visible ones (both via RLS under
-  `withCurrentActor`), and `send`/`cancel` refuse a session the actor can't see
-  via `canSeeTopic` (`hull/access`) — the one unified gate the SSE stream uses
-  (issue→public, chat→members, bare→crew). Closes the door-side counterpart of
-  the chat/session read leak the stream fixed.
-- **#27** — Progress primitives: extracted neutral event helpers
-  (`toolExecutionDetail`, `isTurnBoundary`, `truncate`) into `progress.ts` so
-  chat, issues, and the CLI all compose from the same base rather than
-  duplicating ~120-char truncation and tool formatting logic.
-- **#4** — Profiles, an extensions registry, and compaction-safe persistence.
-  How an agent boots is now a profile row (tools/prompt/context/skills/
-  extensions/model), resolved by the runtime into pi.dev options; two are seeded
-  (chat, builder). Extensions are registered rows; build-gates is the first
-  (commit/landing/session gates for builders). Sessions gained `profileId`,
-  `cwd`, and `agentUserId`. Auto-compaction is now **on** and the durable log
-  keeps the full history regardless — replacing #1's "compaction off to protect
-  an index-mirror" contract. Agent users default to the chat profile.
+- **#49** — The web doors are entitlement-gated by session visibility (RLS reads
+  under `withCurrentActor`; `send`/`cancel` via `canSeeTopic`).
+- **#27** — Progress primitives extracted into `progress.ts`, shared by chat,
+  issues, and the CLI.
+- **#4** — Profiles + the extensions registry (build-gates first), sessions gain
+  `profileId`/`cwd`/`agentUserId`, and compaction-safe persistence
+  (auto-compaction on, the durable log keeps full history).
 - **#3** — Config sharing: the agent reads the ship's CLAUDE.md and skills via
-  pi.dev's resource loader, so there's one source of config for human and agent.
-  Hooks stay Claude-Code-only by design.
-- **#2** — The web door: a chat UX (the ship's front door at `/`). Server
-  functions kick off a turn fire-and-forget; the client polls the transcript and
-  status, since Postgres already holds the truth. A pure normalizer
-  (`transcript.ts`) flattens stored messages into view items so the rigging view
-  stays SDK-agnostic.
+  pi.dev's resource loader.
+- **#2** — The web door: a chat UX with fire-and-forget turns and a pure
+  transcript normalizer (`transcript.ts`).
 - **#1** — Durable sessions over the pi.dev SDK, with the CLI as the first door:
-  create, send (queued mid-turn, booted from history when idle), list, cancel.
-  Full coding tools (read/bash/edit/write) on the repo. Single-tenant until the
-  crew primitive arrives.
+  create, send, list, cancel.
