@@ -2,7 +2,11 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { asc, eq, inArray } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
-import { assignDefaultAgentProfile } from '@hull/users/service'
+import {
+  assignDefaultAgentProfile,
+  getUserByHandle,
+  setUserProfile,
+} from '@hull/users/service'
 
 import {
   agentProfiles,
@@ -237,14 +241,46 @@ export const BUILDER_PROFILE: SeedProfile = {
  * build-gates, then upserts the chat and builder profiles — wiring builder's
  * extensionIds to the just-registered build-gates row. Safe to run any number
  * of times; converges on the declared shape while keeping ids stable.
+ *
+ * Boot ENSURES, seed CONVERGES: with `convergeAll: false` (the every-boot
+ * path) an existing profile is left exactly as the crew edited it and only
+ * missing ones are created; the explicit CLI seed (the default) rewrites the
+ * standard profiles back to their declared shape. Extensions always converge
+ * — their path/description are code-owned and move with the repo.
  */
-export async function seedProfiles(db: Database): Promise<void> {
+export async function seedProfiles(
+  db: Database,
+  opts: { convergeAll?: boolean } = {},
+): Promise<void> {
+  const converge = opts.convergeAll ?? true
   const buildGates = await registerExtension(db, BUILD_GATES_EXTENSION)
-  await upsertProfile(db, { ...CHAT_PROFILE, extensionIds: [] })
-  await upsertProfile(db, {
-    ...BUILDER_PROFILE,
-    extensionIds: [buildGates.id],
-  })
+  const standard: ProfileInput[] = [
+    { ...CHAT_PROFILE, extensionIds: [] },
+    { ...BUILDER_PROFILE, extensionIds: [buildGates.id] },
+    { ...GENERAL_PROFILE, extensionIds: [] },
+  ]
+  for (const profile of standard) {
+    if (!converge && (await getProfileByName(db, profile.name))) continue
+    await upsertProfile(db, profile)
+  }
+}
+
+/**
+ * The general deckhand — the `general` playbook's entrypoint. Full coding
+ * tools and ship context, but no build contract and no gates: the issue's own
+ * words are the instructions. Distinct from `chat` (read-only pilot) and
+ * `builder` (the ship-feature loop).
+ */
+export const GENERAL_PROFILE: SeedProfile = {
+  name: 'general',
+  systemPrompt:
+    'You are a general-purpose agent aboard a Skylark ship. Do the work the ' +
+    'issue describes — research, writing, operating the ship’s services, or ' +
+    'code — and report back through the issue thread as instructed.',
+  tools: null,
+  readContextFiles: true,
+  useRepoSkills: true,
+  model: null,
 }
 
 /**
@@ -255,8 +291,32 @@ export async function seedProfiles(db: Database): Promise<void> {
  * rather than shelling out. Crosses into the users service only by passing the
  * resolved chat-profile id; each service still writes only its own tables.
  */
-export async function seedAndWireProfiles(db: Database): Promise<void> {
-  await seedProfiles(db)
+export async function seedAndWireProfiles(
+  db: Database,
+  opts: { convergeAll?: boolean } = {},
+): Promise<void> {
+  await seedProfiles(db, opts)
   const chat = await getProfileByName(db, CHAT_PROFILE.name)
   if (chat) await assignDefaultAgentProfile(db, chat.id)
+  // Named crew whose whole point is a specific profile converge onto it — the
+  // chat default is never right for them. A deliberate hand-assignment to any
+  // OTHER profile survives; only null-or-chat is corrected. Playbook
+  // entrypoints boot from users.profileId, so these two must be true.
+  await wireCrewProfile(db, 'builder', BUILDER_PROFILE.name, chat?.id)
+  await wireCrewProfile(db, 'hand', GENERAL_PROFILE.name, chat?.id)
+}
+
+/** Point `handle` at `profileName` when its profile is unset or the chat default. */
+async function wireCrewProfile(
+  db: Database,
+  handle: string,
+  profileName: string,
+  chatProfileId: string | undefined,
+): Promise<void> {
+  const user = await getUserByHandle(db, handle)
+  const profile = await getProfileByName(db, profileName)
+  if (!user || !profile) return
+  if (!user.profileId || user.profileId === chatProfileId) {
+    await setUserProfile(db, user.id, profile.id)
+  }
 }

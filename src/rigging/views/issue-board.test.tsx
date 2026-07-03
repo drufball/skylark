@@ -28,6 +28,7 @@ function renderView(props: Partial<IssueBoardViewProps> = {}) {
   const result = render(
     <IssueBoardView
       issues={[]}
+      playbooks={[]}
       busy={false}
       onOpen={onOpen}
       onSelect={onSelect}
@@ -110,7 +111,43 @@ describe('IssueBoardView', () => {
       target: { value: 'with detail' },
     })
     fireEvent.click(screen.getByText('Open issue'))
-    expect(onOpen).toHaveBeenCalledWith('Brand new', 'with detail')
+    // No playbooks offered → the ship default (undefined resolves to build).
+    expect(onOpen).toHaveBeenCalledWith('Brand new', 'with detail', undefined)
+  })
+
+  it('files under a chosen playbook, defaulting to build', () => {
+    const playbooks = [
+      {
+        id: 'p-build',
+        name: 'build',
+        description: 'Implement it.',
+        isDefault: true,
+      },
+      {
+        id: 'p-general',
+        name: 'general',
+        description: 'One agent, no script.',
+        isDefault: false,
+      },
+    ]
+    const { onOpen } = renderView({ playbooks })
+    fireEvent.click(screen.getByText('New issue'))
+    fireEvent.change(screen.getByPlaceholderText('Title'), {
+      target: { value: 'Summarize the logs' },
+    })
+    fireEvent.change(screen.getByLabelText('Playbook'), {
+      target: { value: 'p-general' },
+    })
+    fireEvent.click(screen.getByText('Open issue'))
+    expect(onOpen).toHaveBeenCalledWith('Summarize the logs', '', 'p-general')
+
+    // Left alone, the select means "build (default)" — no explicit id sent.
+    fireEvent.click(screen.getByText('New issue'))
+    fireEvent.change(screen.getByPlaceholderText('Title'), {
+      target: { value: 'Fix the mast' },
+    })
+    fireEvent.click(screen.getByText('Open issue'))
+    expect(onOpen).toHaveBeenLastCalledWith('Fix the mast', '', undefined)
   })
 
   it('will not open while busy even with a title', () => {

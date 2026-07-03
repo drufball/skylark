@@ -11,7 +11,8 @@ import { subscribeToShipLog } from '@hull/events/bus'
 import { findHostedModel } from '@hull/agent/models'
 import { createServerRuntime } from '@hull/agent/fake-session'
 import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
-import { getUserByHandle } from '@hull/users/service'
+import { seedAndWireProfiles } from '@hull/agent/profiles'
+import { getUserByHandle, seedCrew } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
 
 import {
@@ -21,6 +22,7 @@ import {
   type GitOps,
   type Orchestrator,
 } from './orchestrator'
+import { seedPlaybooks } from './playbooks'
 import type { IssueRow } from './schema'
 
 /* v8 ignore start -- live wiring: real git/exec/fs, the LLM slug call, and the
@@ -167,6 +169,22 @@ let started: Orchestrator | undefined
  */
 export async function ensureOrchestrator(): Promise<Orchestrator> {
   if (started) return started
+
+  // ENSURE the config the orchestrator runs on — crew, profiles, playbooks —
+  // every boot, idempotently. hoist seeds the crew too, but the server must
+  // not depend on how it was launched: entrypoint resolution reads
+  // users.profileId and the playbooks table, so both must exist before the
+  // first → building. Ensure, don't converge: a boot only creates what's
+  // missing, so edits made in the Profiles/Playbooks editors survive a
+  // restart (the explicit `npm run agent seed` is the converge-back door).
+  // Best-effort: a seed hiccup mustn't hold the ship.
+  try {
+    await seedCrew(systemDb)
+    await seedAndWireProfiles(systemDb, { convergeAll: false })
+    await seedPlaybooks(systemDb)
+  } catch (err) {
+    console.error(`orchestrator boot seeding failed: ${errorMessage(err)}`)
+  }
 
   // systemDb (superuser): the orchestrator is fixed plumbing — reconcile scans
   // for marooned builds and it drives the builder runtime, which under app_user

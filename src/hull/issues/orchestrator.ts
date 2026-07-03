@@ -28,6 +28,7 @@ import {
   runningHands,
   type IssueHandoffPayload,
 } from './handoff'
+import { BUILD_PLAYBOOK_NAME, playbookFor } from './playbooks'
 import type { IssueRow, IssueStatus } from './schema'
 
 /**
@@ -131,6 +132,44 @@ export function buildPrompt(
 }
 
 /**
+ * The prompt a non-build playbook's entrypoint is seeded with: the issue and
+ * thread, plus the plain CLI contract — comment, hand off (roster or OWNER),
+ * pause, done. No ship-feature script, no PR talk: the issue's own words are
+ * the instructions. Pure, so the wording is testable.
+ */
+export function generalPrompt(
+  issue: IssueRow,
+  comments: { authorHandle: string; body: string }[],
+  /** The entrypoint agent's user id, for the SKYLARK_ACTOR command prefix. */
+  entryUserId: string,
+): string {
+  const thread =
+    comments.length > 0
+      ? '\n\nThread so far:\n' +
+        comments.map((c) => `- @${c.authorHandle}: ${c.body}`).join('\n')
+      : ''
+  const issueCmd = `SKYLARK_ACTOR=${entryUserId} npm run issue --`
+  return (
+    `Work this issue (#${issue.nano}).\n\n` +
+    `Title: ${issue.title}\n` +
+    (issue.body ? `\n${issue.body}\n` : '') +
+    thread +
+    '\n\nYou are in a dedicated worktree for this issue. The issue itself is ' +
+    'your brief — do what it asks.\n\n' +
+    'Report back through the issue CLI. Always run it with the actor prefix ' +
+    'shown so your work is attributed to you:\n' +
+    `- Post progress or findings: ${issueCmd} comment ${issue.nano} "<text>"\n` +
+    `- Pass work to another agent on this issue's playbook, as your LAST action: ` +
+    `${issueCmd} handoff ${issue.nano} <agent-handle> "<message>"\n` +
+    `- Ask the issue's owner for a decision or review (also a last action): ` +
+    `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
+    `- If you need clarification, post it and pause: ${issueCmd} comment ${issue.nano} "<question>" ` +
+    `then ${issueCmd} open ${issue.nano}, then stop and wait.\n` +
+    `- When the work is complete, run: ${issueCmd} done ${issue.nano}\n`
+  )
+}
+
+/**
  * The prompt a baton pass seeds/resumes the target agent's session with: who
  * handed it over and why, plus the same actor-prefixed CLI contract the builder
  * gets — the target reports back (and hands off further) as ITSELF. The full
@@ -157,7 +196,9 @@ export function handoffPrompt(
     `${issueCmd} handoff ${issue.nano} <agent-handle> "<what you did, what is needed next>"\n` +
     `- Ask the issue's owner for a decision or review (also a last action): ` +
     `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
-    `- When the work is fully merged into main, run: ${issueCmd} done ${issue.nano}\n`
+    // "Complete", not "merged": the baton crosses playbooks, and on a general
+    // issue done ≠ a PR. The done-teardown's merge check guards code work.
+    `- When the issue's work is complete, run: ${issueCmd} done ${issue.nano}\n`
   )
 }
 
@@ -220,7 +261,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 
   // Serialize all work for a single issue. Events for the same issue can arrive
   // concurrently — a reconcile-on-boot racing a live bus note, a rapid
-  // open→building→open→building — and ensureBuild's check-then-act
+  // open→building→open→building — and ensureEntrypoint's check-then-act
   // (worktreeExists → addWorktree) would otherwise let two passes both miss the
   // worktree and create it (and a second session) twice. A per-issue promise
   // chain makes each issue's transitions run one at a time; different issues
@@ -349,18 +390,52 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     return sessionId
   }
 
-  /** Ensure the worktree + builder session exist for an issue, idempotently. */
-  async function ensureBuild(issue: IssueRow): Promise<{ sessionId: string }> {
-    const worktreePath = await ensureWorktree(issue)
+  /**
+   * Who starts this issue, and with what: the playbook's entrypoint agent
+   * (booting from its own users.profileId), or — on a ship with nothing
+   * seeded, or a roster whose agent has left the crew — the legacy builder
+   * path (the builder identity + the `builder` profile). `build` is whether
+   * the entrypoint runs the ship-feature contract or the plain general brief.
+   */
+  async function entryFor(
+    issue: IssueRow,
+  ): Promise<{ userId: string; profileId: string | null; build: boolean }> {
+    const playbook = await playbookFor(db, issue)
+    if (playbook) {
+      const entry = await getUserById(db, playbook.entrypointId)
+      if (entry) {
+        return {
+          userId: entry.id,
+          profileId: entry.profileId,
+          build: playbook.name === BUILD_PLAYBOOK_NAME,
+        }
+      }
+      console.warn(
+        `playbook ${playbook.name} entrypoint is gone; falling back to the builder`,
+      )
+    }
     const builder = await getProfileByName(db, 'builder')
+    return {
+      userId: builderUserId,
+      profileId: builder?.id ?? null,
+      build: true,
+    }
+  }
+
+  /** Ensure the worktree + the entrypoint's session exist, idempotently. */
+  async function ensureEntrypoint(
+    issue: IssueRow,
+  ): Promise<{ sessionId: string; entryUserId: string; build: boolean }> {
+    const entry = await entryFor(issue)
+    const worktreePath = await ensureWorktree(issue)
     const sessionId = await ensureAgentSession({
       issue,
-      agentUserId: builderUserId,
-      profileId: builder?.id ?? null,
+      agentUserId: entry.userId,
+      profileId: entry.profileId,
       worktreePath,
       title: issue.title,
     })
-    return { sessionId }
+    return { sessionId, entryUserId: entry.userId, build: entry.build }
   }
 
   /** Tear down the worktree + every hand's session (done/closed). Idempotent. */
@@ -399,12 +474,15 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     switch (to) {
       case 'building': {
         // → building, whether a fresh open→building or a resume from open. Both
-        // ensure the build exists (idempotent), then seed/resume the turn with
-        // the latest thread.
-        const { sessionId } = await ensureBuild(issue)
+        // ensure the playbook entrypoint's hand exists (idempotent), then
+        // seed/resume the turn with the latest thread — the ship-feature
+        // contract for the build playbook, the plain brief for anything else.
+        const { sessionId, entryUserId, build } = await ensureEntrypoint(issue)
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
-        const prompt = buildPrompt(fresh ?? issue, thread, builderUserId)
+        const prompt = build
+          ? buildPrompt(fresh ?? issue, thread, entryUserId)
+          : generalPrompt(fresh ?? issue, thread, entryUserId)
         fireTurn(issueId, sessionId, prompt)
         break
       }
@@ -445,14 +523,6 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /**
-   * React to a baton pass: ensure the target agent's session exists in the
-   * issue's ONE worktree (booted with the target's own profile + identity) and
-   * fire a turn briefed with the handoff message. Owner pings never land here
-   * — the notifications reactor carries those to an inbox/wake instead.
-   * Re-reads the issue so a stale event (the issue moved on before this note
-   * was handled) is dropped rather than acted on.
-   */
-  /**
    * A baton that can't be delivered must not evaporate: the from-agent already
    * printed "baton passed" and stopped, so the handoff message is written back
    * onto the thread where every watcher (and the owner) can see it and act.
@@ -470,6 +540,14 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     })
   }
 
+  /**
+   * React to a baton pass: ensure the target agent's session exists in the
+   * issue's ONE worktree (booted with the target's own profile + identity) and
+   * fire a turn briefed with the handoff message. Owner pings never land here
+   * — the notifications reactor carries those to an inbox/wake instead.
+   * Re-reads the issue so a stale event (the issue moved on before this note
+   * was handled) is dropped rather than acted on.
+   */
   async function applyHandoff(payload: IssueHandoffPayload): Promise<void> {
     const issue = await getIssue(db, payload.issueId)
     if (!issue) return
@@ -485,6 +563,17 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     if (target?.type !== 'agent') {
       console.warn(
         `handoff on #${issue.nano} dropped: target is not a crew agent`,
+      )
+      return
+    }
+    // The playbook is the roster: a baton to an agent outside it — forged, or
+    // emitted before the playbook changed — must not put a new hand on the
+    // issue. Same durable-state re-check as the door's, for the same reason.
+    const playbook = await playbookFor(db, issue)
+    if (playbook && !playbook.memberIds.includes(target.id)) {
+      await dropHandoff(
+        payload,
+        `@${target.handle} is not on this issue's playbook (${playbook.name})`,
       )
       return
     }
@@ -590,7 +679,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * Startup reconciliation: after a server restart (e.g. the HMR reload a done
    * refresh triggers), an issue can be stuck in `building` with a session row
    * but no live session in this fresh process. Resume each by re-seeding a turn
-   * — idempotent ensureBuild reuses the existing worktree + session.
+   * — idempotent ensureEntrypoint reuses the existing worktree + session.
    */
   async function reconcile(): Promise<void> {
     const all = await listIssues(db)

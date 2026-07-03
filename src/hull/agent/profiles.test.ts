@@ -22,6 +22,7 @@ import {
   seedAndWireProfiles,
   CHAT_PROFILE,
   BUILDER_PROFILE,
+  GENERAL_PROFILE,
   BUILD_GATES_EXTENSION,
 } from './profiles'
 
@@ -219,8 +220,36 @@ describe('agent profiles + extensions service', () => {
     expect(builder.extensionIds).toEqual([ext.id])
     expect(builder.systemPrompt).toMatch(/ship-feature/i)
 
-    expect(await listProfiles(db)).toHaveLength(2)
+    // general: full tools + ship context, no gates — the issue is the brief
+    const general = defined(await getProfileByName(db, GENERAL_PROFILE.name))
+    expect(general.tools).toBeNull()
+    expect(general.extensionIds).toEqual([])
+
+    expect(await listProfiles(db)).toHaveLength(3)
     expect(await listExtensions(db)).toHaveLength(1)
+  })
+
+  it('an ensure-only seed leaves edited profiles alone; the converge seed resets them', async () => {
+    await seedProfiles(db)
+    const chat = defined(await getProfileByName(db, CHAT_PROFILE.name))
+    await upsertProfile(db, {
+      ...CHAT_PROFILE,
+      systemPrompt: 'my edited pilot brief',
+      extensionIds: [],
+    })
+    // The every-boot path must not undo the crew's edit…
+    await seedProfiles(db, { convergeAll: false })
+    expect(
+      defined(await getProfileByName(db, CHAT_PROFILE.name)).systemPrompt,
+    ).toBe('my edited pilot brief')
+    // …while the explicit CLI seed converges back to the declared shape.
+    await seedProfiles(db)
+    expect(
+      defined(await getProfileByName(db, CHAT_PROFILE.name)).systemPrompt,
+    ).toMatch(/pilot a Skylark ship/i)
+    expect(defined(await getProfileByName(db, CHAT_PROFILE.name)).id).toBe(
+      chat.id,
+    )
   })
 
   it('seedAndWireProfiles seeds profiles AND points agent crew at the chat profile', async () => {
@@ -233,6 +262,6 @@ describe('agent profiles + extensions service', () => {
     const dru = defined(await getUserByHandle(db, 'drufball'))
     expect(tilde.profileId).toBe(chat.id) // agent → chat
     expect(dru.profileId).toBeNull() // human → untouched
-    expect(await listProfiles(db)).toHaveLength(2)
+    expect(await listProfiles(db)).toHaveLength(3)
   })
 })

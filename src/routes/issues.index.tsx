@@ -6,7 +6,7 @@ import {
 } from '@tanstack/react-router'
 import { useCallback, useState } from 'react'
 
-import { listBoard, openIssue } from '@hull/issues/server'
+import { listBoard, listPlaybooksView, openIssue } from '@hull/issues/server'
 import { ISSUE_TOPIC_PATTERN } from '@hull/issues/topic'
 import { Dock } from '@rigging/views/dock'
 import { IssueBoardView } from '@rigging/views/issue-board'
@@ -19,11 +19,17 @@ import { useShipLog } from '@rigging/lib/use-ship-log'
 // live.
 export const Route = createFileRoute('/issues/')({
   component: BoardRoute,
-  loader: () => listBoard(),
+  loader: async () => {
+    const [issues, playbooks] = await Promise.all([
+      listBoard(),
+      listPlaybooksView(),
+    ])
+    return { issues, playbooks }
+  },
 })
 
 function BoardRoute() {
-  const issues = Route.useLoaderData()
+  const { issues, playbooks } = Route.useLoaderData()
   const navigate = useNavigate()
   const router = useRouter()
   const [busy, setBusy] = useState(false)
@@ -34,10 +40,10 @@ function BoardRoute() {
   // Subscribe to all issue events via pattern matching
   useShipLog([ISSUE_TOPIC_PATTERN], onEvent)
 
-  async function open(title: string, body: string) {
+  async function open(title: string, body: string, playbookId?: string) {
     setBusy(true)
     try {
-      const { id } = await openIssue({ data: { title, body } })
+      const { id } = await openIssue({ data: { title, body, playbookId } })
       await navigate({ to: '/issues/$id', params: { id } })
     } finally {
       setBusy(false)
@@ -48,9 +54,15 @@ function BoardRoute() {
     <Dock active="issues" Link={Link}>
       <IssueBoardView
         issues={issues}
+        playbooks={playbooks.map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          isDefault: p.isDefault,
+        }))}
         busy={busy}
-        onOpen={(title, body) => {
-          void open(title, body)
+        onOpen={(title, body, playbookId) => {
+          void open(title, body, playbookId)
         }}
         onSelect={(id) => {
           void navigate({ to: '/issues/$id', params: { id } })

@@ -7,6 +7,12 @@ import { handleOf } from '@hull/users/service'
 
 import { ensureOrchestrator } from './orchestrator-live'
 import {
+  BUILD_PLAYBOOK_NAME,
+  listPlaybooks,
+  seedPlaybooks,
+  upsertPlaybook,
+} from './playbooks'
+import {
   addComment,
   assembleThread,
   createIssue,
@@ -109,15 +115,95 @@ export const getThread = createServerFn({ method: 'GET' })
 
 /** Open a new issue as the current actor. Returns the new id. */
 export const openIssue = createServerFn({ method: 'POST' })
-  .validator((input: { title: string; body?: string }) => input)
+  .validator(
+    (input: { title: string; body?: string; playbookId?: string }) => input,
+  )
   .handler(async ({ data }) => {
     const actor = await currentActor()
     const issue = await createIssue(db, {
       title: data.title,
       body: data.body,
+      playbookId: data.playbookId,
       authorId: actor.id,
     })
     return { id: issue.id, nano: issue.nano }
+  })
+
+/** A playbook as the views render it: roster and entrypoint as handles too. */
+export interface PlaybookView {
+  id: string
+  name: string
+  description: string
+  memberIds: string[]
+  memberHandles: string[]
+  entrypointId: string
+  entrypointHandle: string
+  /** True for the ship default (what a null issues.playbookId means). */
+  isDefault: boolean
+}
+
+/** Every playbook, with member/entrypoint handles resolved for display. */
+export const listPlaybooksView = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<PlaybookView[]> => {
+    bootOrchestrator()
+    // The boot above is fire-and-forget (it also reconciles builds — too slow
+    // to hold a page load), so on a fresh ship it can race this read and the
+    // first render would show no playbooks. Ensuring directly is cheap
+    // (create-if-absent; two selects when already seeded) and closes the gap.
+    await seedPlaybooks(db)
+    return Promise.all(
+      (await listPlaybooks(db)).map(async (p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        memberIds: p.memberIds,
+        memberHandles: await Promise.all(
+          p.memberIds.map((id) => handleOf(db, id)),
+        ),
+        entrypointId: p.entrypointId,
+        entrypointHandle: await handleOf(db, p.entrypointId),
+        isDefault: p.name === BUILD_PLAYBOOK_NAME,
+      })),
+    )
+  },
+)
+
+/**
+ * Create or update a playbook (matched by name — ids stay stable so issues
+ * keep pointing at an edited playbook). Validation (roster of real agents,
+ * entrypoint on the roster) lives in the service and its errors surface here.
+ */
+export const savePlaybook = createServerFn({ method: 'POST' })
+  .validator((input: unknown) => {
+    const data = input as {
+      name?: unknown
+      description?: unknown
+      memberIds?: unknown
+      entrypointId?: unknown
+    }
+    if (typeof data.name !== 'string' || !data.name.trim())
+      throw new Error('A playbook needs a name.')
+    if (
+      !Array.isArray(data.memberIds) ||
+      data.memberIds.some((m) => typeof m !== 'string')
+    )
+      throw new Error('memberIds must be a list of user ids.')
+    if (typeof data.entrypointId !== 'string')
+      throw new Error('entrypointId must be a user id.')
+    return {
+      name: data.name.trim(),
+      description: typeof data.description === 'string' ? data.description : '',
+      memberIds: data.memberIds as string[],
+      entrypointId: data.entrypointId,
+    }
+  })
+  .handler(async ({ data }) => {
+    // Resolve the actor like every other mutating door — writing a playbook
+    // decides which full-tools agent starts future issues, so it must at
+    // least be an action BY someone the ship knows.
+    await currentActor()
+    const saved = await upsertPlaybook(db, data)
+    return { id: saved.id }
   })
 
 /** Comment on an issue as the current actor. */

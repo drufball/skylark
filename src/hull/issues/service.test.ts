@@ -353,6 +353,7 @@ describe('view-data shaping (pure)', () => {
       status: 'building',
       authorId: 'u1',
       ownerId: 'u1',
+      playbookId: null,
       visibility: 'public',
       branchName: 'add-widget-aa11',
       worktreePath: '/wt/add-widget-aa11',

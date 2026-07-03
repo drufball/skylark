@@ -20,10 +20,20 @@ import { Textarea } from '@rigging/components/ui/textarea'
 // the route wires it to the issues service and the address bar. Live updates
 // arrive by the route re-running its loader on a ship's-log event.
 
+/** A playbook option the composer offers — how the issue will be worked. */
+export interface PlaybookOption {
+  id: string
+  name: string
+  description: string
+  /** The ship default — what filing without an explicit choice means. */
+  isDefault: boolean
+}
+
 export interface IssueBoardViewProps {
   issues: BoardIssue[]
+  playbooks: PlaybookOption[]
   busy: boolean
-  onOpen: (title: string, body: string) => void
+  onOpen: (title: string, body: string, playbookId: string | undefined) => void
   onSelect: (id: string) => void
 }
 
@@ -51,6 +61,7 @@ const STATUS_TINT: Record<IssueStatus, string> = {
 
 export function IssueBoardView({
   issues,
+  playbooks,
   busy,
   onOpen,
   onSelect,
@@ -65,7 +76,7 @@ export function IssueBoardView({
       </header>
       <ScrollArea className="flex-1">
         <div className="mx-auto max-w-3xl p-6">
-          <NewIssue busy={busy} onOpen={onOpen} />
+          <NewIssue busy={busy} playbooks={playbooks} onOpen={onOpen} />
           {issues.length === 0 ? (
             <p className="py-12 text-center text-sm text-muted-foreground">
               No issues yet. Open the first one above.
@@ -146,18 +157,22 @@ function IssueCard({
 
 function NewIssue({
   busy,
+  playbooks,
   onOpen,
-}: Pick<IssueBoardViewProps, 'busy' | 'onOpen'>) {
+}: Pick<IssueBoardViewProps, 'busy' | 'playbooks' | 'onOpen'>) {
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
+  // '' = the ship default (the build playbook), resolved server-side.
+  const [playbookId, setPlaybookId] = useState('')
   const [open, setOpen] = useState(false)
 
   function submit() {
     const t = title.trim()
     if (!t || busy) return
-    onOpen(t, body.trim())
+    onOpen(t, body.trim(), playbookId || undefined)
     setTitle('')
     setBody('')
+    setPlaybookId('')
     setOpen(false)
   }
 
@@ -195,6 +210,33 @@ function NewIssue({
         rows={3}
         className="resize-none"
       />
+      {playbooks.length > 0 && (
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Playbook
+          </span>
+          <select
+            value={playbookId}
+            onChange={(e) => {
+              setPlaybookId(e.target.value)
+            }}
+            aria-label="Playbook"
+            className="rounded-md border bg-background px-2 py-1 text-sm"
+          >
+            <option value="">
+              {playbooks.find((p) => p.isDefault)?.name ?? 'build'} (default)
+            </option>
+            {playbooks
+              .filter((p) => !p.isDefault)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.description ? ` — ${p.description}` : ''}
+                </option>
+              ))}
+          </select>
+        </label>
+      )}
       <div className="flex justify-end gap-2">
         <Button
           variant="ghost"

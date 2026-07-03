@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
 import { listEventsSince } from '@hull/events/service'
-import { createUser, setUserProfile } from '@hull/users/service'
+import {
+  createUser,
+  getUserByHandle,
+  seedCrew,
+  setUserProfile,
+} from '@hull/users/service'
 import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
 import { DEFAULT_MODEL } from '@hull/agent/runtime'
 import {
@@ -19,11 +24,13 @@ import {
   branchNameFor,
   buildPrompt,
   createOrchestrator,
+  generalPrompt,
   parseWorktreeInclude,
   slugify,
   type GitOps,
   type OrchestratorDeps,
 } from './orchestrator'
+import { getPlaybookByName, seedPlaybooks } from './playbooks'
 import {
   addComment,
   createIssue,
@@ -1104,6 +1111,135 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       topic: 'issue:42',
     })
     expect(runtime.turns).toEqual([])
+  })
+})
+
+describe('orchestrator playbooks', () => {
+  /** Seed the full crew, profiles, and standard playbooks on top of beforeEach. */
+  async function seeded() {
+    await seedCrew(db)
+    await seedAndWireProfiles(db)
+    await seedPlaybooks(db)
+    return {
+      hand: defined(await getUserByHandle(db, 'hand')),
+      general: defined(await getPlaybookByName(db, 'general')),
+    }
+  }
+
+  it('a general-playbook issue boots the hand — its own profile, a script-free prompt', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { hand, general } = await seeded()
+    const issue = await createIssue(db, {
+      title: 'Summarize this week',
+      authorId,
+      nano: 'pb01',
+      playbookId: general.id,
+    })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+
+    const link = defined(await getIssueSession(db, issue.id, hand.id))
+    const session = defined(await getSession(db, link.sessionId))
+    expect(session.agentUserId).toBe(hand.id)
+    expect(session.profileId).toBe(hand.profileId) // the general profile
+    expect(session.cwd).toBe('/wt/add-widget-pb01')
+
+    expect(runtime.turns).toHaveLength(1)
+    expect(runtime.turns[0].text).toContain('Summarize this week')
+    expect(runtime.turns[0].text).toContain(`SKYLARK_ACTOR=${hand.id}`)
+    // No build script: the general playbook has no ship-feature contract.
+    expect(runtime.turns[0].text).not.toContain('ship-feature')
+  })
+
+  it('a default (no-playbook) issue still runs the build contract via the builder', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    await seeded()
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'pb02' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+
+    const link = defined(await getIssueSession(db, issue.id, builderId))
+    const session = defined(await getSession(db, link.sessionId))
+    const builderProfile = defined(await getProfileByName(db, 'builder'))
+    expect(session.profileId).toBe(builderProfile.id)
+    expect(runtime.turns[0].text).toContain('ship-feature')
+  })
+
+  it('drops a forged baton to an agent outside the playbook roster, with a comment', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { general } = await seeded()
+    const issue = await createIssue(db, {
+      title: 'X',
+      authorId,
+      nano: 'pb03',
+      playbookId: general.id,
+    })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'open', 'building')
+    const { emitEvent } = await import('@hull/events/bus')
+    // The builder is a real agent, but not on the general playbook's roster.
+    const row = await emitEvent(db, {
+      type: ISSUE_HANDOFF,
+      source: 'issues',
+      topic: issueTopic(issue.id),
+      audience: 'public',
+      payload: {
+        issueId: issue.id,
+        fromUserId: authorId,
+        toUserId: builderId,
+        toHandle: 'builder',
+        toOwner: false,
+        message: 'come build this',
+      },
+    })
+    await orch.handleBusNote({
+      id: row.id,
+      type: ISSUE_HANDOFF,
+      topic: issueTopic(issue.id),
+    })
+
+    expect(runtime.turns).toHaveLength(1) // the hand's seed only
+    const comments = await listComments(db, issue.id)
+    expect(comments.at(-1)?.body).toContain('dropped')
+  })
+})
+
+describe('generalPrompt', () => {
+  it('carries the issue, thread, and the full CLI contract — but no build script', async () => {
+    const issue = await createIssue(db, {
+      title: 'Plan the offsite',
+      body: 'Three days, remote crew.',
+      authorId,
+      nano: 'gp01',
+    })
+    const prompt = generalPrompt(
+      issue,
+      [{ authorHandle: 'dru', body: 'keep it cheap' }],
+      'hand-1',
+    )
+    expect(prompt).toContain('#gp01')
+    expect(prompt).toContain('Plan the offsite')
+    expect(prompt).toContain('Three days, remote crew.')
+    expect(prompt).toContain('- @dru: keep it cheap')
+    expect(prompt).toContain('SKYLARK_ACTOR=hand-1 npm run issue -- done gp01')
+    expect(prompt).toContain('handoff gp01 OWNER')
+    expect(prompt).not.toContain('ship-feature')
+    expect(prompt).not.toContain('PR')
   })
 })
 
