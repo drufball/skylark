@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { and, desc, eq, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import {
@@ -210,6 +210,21 @@ export async function markAllRead(db: Database, userId: string): Promise<void> {
     .update(notifications)
     .set({ readAt: new Date() })
     .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+}
+
+/** Mark specific entries read — the waker consumes exactly what it delivered. */
+export async function markRead(
+  db: Database,
+  userId: string,
+  ids: string[],
+): Promise<void> {
+  if (ids.length === 0) return
+  await db
+    .update(notifications)
+    .set({ readAt: new Date() })
+    .where(
+      and(eq(notifications.userId, userId), inArray(notifications.id, ids)),
+    )
 }
 
 // --- The reactor ---------------------------------------------------------------

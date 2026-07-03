@@ -1,3 +1,4 @@
+import { ensureChatVisible } from '@hull/chat/service'
 import { isMain, runCli } from '@hull/lib/cli'
 import { withCliActor } from '@hull/users/actor'
 import { getUserById } from '@hull/users/service'
@@ -35,29 +36,45 @@ const STATUS_MARK: Record<IssueStatus, string> = {
 }
 
 /**
- * Parse the title and optional --body flag from issue new args.
- * Returns [title, body] where body is undefined if not provided.
+ * Parse `issue new`'s args: the title, plus optional `--body <text>` and
+ * `--chat <id>` (the chat this issue was filed from — how notifications about
+ * it route back to that conversation). A flag present without a value (or with
+ * another flag where its value should be) is a loud usage error, not a
+ * silently unrouted issue.
  */
-export function parseNewArgs(args: string[]): [string, string | undefined] {
-  const bodyFlagIndex = args.indexOf('--body')
-  if (bodyFlagIndex === -1) {
-    return [args.join(' ').trim(), undefined]
+export function parseNewArgs(args: string[]): {
+  title: string
+  body?: string
+  originChatId?: string
+} {
+  const rest = [...args]
+  const takeFlag = (flag: string): string | undefined => {
+    const at = rest.indexOf(flag)
+    if (at === -1) return undefined
+    const value = rest.at(at + 1)
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error(`${flag} requires a value`)
+    }
+    rest.splice(at, 2)
+    return value
   }
-
-  const body = args[bodyFlagIndex + 1]
-  const titleParts = [
-    ...args.slice(0, bodyFlagIndex),
-    ...args.slice(bodyFlagIndex + 2),
-  ]
-  return [titleParts.join(' ').trim(), body]
+  const body = takeFlag('--body')
+  const originChatId = takeFlag('--chat')
+  return { title: rest.join(' ').trim(), body, originChatId }
 }
 
 async function cmdNew(args: string[]): Promise<void> {
-  const [title, body] = parseNewArgs(args)
-  if (!title) throw new Error('usage: issue new <title> [--body <text>]')
-  const issue = await withCliActor((tx, me) =>
-    createIssue(tx, { title, body, authorId: me.id }),
-  )
+  const { title, body, originChatId } = parseNewArgs(args)
+  if (!title)
+    throw new Error('usage: issue new <title> [--body <text>] [--chat <id>]')
+  const issue = await withCliActor(async (tx, me) => {
+    // Provenance must be honest: the filer can only claim a chat they're in.
+    // ensureChatVisible probes under the actor's RLS, so a forged or foreign
+    // chat id reads as not-a-member — and the wake can't be routed into a
+    // conversation the filer never saw.
+    if (originChatId) await ensureChatVisible(tx, originChatId)
+    return createIssue(tx, { title, body, originChatId, authorId: me.id })
+  })
   process.stdout.write(
     `Opened #${issue.nano} ${DIM}${issue.id}${RESET}\n${issue.title}\n`,
   )
@@ -164,7 +181,7 @@ async function main(): Promise<void> {
     default:
       process.stdout.write(
         'usage: issue <new|list|show|comment|status|building|open|done|close> …\n' +
-          '  new <title> [--body <text>]   open an issue\n' +
+          '  new <title> [--body <text>] [--chat <id>]   open an issue\n' +
           '  list                          list issues, newest first\n' +
           '  show <id>                     show an issue, its branch, and its thread\n' +
           '  comment <id> <text>           add a comment\n' +
