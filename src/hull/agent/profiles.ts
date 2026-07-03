@@ -241,15 +241,28 @@ export const BUILDER_PROFILE: SeedProfile = {
  * build-gates, then upserts the chat and builder profiles — wiring builder's
  * extensionIds to the just-registered build-gates row. Safe to run any number
  * of times; converges on the declared shape while keeping ids stable.
+ *
+ * Boot ENSURES, seed CONVERGES: with `convergeAll: false` (the every-boot
+ * path) an existing profile is left exactly as the crew edited it and only
+ * missing ones are created; the explicit CLI seed (the default) rewrites the
+ * standard profiles back to their declared shape. Extensions always converge
+ * — their path/description are code-owned and move with the repo.
  */
-export async function seedProfiles(db: Database): Promise<void> {
+export async function seedProfiles(
+  db: Database,
+  opts: { convergeAll?: boolean } = {},
+): Promise<void> {
+  const converge = opts.convergeAll ?? true
   const buildGates = await registerExtension(db, BUILD_GATES_EXTENSION)
-  await upsertProfile(db, { ...CHAT_PROFILE, extensionIds: [] })
-  await upsertProfile(db, {
-    ...BUILDER_PROFILE,
-    extensionIds: [buildGates.id],
-  })
-  await upsertProfile(db, { ...GENERAL_PROFILE, extensionIds: [] })
+  const standard: ProfileInput[] = [
+    { ...CHAT_PROFILE, extensionIds: [] },
+    { ...BUILDER_PROFILE, extensionIds: [buildGates.id] },
+    { ...GENERAL_PROFILE, extensionIds: [] },
+  ]
+  for (const profile of standard) {
+    if (!converge && (await getProfileByName(db, profile.name))) continue
+    await upsertProfile(db, profile)
+  }
 }
 
 /**
@@ -278,8 +291,11 @@ export const GENERAL_PROFILE: SeedProfile = {
  * rather than shelling out. Crosses into the users service only by passing the
  * resolved chat-profile id; each service still writes only its own tables.
  */
-export async function seedAndWireProfiles(db: Database): Promise<void> {
-  await seedProfiles(db)
+export async function seedAndWireProfiles(
+  db: Database,
+  opts: { convergeAll?: boolean } = {},
+): Promise<void> {
+  await seedProfiles(db, opts)
   const chat = await getProfileByName(db, CHAT_PROFILE.name)
   if (chat) await assignDefaultAgentProfile(db, chat.id)
   // Named crew whose whole point is a specific profile converge onto it — the

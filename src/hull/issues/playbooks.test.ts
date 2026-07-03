@@ -126,6 +126,26 @@ describe('seedPlaybooks', () => {
     ])
   })
 
+  it('boot seeding never clobbers the captain’s edits — ensure, don’t converge', async () => {
+    await seedPlaybooks(db)
+    // The crew edits the general playbook in the Playbooks tab…
+    await upsertPlaybook(db, {
+      name: 'general',
+      description: 'my custom brief',
+      memberIds: [tildeId],
+      entrypointId: tildeId,
+    })
+    // …and the next server boot must leave that edit standing.
+    await seedPlaybooks(db)
+    const general = defined(await getPlaybookByName(db, 'general'))
+    expect(general.description).toBe('my custom brief')
+    expect(general.entrypointId).toBe(tildeId)
+    // The explicit converge (the factory-reset door) rewrites it.
+    await seedPlaybooks(db, { convergeAll: true })
+    const reset = defined(await getPlaybookByName(db, 'general'))
+    expect(reset.entrypointId).not.toBe(tildeId)
+  })
+
   it('skips playbooks whose crew is not aboard, without failing', async () => {
     // A fresh database with no crew at all: seeding must be a quiet no-op,
     // not a crash — seedCrew always runs first in the real boot paths.

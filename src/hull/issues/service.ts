@@ -333,7 +333,8 @@ export async function setBuildContext(
 /**
  * Point an issue at a playbook. Sensible only before work starts — the
  * orchestrator resolves the playbook on each → building, so changing it
- * mid-build changes who resumes; the doors expose it on open issues.
+ * mid-build changes who resumes. No door exposes this yet: an issue's
+ * playbook is picked at filing time and changed only here (tests) or by SQL.
  */
 export async function setIssuePlaybook(
   db: Database,

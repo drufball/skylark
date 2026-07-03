@@ -196,7 +196,9 @@ export function handoffPrompt(
     `${issueCmd} handoff ${issue.nano} <agent-handle> "<what you did, what is needed next>"\n` +
     `- Ask the issue's owner for a decision or review (also a last action): ` +
     `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
-    `- When the work is fully merged into main, run: ${issueCmd} done ${issue.nano}\n`
+    // "Complete", not "merged": the baton crosses playbooks, and on a general
+    // issue done ≠ a PR. The done-teardown's merge check guards code work.
+    `- When the issue's work is complete, run: ${issueCmd} done ${issue.nano}\n`
   )
 }
 

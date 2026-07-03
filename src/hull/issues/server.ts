@@ -6,7 +6,7 @@ import { currentActor } from '@hull/users/actor'
 import { handleOf } from '@hull/users/service'
 
 import { ensureOrchestrator } from './orchestrator-live'
-import { listPlaybooks, upsertPlaybook } from './playbooks'
+import { BUILD_PLAYBOOK_NAME, listPlaybooks, upsertPlaybook } from './playbooks'
 import {
   addComment,
   assembleThread,
@@ -133,6 +133,8 @@ export interface PlaybookView {
   memberHandles: string[]
   entrypointId: string
   entrypointHandle: string
+  /** True for the ship default (what a null issues.playbookId means). */
+  isDefault: boolean
 }
 
 /** Every playbook, with member/entrypoint handles resolved for display. */
@@ -150,6 +152,7 @@ export const listPlaybooksView = createServerFn({ method: 'GET' }).handler(
         ),
         entrypointId: p.entrypointId,
         entrypointHandle: await handleOf(db, p.entrypointId),
+        isDefault: p.name === BUILD_PLAYBOOK_NAME,
       })),
     )
   },

@@ -170,14 +170,17 @@ let started: Orchestrator | undefined
 export async function ensureOrchestrator(): Promise<Orchestrator> {
   if (started) return started
 
-  // Converge the config the orchestrator runs on — crew, profiles, playbooks —
+  // ENSURE the config the orchestrator runs on — crew, profiles, playbooks —
   // every boot, idempotently. hoist seeds the crew too, but the server must
   // not depend on how it was launched: entrypoint resolution reads
   // users.profileId and the playbooks table, so both must exist before the
-  // first → building. Best-effort: a seed hiccup mustn't hold the ship.
+  // first → building. Ensure, don't converge: a boot only creates what's
+  // missing, so edits made in the Profiles/Playbooks editors survive a
+  // restart (the explicit `npm run agent seed` is the converge-back door).
+  // Best-effort: a seed hiccup mustn't hold the ship.
   try {
     await seedCrew(systemDb)
-    await seedAndWireProfiles(systemDb)
+    await seedAndWireProfiles(systemDb, { convergeAll: false })
     await seedPlaybooks(systemDb)
   } catch (err) {
     console.error(`orchestrator boot seeding failed: ${errorMessage(err)}`)

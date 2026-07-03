@@ -123,31 +123,52 @@ export async function playbookFor(
 }
 
 /**
- * Seed the standard playbooks, idempotently: `build` (the builder, as ever)
- * and `general` (the hand — full tools, no build contract, does what the
- * issue says). A playbook whose crew member isn't aboard yet is skipped, not
- * fatal — seedCrew (users) and seedAndWireProfiles (agent) run first in every
- * boot path, so this is a fresh-database corner, not a live one.
+ * Seed the standard playbooks: `build` (the builder, as ever) and `general`
+ * (the hand — full tools, no build contract, does what the issue says). A
+ * playbook whose crew member isn't aboard yet is skipped, not fatal —
+ * seedCrew (users) and the profile seeding (agent) run first in every boot
+ * path, so this is a fresh-database corner, not a live one.
+ *
+ * Boot ENSURES, seed CONVERGES: the every-boot path (`convergeAll: false`)
+ * only creates what's missing, so an edit made in the Playbooks tab survives
+ * a restart; the explicit CLI seed (`convergeAll: true`) rewrites the
+ * standard rows back to their declared shape.
  */
-export async function seedPlaybooks(db: Database): Promise<void> {
-  const builder = await getUserByHandle(db, 'builder')
-  if (builder) {
+export async function seedPlaybooks(
+  db: Database,
+  opts: { convergeAll?: boolean } = {},
+): Promise<void> {
+  const standard: {
+    handle: string
+    playbook: Omit<PlaybookInput, 'memberIds' | 'entrypointId'>
+  }[] = [
+    {
+      handle: 'builder',
+      playbook: {
+        name: BUILD_PLAYBOOK_NAME,
+        description:
+          'Implement it: red-green TDD in a worktree, through CI to a merged PR.',
+      },
+    },
+    {
+      handle: 'hand',
+      playbook: {
+        name: 'general',
+        description:
+          'One agent, full tools, no script — does whatever the issue says.',
+      },
+    },
+  ]
+  for (const { handle, playbook } of standard) {
+    if (!opts.convergeAll && (await getPlaybookByName(db, playbook.name))) {
+      continue // already aboard — leave the captain's edits alone
+    }
+    const entry = await getUserByHandle(db, handle)
+    if (!entry) continue
     await upsertPlaybook(db, {
-      name: BUILD_PLAYBOOK_NAME,
-      description:
-        'Implement it: red-green TDD in a worktree, through CI to a merged PR.',
-      memberIds: [builder.id],
-      entrypointId: builder.id,
-    })
-  }
-  const hand = await getUserByHandle(db, 'hand')
-  if (hand) {
-    await upsertPlaybook(db, {
-      name: 'general',
-      description:
-        'One agent, full tools, no script — does whatever the issue says.',
-      memberIds: [hand.id],
-      entrypointId: hand.id,
+      ...playbook,
+      memberIds: [entry.id],
+      entrypointId: entry.id,
     })
   }
 }

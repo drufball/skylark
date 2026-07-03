@@ -25,6 +25,8 @@ export interface PlaybookOption {
   id: string
   name: string
   description: string
+  /** The ship default — what filing without an explicit choice means. */
+  isDefault: boolean
 }
 
 export interface IssueBoardViewProps {
@@ -221,9 +223,11 @@ function NewIssue({
             aria-label="Playbook"
             className="rounded-md border bg-background px-2 py-1 text-sm"
           >
-            <option value="">build (default)</option>
+            <option value="">
+              {playbooks.find((p) => p.isDefault)?.name ?? 'build'} (default)
+            </option>
             {playbooks
-              .filter((p) => p.name !== 'build')
+              .filter((p) => !p.isDefault)
               .map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}

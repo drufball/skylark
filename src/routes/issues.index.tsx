@@ -58,6 +58,7 @@ function BoardRoute() {
           id: p.id,
           name: p.name,
           description: p.description,
+          isDefault: p.isDefault,
         }))}
         busy={busy}
         onOpen={(title, body, playbookId) => {

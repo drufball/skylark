@@ -253,6 +253,20 @@ id) through their public functions, not their tables.
   field on every door: a bare `issue new`, every pre-playbooks issue, and every
   agent that never heard of playbooks all keep their meaning. The default is
   resolved at orchestration time (`playbookFor`), not stamped at creation.
+- **Boot ENSURES; seed CONVERGES.** `ensureOrchestrator` runs the seeders every
+  boot with create-if-absent semantics, so an edit made in the
+  Profiles/Playbooks editors survives a restart. The explicit
+  `npm run agent seed` (and `convergeAll: true` programmatically) is the
+  factory-reset door that rewrites the standard rows to their declared shape. A
+  seeder that silently converges on boot un-does the very edits the editors
+  invite — that bug shipped once in review and must not ship again.
+- **The build prompt is keyed on the playbook NAME — a known crack.** The
+  entrypoint's turn prompt is `buildPrompt` iff the playbook is literally named
+  `build`, else `generalPrompt`; the work contract therefore lives in two places
+  (the agent's profile, by user; the turn prompt, by name). Fine while `build`
+  is the one code-shaped playbook. The intended refit: one uniform turn prompt
+  (issue brief + CLI contract) with the ship-feature contract living only in the
+  builder's profile/skill — do that before cloning build-like playbooks.
 - **What's verified vs. deferred.** The orchestrator's decision logic — create/
   reuse/remove worktrees, start/resume/cancel sessions, idempotency, the
   defensive done-refresh, status-line writing, the bus-note handler, and startup

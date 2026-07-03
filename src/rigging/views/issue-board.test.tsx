@@ -117,11 +117,17 @@ describe('IssueBoardView', () => {
 
   it('files under a chosen playbook, defaulting to build', () => {
     const playbooks = [
-      { id: 'p-build', name: 'build', description: 'Implement it.' },
+      {
+        id: 'p-build',
+        name: 'build',
+        description: 'Implement it.',
+        isDefault: true,
+      },
       {
         id: 'p-general',
         name: 'general',
         description: 'One agent, no script.',
+        isDefault: false,
       },
     ]
     const { onOpen } = renderView({ playbooks })
