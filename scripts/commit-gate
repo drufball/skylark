@@ -23,20 +23,6 @@ hook_cwd="$(printf '%s' "$payload" | node -e 'let s="";process.stdin.on("data",d
 # Run the check in the tree being committed (see scripts/gate-workdir).
 cd "$("$script_dir/gate-workdir" "$hook_cwd")"
 
-# Defensive: if this tree has no node_modules, run setup first. A worktree
-# created by the orchestrator but never properly initialized (#m5qt) would
-# otherwise crash on `npm run check` with ERR_MODULE_NOT_FOUND.
-if [ ! -d node_modules ]; then
-  echo "→ commit-gate: node_modules missing, running setup first..." >&2
-  if ! "$script_dir/setup" >&2; then
-    {
-      echo ""
-      echo "⚠ setup failed — this worktree can't run npm commands. Fix it before committing. (commit-gate)"
-    } >&2
-    exit 2
-  fi
-fi
-
 # Gate only git add / git commit — allowing global options before the verb
 # (`git -C path add`, `git -c k=v commit`, quoted values with spaces like
 # `git -c user.name="a b" commit`) and a leading separator (`… && git commit`).
@@ -45,6 +31,34 @@ fi
 # (the agent-side mirror, where it is unit-tested) — keep the two in sync.
 if ! printf '%s' "$command" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{process.exit(/\bgit(?:\s+-\S+(?:\s+(?!-)(?:[^\s\"']|\"[^\"]*\"|'[^']*')+)?)*\s+(add|commit)\b/.test(s)?0:1)})"; then
   exit 0
+fi
+
+# Defensive: if this tree has no node_modules, install deps first. A worktree
+# created by the orchestrator but never properly initialized (#m5qt) would
+# otherwise crash on `npm run check` with ERR_MODULE_NOT_FOUND. We're already
+# cd'd into the worktree (gate-workdir above), so install HERE, not in the
+# main checkout like scripts/setup would.
+if [ ! -d node_modules ]; then
+  echo "→ commit-gate: node_modules missing, installing deps first..." >&2
+  if [ "${CI:-}" = "true" ]; then
+    if ! npm ci >&2 2>&1; then
+      {
+        echo ""
+        echo "⚠ npm ci failed — this worktree can't run npm commands. Fix it before committing. (commit-gate)"
+      } >&2
+      exit 2
+    fi
+  else
+    if ! npm install >&2 2>&1; then
+      {
+        echo ""
+        echo "⚠ npm install failed — this worktree can't run npm commands. Fix it before committing. (commit-gate)"
+      } >&2
+      exit 2
+    fi
+  fi
+  # Also generate routes, matching what scripts/setup does.
+  npm run generate-routes >/dev/null 2>&1 || true
 fi
 
 echo "→ commit-gate: running \`npm run check\` before committing…" >&2
