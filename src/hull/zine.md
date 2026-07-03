@@ -65,6 +65,13 @@ finds tables on its own by globbing every `src/**/schema.ts`.)
 - **The crew invariant is enforced in the hull.** When tables arrive,
   crew-scoping lives here — a security invariant is the most load-bearing thing
   on the ship.
+- **"Decoupled" means: no other service's tables.** A service reads and writes
+  only its own; it learns about the rest through an exported function or the
+  ship's log. Two named exceptions, held by `src/architecture.test.ts`: joining
+  `users` for identity (every row knows its crew — that IS the design), and
+  declared FKs between schemas (issues → agent, issues → chat, chat → agent)
+  from the owning `schema.ts` only. A new exception is a diff on that test —
+  which makes it a design review, not a drift.
 
 ## Changelog
 

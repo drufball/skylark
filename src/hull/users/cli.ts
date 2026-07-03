@@ -1,7 +1,7 @@
 import { db } from '@hull/db/client'
 import { isMain, runCli } from '@hull/lib/cli'
 
-import { cliActor } from './actor'
+import { cliActor, operatorSeed } from './actor'
 import { listUsers, seedCrew } from './service'
 
 // The default door onto the users service: list the crew, seed the standard
@@ -13,7 +13,7 @@ const DIM = '\x1b[2m'
 const RESET = '\x1b[0m'
 
 async function cmdSeed(): Promise<void> {
-  await seedCrew(db)
+  await seedCrew(db, operatorSeed())
   const crew = await listUsers(db)
   process.stdout.write(`Seeded crew (${String(crew.length)} aboard).\n`)
 }

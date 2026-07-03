@@ -15,7 +15,7 @@ import {
   resolveActorHandle,
   seedCrew,
   setUserProfile,
-  SEED_CREW,
+  SEED_AGENTS,
   UNKNOWN_HANDLE,
   deleteUser,
   updateAgentUser,
@@ -145,14 +145,14 @@ describe('users service', () => {
         'babysitter',
         'bix',
         'builder',
+        'captain',
         'dot',
-        'drufball',
         'hand',
         'tilde',
       ])
-      const dru = defined(await getUserByHandle(db, 'drufball'))
-      expect(dru.type).toBe('human')
-      expect(dru.displayName).toBe('Dru')
+      const captain = defined(await getUserByHandle(db, 'captain'))
+      expect(captain.type).toBe('human')
+      expect(captain.displayName).toBe('Captain')
       const tilde = defined(await getUserByHandle(db, 'tilde'))
       expect(tilde.type).toBe('agent')
       expect(tilde.displayName).toBe('Tilde')
@@ -166,7 +166,15 @@ describe('users service', () => {
     it('is idempotent — running twice leaves one row per handle', async () => {
       await seedCrew(db)
       await seedCrew(db)
-      expect(await listUsers(db)).toHaveLength(SEED_CREW.length)
+      expect(await listUsers(db)).toHaveLength(SEED_AGENTS.length + 1)
+    })
+
+    it('seeds the configured operator, not a hardcoded name', async () => {
+      await seedCrew(db, { handle: 'drufball', displayName: 'Dru' })
+      const dru = defined(await getUserByHandle(db, 'drufball'))
+      expect(dru.type).toBe('human')
+      expect(dru.displayName).toBe('Dru')
+      expect(await getUserByHandle(db, 'captain')).toBeUndefined()
     })
 
     it('assignDefaultAgentProfile sets agents (only) without a profile', async () => {
@@ -174,9 +182,9 @@ describe('users service', () => {
       await assignDefaultAgentProfile(db, 'chat-profile')
 
       const tilde = defined(await getUserByHandle(db, 'tilde'))
-      const dru = defined(await getUserByHandle(db, 'drufball'))
+      const captain = defined(await getUserByHandle(db, 'captain'))
       expect(tilde.profileId).toBe('chat-profile') // agent → assigned
-      expect(dru.profileId).toBeNull() // human → untouched
+      expect(captain.profileId).toBeNull() // human → untouched
     })
 
     it("assignDefaultAgentProfile keeps an agent's existing profile", async () => {
@@ -191,17 +199,17 @@ describe('users service', () => {
 
     it('does not clobber an edited displayName on re-seed', async () => {
       await seedCrew(db)
-      const dru = defined(await getUserByHandle(db, 'drufball'))
+      const captain = defined(await getUserByHandle(db, 'captain'))
       // a later hand-edit to the row should survive a re-seed
       await db
         .update(users)
-        .set({ displayName: 'Captain Dru' })
-        .where(eq(users.handle, 'drufball'))
+        .set({ displayName: 'Cap' })
+        .where(eq(users.handle, 'captain'))
       await seedCrew(db)
-      expect(defined(await getUserByHandle(db, 'drufball')).displayName).toBe(
-        'Captain Dru',
+      expect(defined(await getUserByHandle(db, 'captain')).displayName).toBe(
+        'Cap',
       )
-      expect(defined(await getUserByHandle(db, 'drufball')).id).toBe(dru.id)
+      expect(defined(await getUserByHandle(db, 'captain')).id).toBe(captain.id)
     })
   })
 })

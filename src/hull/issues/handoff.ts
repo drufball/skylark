@@ -1,7 +1,7 @@
 import { and, eq, ne } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
-import { agentSessions } from '@hull/agent/schema'
+import { runningSessionIds } from '@hull/agent/service'
 import { emitEvent } from '@hull/events/bus'
 import { PUBLIC_AUDIENCE } from '@hull/events/service'
 import { getUserByHandle, handleOf } from '@hull/users/service'
@@ -67,18 +67,28 @@ export async function runningHands(
   issueId: string,
   exceptUserId: string,
 ): Promise<string[]> {
-  const rows = await db
-    .select({ agentUserId: issueSessions.agentUserId })
+  // Two questions, two owners: this service knows which sessions hang off the
+  // issue (its own issue_sessions links); the agent service answers which of
+  // those are mid-turn — without issues ever reading the sessions table.
+  const links = await db
+    .select({
+      agentUserId: issueSessions.agentUserId,
+      sessionId: issueSessions.sessionId,
+    })
     .from(issueSessions)
-    .innerJoin(agentSessions, eq(issueSessions.sessionId, agentSessions.id))
     .where(
       and(
         eq(issueSessions.issueId, issueId),
-        eq(agentSessions.status, 'running'),
         ne(issueSessions.agentUserId, exceptUserId),
       ),
     )
-  return rows.map((r) => r.agentUserId)
+  const running = new Set(
+    await runningSessionIds(
+      db,
+      links.map((l) => l.sessionId),
+    ),
+  )
+  return links.filter((l) => running.has(l.sessionId)).map((l) => l.agentUserId)
 }
 
 /**

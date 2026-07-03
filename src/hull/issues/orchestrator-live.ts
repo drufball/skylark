@@ -12,6 +12,7 @@ import { findHostedModel } from '@hull/agent/models'
 import { createServerRuntime } from '@hull/agent/fake-session'
 import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
 import { seedAndWireProfiles } from '@hull/agent/profiles'
+import { operatorHandle, operatorSeed } from '@hull/users/actor'
 import { getUserByHandle, seedCrew } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
 
@@ -179,7 +180,7 @@ export async function ensureOrchestrator(): Promise<Orchestrator> {
   // restart (the explicit `npm run agent seed` is the converge-back door).
   // Best-effort: a seed hiccup mustn't hold the ship.
   try {
-    await seedCrew(systemDb)
+    await seedCrew(systemDb, operatorSeed())
     await seedAndWireProfiles(systemDb, { convergeAll: false })
     await seedPlaybooks(systemDb)
   } catch (err) {
@@ -191,7 +192,7 @@ export async function ensureOrchestrator(): Promise<Orchestrator> {
   // with no actor would fail closed. It reacts to events, not requests.
   const builder =
     (await getUserByHandle(systemDb, 'builder')) ??
-    (await getUserByHandle(systemDb, 'drufball'))
+    (await getUserByHandle(systemDb, operatorHandle()))
   const runtime = createServerRuntime(systemDb)
 
   const orch = createOrchestrator({

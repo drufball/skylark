@@ -270,9 +270,9 @@ describe('agent profiles + extensions service', () => {
 
     const chat = defined(await getProfileByName(db, CHAT_PROFILE.name))
     const tilde = defined(await getUserByHandle(db, 'tilde'))
-    const dru = defined(await getUserByHandle(db, 'drufball'))
+    const captain = defined(await getUserByHandle(db, 'captain'))
     expect(tilde.profileId).toBe(chat.id) // agent → chat
-    expect(dru.profileId).toBeNull() // human → untouched
+    expect(captain.profileId).toBeNull() // human → untouched
     expect(await listProfiles(db)).toHaveLength(4)
 
     // The role crew boot with their own profiles, not the chat default.

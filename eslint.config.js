@@ -4,6 +4,19 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 import prettier from 'eslint-config-prettier'
 
+// `systemDb` (hull/db/client) is the RLS-BYPASSING superuser handle. Crew
+// access is fail-closed by construction only as long as request/agent paths go
+// through `db` + `withActor`; handing them `systemDb` silently reopens the
+// whole leak. Import-banned everywhere (hoisted so the per-deck overrides
+// below can add their own restrictions without dropping this one — a scoped
+// `no-restricted-imports` config REPLACES the global one, it doesn't merge).
+const systemDbBan = {
+  name: '@hull/db/client',
+  importNames: ['systemDb'],
+  message:
+    'systemDb bypasses RLS — use `db` + `withActor` (or `withCurrentActor`). Only fixed system plumbing may use it; if this file genuinely needs every row, add it to the allowlist override in eslint.config.js.',
+}
+
 // Lint = correctness only. Formatting belongs to Prettier, and `prettier` (last)
 // switches off every rule that would overlap, so the two never fight.
 export default defineConfig(
@@ -45,21 +58,46 @@ export default defineConfig(
     plugins: { 'react-hooks': reactHooks },
     rules: reactHooks.configs['recommended-latest'].rules,
   },
-  // `systemDb` (hull/db/client) is the RLS-BYPASSING superuser handle. Crew
-  // access is fail-closed by construction only as long as request/agent paths
-  // go through `db` + `withActor`; handing them `systemDb` silently reopens the
-  // whole leak. So it's import-banned everywhere…
+  // The systemDb ban, everywhere…
   {
+    rules: {
+      'no-restricted-imports': ['error', { paths: [systemDbBan] }],
+    },
+  },
+  // …plus the deck direction (src/zine.md): imports flow home → rigging →
+  // hull, never the other way. Only the src/ serving layer (routes/router)
+  // crosses all three. The `**/…/**` patterns catch relative paths that dodge
+  // the aliases.
+  {
+    files: ['src/hull/**'],
     rules: {
       'no-restricted-imports': [
         'error',
         {
-          paths: [
+          paths: [systemDbBan],
+          patterns: [
             {
-              name: '@hull/db/client',
-              importNames: ['systemDb'],
+              group: ['@rigging/*', '@home/*', '**/rigging/**', '**/home/**'],
               message:
-                'systemDb bypasses RLS — use `db` + `withActor` (or `withCurrentActor`). Only fixed system plumbing may use it; if this file genuinely needs every row, add it to the allowlist override in eslint.config.js.',
+                'The hull imports nothing above it (home → rigging → hull) — a hull that reaches upward breaks every ship that clones it.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/rigging/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [systemDbBan],
+          patterns: [
+            {
+              group: ['@home/*', '**/home/**'],
+              message:
+                'Rigging must not import home — home is sovereign, the stdlib cannot depend on it.',
             },
           ],
         },
