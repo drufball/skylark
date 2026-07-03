@@ -17,7 +17,12 @@ import { errorMessage } from '@hull/lib/errors'
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
 import { withAgentMemory, type AgentMemoryLoader } from './memory'
-import { chatModelRef, defaultModelRef, resolveModel } from './models'
+import {
+  chatModelRef,
+  defaultModelRef,
+  providerConfigured,
+  resolveModel,
+} from './models'
 import { getProfileById, resolveProfileExtensionPaths } from './profiles'
 import { resolveSessionOptions, type ResolvedProfile } from './session-config'
 import {
@@ -77,13 +82,12 @@ export const DEFAULT_MODEL = defaultModelRef()
  * configured" so a broken credential store degrades to local, never crashes
  * the boot.
  */
-export const CHAT_MODEL = chatModelRef((provider) => {
-  try {
-    return AuthStorage.create().getAuthStatus(provider).configured
-  } catch {
-    return false
-  }
-})
+export const CHAT_MODEL = chatModelRef((provider) =>
+  providerConfigured(
+    (p) => AuthStorage.create().getAuthStatus(p).configured,
+    provider,
+  ),
+)
 
 /**
  * The profile a session boots with when it has no profileId — the pre-profiles
