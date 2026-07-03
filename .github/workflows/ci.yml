@@ -1,4 +1,4 @@
-name: format, lint, typecheck, test
+name: format, lint, knip, typecheck, test
 
 on:
   push:
@@ -16,8 +16,8 @@ jobs:
           cache: npm
       # Same bootstrap the whole crew uses — local, worktrees, Claude sessions, CI.
       - run: ./scripts/setup
-      # format:check + lint + typecheck + test. Tests run on in-memory PGlite,
-      # so CI needs no Postgres.
+      # format:check + lint + knip + typecheck + test. Tests run on in-memory
+      # PGlite, so CI needs no Postgres.
       - run: npm run check
 
   # Two coverage gates sharing one test run: a global threshold (vitest.config.ts)

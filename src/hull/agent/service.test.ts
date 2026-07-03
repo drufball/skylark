@@ -139,12 +139,6 @@ describe('agent service persistence', () => {
       ).toEqual(['mid'])
     })
 
-    it('filters to not-running sessions', async () => {
-      expect(
-        (await listSessions(db, { running: false })).map((s) => s.id),
-      ).toEqual(['new', 'old'])
-    })
-
     it('filters by last-message date', async () => {
       expect(
         (await listSessions(db, { since: new Date('2023-01-01') })).map(

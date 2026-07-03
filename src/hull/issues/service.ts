@@ -330,23 +330,6 @@ export async function setBuildContext(
     .where(eq(issues.id, issueId))
 }
 
-/**
- * Point an issue at a playbook. Sensible only before work starts — the
- * orchestrator resolves the playbook on each → building, so changing it
- * mid-build changes who resumes. No door exposes this yet: an issue's
- * playbook is picked at filing time and changed only here (tests) or by SQL.
- */
-export async function setIssuePlaybook(
-  db: Database,
-  issueId: string,
-  playbookId: string,
-): Promise<void> {
-  await db
-    .update(issues)
-    .set({ playbookId, updatedAt: new Date() })
-    .where(eq(issues.id, issueId))
-}
-
 // --- Issue sessions: which agents have a hand on an issue ---------------------
 
 /**

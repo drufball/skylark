@@ -1,4 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
@@ -17,11 +18,10 @@ import {
   createIssue,
   setBuildContext,
   recordIssueSession,
-  setIssuePlaybook,
   transitionIssue,
 } from './service'
 import { upsertPlaybook } from './playbooks'
-import type { IssueRow } from './schema'
+import { issues, type IssueRow } from './schema'
 
 let db: Database
 let close: () => Promise<void>
@@ -74,6 +74,17 @@ async function buildingIssue(
     worktreePath: `/wt/fix-the-mast-${issue.nano}`,
   })
   return issue
+}
+
+/**
+ * Point an issue at a playbook by writing the row directly — no production
+ * code sets an issue's playbook after filing, so the tests do it by SQL.
+ */
+async function pointIssueAtPlaybook(
+  issueId: string,
+  playbookId: string,
+): Promise<void> {
+  await db.update(issues).set({ playbookId }).where(eq(issues.id, issueId))
 }
 
 /** The handoff events announced on an issue's topic. */
@@ -252,7 +263,7 @@ describe('requestHandoff — playbook membership', () => {
       memberIds: [builder.id, babysitter.id],
       entrypointId: builder.id,
     })
-    await setIssuePlaybook(db, issue.id, playbook.id)
+    await pointIssueAtPlaybook(issue.id, playbook.id)
     await expect(
       requestHandoff(db, {
         issueRef: issue.nano,
@@ -271,7 +282,7 @@ describe('requestHandoff — playbook membership', () => {
       memberIds: [builder.id, babysitter.id],
       entrypointId: builder.id,
     })
-    await setIssuePlaybook(db, issue.id, playbook.id)
+    await pointIssueAtPlaybook(issue.id, playbook.id)
     const pass = await requestHandoff(db, {
       issueRef: issue.nano,
       actorId: builder.id,

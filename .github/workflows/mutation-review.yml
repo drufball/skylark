@@ -4,15 +4,15 @@ name: mutation review
 # the agent runs mutation testing on the diff, triages the surviving mutants,
 # and leaves comments. The PR author decides what to act on.
 #
-# One automatic pass per PR (open / ready-for-review, skipping drafts).
-# Comment `@mutation-review` to request a fresh review.
+# Currently disabled for automatic runs — the Tessl backend 404s launch-runs
+# under API-key auth. Re-enable the pull_request trigger when the Tessl backend
+# accepts API-key launch-runs. Until then, comment `@mutation-review` on a PR
+# to request a review on demand.
 #
 # Runs via `tessl launch skill --cloud` — the entire job (npm install, mutation
 # testing, triage, commenting) happens in a Tessl cloud sandbox.
 
 on:
-  pull_request:
-    types: [opened, ready_for_review]
   issue_comment:
     types: [created]
 
@@ -40,8 +40,6 @@ jobs:
         github.event.comment.author_association == 'ADMIN'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
     steps:
       - uses: actions/checkout@v6
 

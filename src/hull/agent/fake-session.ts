@@ -79,8 +79,9 @@ class FakeSession implements PiSession {
     return Promise.resolve()
   }
 
+  // isStreaming is never set true (prompt is synchronous), so there is
+  // nothing for abort to clear.
   abort(): Promise<void> {
-    this.isStreaming = false
     return Promise.resolve()
   }
 

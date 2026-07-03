@@ -46,7 +46,7 @@ import { useShipLog } from '@rigging/lib/use-ship-log'
 type AgentTab = 'sessions' | 'profiles' | 'crew' | 'playbooks'
 
 interface AgentsSearch {
-  tab?: AgentTab
+  tab: AgentTab
   session?: string
 }
 
@@ -90,7 +90,7 @@ export const Route = createFileRoute('/agents')({
 })
 
 function AgentsRoute() {
-  const { tab = 'sessions', session: activeId } = Route.useSearch()
+  const { tab, session: activeId } = Route.useSearch()
   const {
     sessions,
     profiles,

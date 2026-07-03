@@ -2,7 +2,6 @@ import { Anchor } from 'lucide-react'
 
 import type { ShipHealth } from '@hull/health/service'
 import { cn } from '@rigging/lib/utils'
-import { Button } from '@rigging/components/ui/button'
 import {
   Card,
   CardContent,
@@ -52,7 +51,6 @@ export function ShipStatus({ health }: { health: ShipHealth }) {
               The ship is asleep — try <code>npm run db:up</code>.
             </p>
           )}
-          <Button className="w-fit">Hoist the sails ☀️🏴‍☠️</Button>
         </CardContent>
       </Card>
     </main>

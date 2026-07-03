@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Anchor, Loader2, Plus, Send, Square } from 'lucide-react'
+import { Anchor, Loader2, Send, Square } from 'lucide-react'
 
 import type { ChatItem } from '@hull/agent/transcript'
 import { truncate } from '@hull/lib/text'
@@ -8,9 +8,11 @@ import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
 
-// The agent chat, presentational and routing-agnostic: it takes its data and a
-// set of callbacks, and knows nothing about fetching, polling, or URLs. A thin
-// route wires it to the agent service and the browser's address bar.
+// The agent-session monitor, presentational and routing-agnostic: it takes its
+// data and a set of callbacks, and knows nothing about fetching, polling, or
+// URLs. A thin route wires it to the agent service and the browser's address
+// bar. It never starts sessions — those are created by chat/issues — it only
+// watches them and unsticks a wedged one with a direct message.
 
 export interface SessionSummary {
   id: string
@@ -30,12 +32,9 @@ export interface AgentChatViewProps {
   onSend: (text: string) => void
   onCancel: () => void
   onSelect: (id: string) => void
-  /** Start a new conversation. Omitted in the agent-monitor, where sessions are
-   *  created by chat/issues, not here — the "New" button then disappears. */
-  onNew?: () => void
-  /** Override the empty-state copy (the monitor isn't a "first mate" front door). */
-  emptyTitle?: string
-  emptyHint?: string
+  /** The empty-state copy, shown when no session is selected. */
+  emptyTitle: string
+  emptyHint: string
 }
 
 export function AgentChatView({
@@ -48,7 +47,6 @@ export function AgentChatView({
   onSend,
   onCancel,
   onSelect,
-  onNew,
   emptyTitle,
   emptyHint,
 }: AgentChatViewProps) {
@@ -58,7 +56,6 @@ export function AgentChatView({
         sessions={sessions}
         activeId={activeId}
         onSelect={onSelect}
-        onNew={onNew}
       />
       <section className="flex min-w-0 flex-1 flex-col">
         <Transcript
@@ -88,25 +85,12 @@ function SessionList({
   sessions,
   activeId,
   onSelect,
-  onNew,
-}: Pick<AgentChatViewProps, 'sessions' | 'activeId' | 'onSelect' | 'onNew'>) {
+}: Pick<AgentChatViewProps, 'sessions' | 'activeId' | 'onSelect'>) {
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r bg-muted/30">
       <div className="flex items-center gap-2 p-3">
         <Anchor className="size-5 text-muted-foreground" />
         <span className="font-semibold">Skylark</span>
-        {onNew && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-auto"
-            onClick={onNew}
-            aria-label="New chat"
-          >
-            <Plus className="size-4" />
-            New
-          </Button>
-        )}
       </div>
       <ScrollArea className="flex-1">
         <nav className="flex flex-col gap-1 p-2">
@@ -163,13 +147,8 @@ function Transcript({
       <div className="flex flex-1 items-center justify-center p-8 text-center">
         <div className="max-w-sm">
           <Anchor className="mx-auto mb-3 size-8 text-muted-foreground" />
-          <p className="text-lg font-medium">
-            {emptyTitle ?? 'Your first mate is aboard'}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {emptyHint ??
-              'Ask for anything — read the code, run a command, build a thing. Send a message to begin.'}
-          </p>
+          <p className="text-lg font-medium">{emptyTitle}</p>
+          <p className="text-sm text-muted-foreground">{emptyHint}</p>
         </div>
       </div>
     )

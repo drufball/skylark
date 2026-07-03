@@ -102,7 +102,8 @@ function EntryRow({
     </>
   )
 
-  if (entry.issueId === null) {
+  const { issueId } = entry
+  if (issueId === null) {
     return (
       <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
         {body}
@@ -113,7 +114,7 @@ function EntryRow({
     <button
       type="button"
       onClick={() => {
-        onOpenIssue(entry.issueId ?? '')
+        onOpenIssue(issueId)
       }}
       className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
     >

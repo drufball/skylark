@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import { firstLine, truncate } from '@hull/lib/text'
@@ -66,18 +66,15 @@ export async function getSession(
 
 /**
  * List sessions, newest activity first. Filters compose:
- * - `running`: only sessions with a turn in flight (or only those without).
+ * - `running`: only sessions with a turn in flight.
  * - `since`: only sessions whose last message is at or after this time.
  */
 export async function listSessions(
   db: Database,
-  filters: { running?: boolean; since?: Date } = {},
+  filters: { running?: true; since?: Date } = {},
 ): Promise<AgentSessionRow[]> {
   const conditions = []
-  if (filters.running === true)
-    conditions.push(eq(agentSessions.status, 'running'))
-  if (filters.running === false)
-    conditions.push(ne(agentSessions.status, 'running'))
+  if (filters.running) conditions.push(eq(agentSessions.status, 'running'))
   if (filters.since)
     conditions.push(gte(agentSessions.lastMessageAt, filters.since))
 
