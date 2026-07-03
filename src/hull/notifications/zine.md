@@ -23,8 +23,8 @@ agent is woken to review and file the next piece).
   auto-watch topics (issues); acting is caring, so creators, commenters, and
   status-movers all watch through the same rule — and by **owning**: an
   `issue.opened` event carries its `ownerId`, and the reactor subscribes the
-  owner too, so someone an issue is filed FOR hears about it without ever
-  acting on it.
+  owner too, so someone an issue is filed FOR hears about it without ever acting
+  on it.
 - **The reactor** — a `ShipLogReactor` on systemDb: reads each durable event,
   applies the auto-watch, writes an inbox row per other watcher, and announces
   each on the owner's private `notify:<userId>` topic (the visibility gate

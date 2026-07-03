@@ -9,10 +9,10 @@ discusses it, and where agents are launched to actually do it. An issue is a
 thread with a lifecycle: `open` (a discussion) → `building` (agents are on it,
 in the issue's one git worktree) → `done` (merged) or `closed` (dropped). Every
 issue has an **owner** (who answers for it, defaulting to the creator), and
-agents working an issue pass a **baton** between each other with `handoff` —
-one agent, one turn at a time, all in the same worktree. Comments, status
-changes, and handoffs ride the ship's log, so the board updates live and —
-crucially — the **orchestrator** can react across processes.
+agents working an issue pass a **baton** between each other with `handoff` — one
+agent, one turn at a time, all in the same worktree. Comments, status changes,
+and handoffs ride the ship's log, so the board updates live and — crucially —
+the **orchestrator** can react across processes.
 
 The orchestrator is the heart of this milestone and the thing that proves the
 event bus. It runs in the web-server process, subscribes to the ship's log, and
@@ -40,18 +40,17 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
 - **Issue session** — a row in `issue_sessions`: `(issueId, agentUserId)` →
   `sessionId`. Which agents have a hand on an issue, one session per (issue,
   agent), every one of them with `cwd` = the issue's ONE worktree. The builder's
-  session is a row here like any other; links are kept (not deleted) on
-  teardown — the session rows are the durable transcript.
+  session is a row here like any other; links are kept (not deleted) on teardown
+  — the session rows are the durable transcript.
 - **Comment** — a row in `issue_comments`: `id`, `issueId`, `authorId`, `body`.
   A forum reply, or an agent's note when it pauses for clarification.
 - **Handoff** (`handoff.ts`) — the baton: `requestHandoff` validates a pass and
   announces `issue.handoff` on the issue's topic. A target is a crew **agent**
-  (a turn is driven for it in the shared worktree) or the special word
-  **OWNER** (the issue's owner is pinged through
-  [notifications](../notifications/zine.md) — an inbox row for a human, an
-  agent wake for an agent). One baton per issue: a pass is refused while
-  another agent's session on the issue is mid-turn (the caller being mid-turn
-  is expected — handing off is a turn's last action).
+  (a turn is driven for it in the shared worktree) or the special word **OWNER**
+  (the issue's owner is pinged through [notifications](../notifications/zine.md)
+  — an inbox row for a human, an agent wake for an agent). One baton per issue:
+  a pass is refused while another agent's session on the issue is mid-turn (the
+  caller being mid-turn is expected — handing off is a turn's last action).
 - **The state machine** — `nextStatus(from, to)` in `service.ts`: the pure,
   exhaustively-tested heart. Legal moves are `open↔building`, `building→done`,
   `open|building→closed`; `done` and `closed` are terminal; a status never
@@ -60,9 +59,9 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
 - **Events** — `issue.status_changed` on every transition, `issue.commented` on
   every comment, and `issue.handoff` on every baton pass or owner ping, each
   emitted **once** with topic `issue:<id>` and audience `public`. The thread
-  view subscribes to the exact topic (`issue:<id>`); the board subscribes to
-  the wildcard (`issue:*`); the orchestrator and the notifications reactor
-  listen too. One topic, many subscribers — no dual-emit.
+  view subscribes to the exact topic (`issue:<id>`); the board subscribes to the
+  wildcard (`issue:*`); the orchestrator and the notifications reactor listen
+  too. One topic, many subscribers — no dual-emit.
 - **The orchestrator** (`orchestrator.ts`) — the build-lifecycle brain. Pure of
   I/O by injection: it takes a `GitOps` (worktree/git/fs), an agent runtime, and
   a slug generator as dependencies, so its decisions are unit-tested against
@@ -74,11 +73,11 @@ between Chat, Issues, and a placeholder Agents slot — is rigging too.
   falls back to slugifying the title), and `ensureOrchestrator` (boots it into
   the server process, subscribes it to `shipLogBus`, runs reconciliation). All
   `v8 ignore`d — the live builder is exercised manually, not in CI.
-- **Doors** — `cli.ts` (`npm run issue`: `new <title> [--body <text>] [--chat
-  <id>] [--owner <handle>]`, `list`, `show`, `comment`, `handoff <id>
-  <agent|OWNER> <message>`, `status`, and the verb shorthands
-  `building`/`open`/`done`/`close`) and `server.ts` (the web doors). The CLI
-  attributes every action to `cliActor()`, so the orchestrator's
+- **Doors** — `cli.ts` (`npm run issue`:
+  `new <title> [--body <text>] [--chat <id>] [--owner <handle>]`, `list`,
+  `show`, `comment`, `handoff <id> <agent|OWNER> <message>`, `status`, and the
+  verb shorthands `building`/`open`/`done`/`close`) and `server.ts` (the web
+  doors). The CLI attributes every action to `cliActor()`, so the orchestrator's
   `SKYLARK_ACTOR=<agent id>` command prefix makes each agent's comments,
   transitions, and handoffs show as that agent.
 - **The views** (rigging) — the **board** (issues grouped by status, author +
@@ -100,17 +99,18 @@ builder session with `cwd` = the worktree and `agentUserId` = the builder, and
 fires a turn seeded with the issue + the ship-feature contract. The turn's live
 events become the issue's `statusLine`.
 
-**A handoff, end to end.** The builder finishes its part and, as its turn's
-last action, runs `SKYLARK_ACTOR=<its id> npm run issue -- handoff <nano>
-babysitter "PR #12 open — take it home"`. `requestHandoff` validates (target is
-an agent, issue is building, no other hand mid-turn) and emits `issue.handoff`.
-The orchestrator hears it, ensures the target's session exists — booted with
-the **target's own profile** (users.profileId) and identity, `cwd` = the same
-worktree — and fires a turn briefed with the message. The notifications reactor
-fans the same event to the issue's watchers, so the crew sees the baton move.
-`handoff <nano> OWNER "<message>"` skips the worktree turn entirely: the
-reactor delivers straight to the owner's inbox, and if the owner is an agent
-the waker wakes it in the issue's origin chat.
+**A handoff, end to end.** The builder finishes its part and, as its turn's last
+action, runs
+`SKYLARK_ACTOR=<its id> npm run issue -- handoff <nano> babysitter "PR #12 open — take it home"`.
+`requestHandoff` validates (target is an agent, issue is building, no other hand
+mid-turn) and emits `issue.handoff`. The orchestrator hears it, ensures the
+target's session exists — booted with the **target's own profile**
+(users.profileId) and identity, `cwd` = the same worktree — and fires a turn
+briefed with the message. The notifications reactor fans the same event to the
+issue's watchers, so the crew sees the baton move.
+`handoff <nano> OWNER "<message>"` skips the worktree turn entirely: the reactor
+delivers straight to the owner's inbox, and if the owner is an agent the waker
+wakes it in the issue's origin chat.
 
 **Why event-driven, not inline.** The builder runs `npm run issue done <id>`
 from its bash tool — a separate CLI process. That transition is only a durable
@@ -195,16 +195,16 @@ id) through their public functions, not their tables.
 - **Owner ≠ author, and OWNER rides notifications, not a turn.** `ownerId`
   defaults to the creator and exists so an agent can file work someone else
   answers for. A `handoff OWNER` never boots a worktree session — the owner
-  reviews from wherever they are (inbox for a human, an agent wake in the
-  origin chat for an agent; see [notifications](../notifications/zine.md)).
-  Corollary: a baton pass to an agent is delivered ONLY as the orchestrator's
-  turn — the reactor excludes the target from fan-out so an inbox wake can't
-  double-drive it.
-- **Reconcile resumes the builder's hand only.** Startup reconciliation
-  re-seeds a building issue's turn on the builder session — if the baton was
-  with another agent when the server restarted, that hand stays paused until
-  the next handoff or a human nudge. Fine while the builder is the entrypoint
-  of every flow; revisit when playbooks make the entrypoint explicit data.
+  reviews from wherever they are (inbox for a human, an agent wake in the origin
+  chat for an agent; see [notifications](../notifications/zine.md)). Corollary:
+  a baton pass to an agent is delivered ONLY as the orchestrator's turn — the
+  reactor excludes the target from fan-out so an inbox wake can't double-drive
+  it.
+- **Reconcile resumes the builder's hand only.** Startup reconciliation re-seeds
+  a building issue's turn on the builder session — if the baton was with another
+  agent when the server restarted, that hand stays paused until the next handoff
+  or a human nudge. Fine while the builder is the entrypoint of every flow;
+  revisit when playbooks make the entrypoint explicit data.
 - **What's verified vs. deferred.** The orchestrator's decision logic — create/
   reuse/remove worktrees, start/resume/cancel sessions, idempotency, the
   defensive done-refresh, status-line writing, the bus-note handler, and startup
