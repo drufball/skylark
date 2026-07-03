@@ -77,6 +77,14 @@ describe('chat access (RLS)', () => {
     expect(seen?.id).toBe(chatId)
   })
 
+  it('refuses to create a chat the creator is not in — the row would be invisible', async () => {
+    await expect(
+      asActor(db, alice, (tx) =>
+        createChat(tx, { id: uuidv7(), memberIds: [bob] }),
+      ),
+    ).rejects.toThrow(/creator must be one of memberIds/)
+  })
+
   it('hides a non-member chat’s messages and reveals a member’s', async () => {
     const aliceSeesC2 = await asActor(db, alice, (tx) => listMessages(tx, c2))
     expect(aliceSeesC2).toEqual([]) // alice is not in c2
