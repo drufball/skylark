@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { and, asc, eq, isNull } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, isNull, notInArray } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 
@@ -112,6 +112,28 @@ export async function setUserProfile(
   profileId: string,
 ): Promise<void> {
   await db.update(users).set({ profileId }).where(eq(users.id, userId))
+}
+
+/**
+ * Null out profile references that no longer resolve. The users table has no
+ * FK onto agent_profiles (the services stay decoupled), so a rebuilt profiles
+ * table can leave users pointing at ghost ids — and every session boot for
+ * that agent then dies on agent_sessions' real FK. The agent service passes
+ * the ids that exist; anything else becomes null, which the very next wire
+ * step re-points at the default. Self-healing, every boot.
+ */
+export async function clearDanglingProfiles(
+  db: Database,
+  validProfileIds: string[],
+): Promise<void> {
+  const dangling =
+    validProfileIds.length === 0
+      ? isNotNull(users.profileId)
+      : and(
+          isNotNull(users.profileId),
+          notInArray(users.profileId, validProfileIds),
+        )
+  await db.update(users).set({ profileId: null }).where(dangling)
 }
 
 /**

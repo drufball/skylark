@@ -4,6 +4,7 @@ import { asc, eq, inArray } from 'drizzle-orm'
 import type { Database } from '@hull/db/client'
 import {
   assignDefaultAgentProfile,
+  clearDanglingProfiles,
   getUserByHandle,
   setUserProfile,
 } from '@hull/users/service'
@@ -335,6 +336,13 @@ export async function seedAndWireProfiles(
   opts: { convergeAll?: boolean } = {},
 ): Promise<void> {
   await seedProfiles(db, opts)
+  // Heal before wiring: a users.profileId pointing at a profile that no longer
+  // exists (rebuilt table, hand-deleted row) becomes null here, so the default
+  // assignment below re-points it instead of leaving a session-boot FK bomb.
+  await clearDanglingProfiles(
+    db,
+    (await listProfiles(db)).map((p) => p.id),
+  )
   const chat = await getProfileByName(db, CHAT_PROFILE.name)
   if (chat) await assignDefaultAgentProfile(db, chat.id)
   // Named crew whose whole point is a specific profile converge onto it — the
