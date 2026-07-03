@@ -282,7 +282,9 @@ describe('slugFromCompletion', () => {
         Promise.reject(new Error('model offline')),
       )
       expect(slug).toBe('fix-the-login-bug')
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('model offline'))
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('model offline'),
+      )
     } finally {
       warn.mockRestore()
     }

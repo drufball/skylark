@@ -17,9 +17,12 @@ cd "$(dirname "$0")/.."
 command="$(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write((JSON.parse(s).tool_input||{}).command||"")}catch{}})')"
 
 # Gate only git add / git commit — allowing global options before the verb
-# (`git -C path add`, `git -c k=v commit`) and a leading separator
-# (`… && git commit`). The trailing class keeps `add-foo`/`addition` out.
-if ! printf '%s' "$command" | grep -Eq '(^|[[:space:];&|(])git([[:space:]]+(-[Cc][[:space:]]+[^[:space:]]+|-[^[:space:]]+))*[[:space:]]+(add|commit)([^[:alnum:]_-]|$)'; then
+# (`git -C path add`, `git -c k=v commit`, quoted values with spaces like
+# `git -c user.name="a b" commit`) and a leading separator (`… && git commit`).
+# The \b boundaries keep `legit add`/`git addition` out. This is the SAME
+# regex as isCommitCommand in src/hull/agent/extensions/build-gates/gates.ts
+# (the agent-side mirror, where it is unit-tested) — keep the two in sync.
+if ! printf '%s' "$command" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{process.exit(/\bgit(?:\s+-\S+(?:\s+(?!-)(?:[^\s\"']|\"[^\"]*\"|'[^']*')+)?)*\s+(add|commit)\b/.test(s)?0:1)})"; then
   exit 0
 fi
 
