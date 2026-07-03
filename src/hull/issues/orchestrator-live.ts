@@ -156,7 +156,7 @@ export async function generateSlug(issue: IssueRow): Promise<string> {
   }
 }
 
-let started: Orchestrator | undefined
+let started: Promise<Orchestrator> | undefined
 
 /**
  * Boot the orchestrator into the server process (idempotent): wire it to the
@@ -164,12 +164,25 @@ let started: Orchestrator | undefined
  * agent-initiated transitions from a separate CLI process are heard, and run
  * startup reconciliation for issues marooned in `building` by a restart.
  *
+ * The IN-FLIGHT promise is what's memoized, not the finished orchestrator: a
+ * burst of concurrent server-fn calls on a fresh boot would otherwise each get
+ * past a plain `if (started)` while the first boot is still awaiting its
+ * seeding, and run several boots — duplicate seeding, and worse, multiple
+ * orchestrators subscribed to the ship's log. A failed boot un-memoizes so the
+ * next call retries rather than caching the rejection forever.
+ *
  * The builder agent identity is the `builder` crew user if present, else the
  * operator — so SKYLARK_ACTOR is always a real id the issue CLI can attribute.
  */
-export async function ensureOrchestrator(): Promise<Orchestrator> {
-  if (started) return started
+export function ensureOrchestrator(): Promise<Orchestrator> {
+  started ??= boot().catch((err: unknown) => {
+    started = undefined
+    throw err
+  })
+  return started
+}
 
+async function boot(): Promise<Orchestrator> {
   // ENSURE the config the orchestrator runs on — crew, profiles, playbooks —
   // every boot, idempotently. hoist seeds the crew too, but the server must
   // not depend on how it was launched: entrypoint resolution reads
@@ -203,7 +216,6 @@ export async function ensureOrchestrator(): Promise<Orchestrator> {
     generateSlug,
   })
 
-  started = orch
   subscribeToShipLog(orch, 'issues orchestrator')
   return orch
 }

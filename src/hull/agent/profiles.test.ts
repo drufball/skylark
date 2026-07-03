@@ -138,6 +138,42 @@ describe('agent profiles + extensions service', () => {
     expect(await listExtensions(db)).toHaveLength(1)
   })
 
+  it('registerExtension survives a concurrent duplicate — one row, no throw', async () => {
+    // Two processes seed at once (server boot racing a CLI seed). Both miss
+    // the get-then-insert read; the writes must still converge on one row.
+    const [a, b] = await Promise.all([
+      registerExtension(db, {
+        name: 'build-gates',
+        description: 'from the server',
+        path: 'server/path.ts',
+      }),
+      registerExtension(db, {
+        name: 'build-gates',
+        description: 'from the cli',
+        path: 'cli/path.ts',
+      }),
+    ])
+    expect(a.id).toBe(b.id)
+    expect(await listExtensions(db)).toHaveLength(1)
+  })
+
+  it('upsertProfile survives a concurrent duplicate — one row, no throw', async () => {
+    const input = {
+      systemPrompt: 'a',
+      tools: null,
+      readContextFiles: true,
+      useRepoSkills: true,
+      extensionIds: [],
+      model: null,
+    }
+    const [a, b] = await Promise.all([
+      upsertProfile(db, { name: 'builder', ...input }),
+      upsertProfile(db, { name: 'builder', ...input }),
+    ])
+    expect(a.id).toBe(b.id)
+    expect(await listProfiles(db)).toHaveLength(1)
+  })
+
   it('upsertProfile is idempotent by name, updating fields', async () => {
     const first = await upsertProfile(db, {
       name: 'chat',
