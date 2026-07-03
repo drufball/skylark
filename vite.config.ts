@@ -24,8 +24,10 @@ const config = defineConfig({
     tanstackStart(),
     viteReact(),
   ],
-  watch: {
-    ignored: ['**/.claude/**', '**/.stryker-tmp/**', '**/reports/**'],
+  server: {
+    watch: {
+      ignored: ['**/.claude/**', '**/.stryker-tmp/**', '**/reports/**'],
+    },
   },
 })
 
