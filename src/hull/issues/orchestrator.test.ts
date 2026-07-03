@@ -1,4 +1,4 @@
-import { uuidv7, type AgentMessage } from '@earendil-works/pi-agent-core'
+import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,7 +12,7 @@ import {
   setUserProfile,
 } from '@hull/users/service'
 import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
-import { DEFAULT_MODEL } from '@hull/agent/runtime'
+import { DEFAULT_MODEL, type TurnResult } from '@hull/agent/runtime'
 import {
   createSession,
   getSession,
@@ -116,10 +116,10 @@ class FakeRuntime {
     sessionId: string,
     text: string,
     onEvent?: (e: AgentSessionEvent) => void,
-  ): Promise<AgentMessage[]> {
+  ): Promise<TurnResult> {
     this.turns.push({ sessionId, text })
     this.onTurn?.(sessionId, text, onEvent)
-    return Promise.resolve([])
+    return Promise.resolve({ queued: false, messages: [] })
   }
   cancel(sessionId: string): Promise<void> {
     this.cancelled.push(sessionId)

@@ -97,7 +97,7 @@ function fakeRuntime(db: Database, replyText: string): ChatAgentRuntime {
         role: 'assistant',
         message,
       })
-      return [message as never]
+      return { queued: false, messages: [message as never] }
     },
   }
 }
@@ -222,7 +222,7 @@ describe('chat orchestrator', () => {
           content: [{ type: 'text', text: 'done' }],
         }
         await appendMessage(db, { sessionId, role: 'assistant', message })
-        return [message as never]
+        return { queued: false as const, messages: [message as never] }
       },
     }
 
@@ -273,7 +273,7 @@ describe('chat orchestrator', () => {
           role: 'toolResult',
           message,
         })
-        return [message as never]
+        return { queued: false as const, messages: [message as never] }
       },
     }
     const orch = createChatOrchestrator({ db, runtime: silent })
@@ -281,6 +281,32 @@ describe('chat orchestrator', () => {
 
     // Only the human's message — no empty agent message posted.
     expect(await listMessages(db, chatId)).toHaveLength(1)
+  })
+
+  it('posts nothing (and logs no error) when the turn was queued mid-flight', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    // The agent's session is mid-turn: the prompt is folded into that turn,
+    // whose eventual reply covers it — this call must not post anything, and
+    // "queued" is a normal outcome, not an error.
+    const queued: ChatAgentRuntime = {
+      runTurn: () => Promise.resolve({ queued: true }),
+    }
+    const errSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    try {
+      const orch = createChatOrchestrator({ db, runtime: queued })
+      await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+      // Only the human's message — no empty agent message, no logged error.
+      expect(await listMessages(db, chatId)).toHaveLength(1)
+      expect(errSpy).not.toHaveBeenCalled()
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 
   it('answers only the @mentioned agent in a group', async () => {
@@ -334,12 +360,15 @@ describe('chat orchestrator', () => {
     // uses the return value instead of slicing the durable log.
     const directReturn: ChatAgentRuntime = {
       runTurn: () =>
-        Promise.resolve([
-          {
-            role: 'assistant',
-            content: [{ type: 'text', text: 'from return value' }],
-          },
-        ] as never[]),
+        Promise.resolve({
+          queued: false as const,
+          messages: [
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'from return value' }],
+            },
+          ] as never[],
+        }),
     }
 
     const orch = createChatOrchestrator({ db, runtime: directReturn })
@@ -591,7 +620,7 @@ describe('chat orchestrator', () => {
           content: [{ type: 'text', text: replyText }],
         }
         await appendMessage(db, { sessionId, role: 'assistant', message })
-        return [message as never]
+        return { queued: false as const, messages: [message as never] }
       },
     }
   }

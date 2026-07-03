@@ -146,7 +146,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     // turn writes a handful of durable progress events, never one per delta.
     let lastLine = 'thinking…'
     emitProgress(chatId, agent.userId, lastLine)
-    const produced = await runtime.runTurn(sessionId, prompt, (event) => {
+    const result = await runtime.runTurn(sessionId, prompt, (event) => {
       const line = chatProgressLine(event)
       if (line && line !== lastLine) {
         lastLine = line
@@ -154,7 +154,13 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       }
     })
 
-    const text = assistantTextFrom(produced)
+    // Queued: the prompt was folded into a turn already in flight on this
+    // session, whose eventual reply covers it — post nothing here, or the
+    // agent would double-speak (and an empty result is NOT "the agent had
+    // nothing to say").
+    if (result.queued) return
+
+    const text = assistantTextFrom(result.messages)
     if (text) {
       await addMessage(db, {
         id: uuidv7(),

@@ -101,6 +101,17 @@ export const DEFAULT_PROFILE: ResolvedProfile = {
 }
 
 /**
+ * What a turn call produced. `queued` means the text was folded into a turn
+ * already in flight (followUp) — no messages belong to THIS call; the running
+ * turn's eventual result covers it. Explicit, because "queued" and "completed
+ * with no text" must not look alike to callers deciding whether to post a
+ * reply.
+ */
+export type TurnResult =
+  | { queued: true }
+  | { queued: false; messages: AgentMessage[] }
+
+/**
  * Anything that can run an agent turn — the minimal slice other services drive
  * the runtime through, so each can declare a fake of just this. The real
  * `AgentRuntime` satisfies it structurally; the chat and issues orchestrators
@@ -111,7 +122,7 @@ export interface RunsTurns {
     sessionId: string,
     text: string,
     onEvent?: (event: AgentSessionEvent) => void,
-  ): Promise<AgentMessage[]>
+  ): Promise<TurnResult>
 }
 
 /**
@@ -431,17 +442,19 @@ export function createAgentRuntime(deps: {
   }
 
   /**
-   * Send a user message to a session and return the agent messages it produced.
+   * Send a user message to a session and report what happened.
    * - If a turn is already in flight, the message is queued (followUp) and
-   *   delivered after the current turn — this returns `[]` immediately.
+   *   delivered after the current turn — this returns `{ queued: true }`
+   *   immediately; the in-flight turn's result covers the queued text.
    * - Otherwise the session boots from history (if not already live) and the
    *   turn runs to completion, persisting at each turn boundary and returning
-   *   the agent messages that were durably appended this turn.
+   *   `{ queued: false, messages }` — the agent messages durably appended
+   *   this turn.
    *
    * `onEvent` streams live events (deltas, tool calls) to the caller — the CLI
    * prints them; the web layer relays them.
    *
-   * Robust to compaction: the return value is based on what flush actually
+   * Robust to compaction: the returned messages are what flush actually
    * appended to Postgres during this turn, not an index slice of the in-memory
    * array (which gets rewritten by compaction).
    */
@@ -449,14 +462,14 @@ export function createAgentRuntime(deps: {
     sessionId: string,
     text: string,
     onEvent?: (event: AgentSessionEvent) => void,
-  ): Promise<AgentMessage[]> {
+  ): Promise<TurnResult> {
     const entry = await ensureEntry(sessionId)
     const unsub = onEvent ? entry.session.subscribe(onEvent) : undefined
 
     try {
       if (entry.session.isStreaming) {
         await entry.session.followUp(text)
-        return []
+        return { queued: true }
       }
       // Reset the accumulator for this turn.
       entry.currentTurnMessages = []
@@ -466,7 +479,7 @@ export function createAgentRuntime(deps: {
         await entry.persistChain
         await announceStatus(sessionId, 'idle')
         // Return a copy so callers can't mutate the runtime's internal state.
-        return [...entry.currentTurnMessages]
+        return { queued: false, messages: [...entry.currentTurnMessages] }
       } catch (err) {
         // A turn (or a flush on its persistChain) failed. Drop the live entry:
         // its persistChain may now be permanently rejected, and reusing it would
