@@ -7,3 +7,4 @@
 
 ## Log
 - 2026-07-03: Re-filed #notz → #z7ja (vite server.watch.ignored for .claude/worktrees, .stryker-tmp) into chat 019f29fd… so the build wake-back can land; owner @drufball, playbook build.
+- 2026-07-03: #mp1q (Inbox UTC timestamps) done — formatLocalTime() in src/rigging/lib/format-local-time.ts (has tests), used by inbox view. Verified merged; no other UTC string-surgery in rigging views. Inbox is the only view rendering timestamps so far.
