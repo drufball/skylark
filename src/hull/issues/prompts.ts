@@ -80,6 +80,16 @@ export function buildPrompt(
 }
 
 /**
+ * A member's role-in-strategy brief, formatted as its own paragraph, or '' when
+ * none was set — the playbook-level instruction, distinct from the issue brief
+ * above it and the agent's own systemPrompt outside this turn entirely.
+ */
+function roleBlock(instructions: string | undefined): string {
+  if (!instructions) return ''
+  return `\n\nYour role on this playbook: ${instructions}`
+}
+
+/**
  * The prompt a non-build playbook's entrypoint is seeded with: the issue and
  * thread, plus the plain CLI contract — comment, hand off (roster or OWNER),
  * pause, done. No build-feature script, no PR talk: the issue's own words are
@@ -90,6 +100,12 @@ export function generalPrompt(
   comments: { authorHandle: string; body: string }[],
   /** The entrypoint agent's user id, for the SKYLARK_ACTOR command prefix. */
   entryUserId: string,
+  /**
+   * This entrypoint's role-in-strategy brief (from the playbook's
+   * memberInstructions), when the captain set one. Undefined leaves the
+   * prompt exactly as before.
+   */
+  roleInstructions?: string,
 ): string {
   const thread = threadBlock(comments)
   const issueCmd = actorCmd(entryUserId, 'issue')
@@ -98,6 +114,7 @@ export function generalPrompt(
     `Title: ${issue.title}\n` +
     (issue.body ? `\n${issue.body}\n` : '') +
     thread +
+    roleBlock(roleInstructions) +
     '\n\nYou are in a dedicated worktree for this issue. The issue itself is ' +
     'your brief — do what it asks.\n\n' +
     'Report back through the issue CLI. Always run it with the actor prefix ' +
@@ -125,13 +142,20 @@ export function handoffPrompt(
   fromHandle: string,
   message: string,
   toUserId: string,
+  /**
+   * The target's role-in-strategy brief (from the playbook's
+   * memberInstructions), when the captain set one. Undefined leaves the
+   * prompt exactly as before.
+   */
+  roleInstructions?: string,
 ): string {
   const issueCmd = actorCmd(toUserId, 'issue')
   return (
     `@${fromHandle} handed you issue #${issue.nano}.\n\n` +
     `Title: ${issue.title}\n\n` +
-    `Their message:\n${message}\n\n` +
-    'You are in the issue worktree, shared by every agent on this issue. ' +
+    `Their message:\n${message}` +
+    roleBlock(roleInstructions) +
+    '\n\nYou are in the issue worktree, shared by every agent on this issue. ' +
     `Read the full thread with: ${issueCmd} show ${issue.nano}\n\n` +
     'Do your part, then report back through the issue CLI. Always run it with ' +
     'the actor prefix shown so your work is attributed to you:\n' +

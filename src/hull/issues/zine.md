@@ -44,14 +44,19 @@ app-shell nav).
   [chat](../chat/zine.md)).
 - **Playbook** (`playbooks.ts`) — a row in `playbooks`: `name` (unique — the
   upsert key and what `--playbook` accepts), `description`, `memberIds` (agent
-  users allowed hands on the issue), `entrypointId` (who a → building seeds).
-  Deliberately NOT a state machine: the who-hands-to-whom knowledge lives in the
-  agents' own config and prompts; the playbook is the guardrail (membership) and
-  the starting gun (entrypoint). Two are seeded — `build` (the **builder**
-  implements to an open PR, then batons to the **babysitter**, who waits on CI
-  via the `background` tool and merges — or hands a fix brief back) and
-  `general` (the `hand` crew agent, full tools, the issue's own words as the
-  brief) — and the crew can add more from the Agents → Playbooks tab.
+  users allowed hands on the issue), `entrypointId` (who a → building seeds),
+  and `memberInstructions` (optional per-member brief for THIS strategy, keyed
+  by user id — `instructionsFor` looks one up; folded into the entrypoint's seed
+  prompt and a baton-pass prompt via `roleBlock` in `prompts.ts` when present,
+  distinct from the agent's own systemPrompt, which is identity, not strategy).
+  Deliberately NOT a state machine: the routing knowledge (who hands to whom,
+  when) lives in the agents' own config and prompts; the playbook is the
+  guardrail (membership) and the starting gun (entrypoint). Two are seeded —
+  `build` (the **builder** implements to an open PR, then batons to the
+  **babysitter**, who waits on CI via the `background` tool and merges — or
+  hands a fix brief back) and `general` (the `hand` crew agent, full tools, the
+  issue's own words as the brief) — and the crew can add more from the Agents →
+  Playbooks tab.
 - **Issue session** — a row in `issue_sessions`: `(issueId, agentUserId)` →
   `sessionId`. Which agents have a hand on an issue, one session per (issue,
   agent), every one of them with `cwd` = the issue's ONE worktree. The builder's
@@ -302,6 +307,16 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **Playbooks carry optional per-member instructions, reusable across every
+  issue that picks the strategy.** `playbooks.memberInstructions` is a
+  user-id-keyed map of role briefs; `instructionsFor` resolves one, and
+  `generalPrompt`/`handoffPrompt` fold it into the entrypoint's seed prompt or a
+  baton-pass prompt as its own paragraph when set. `buildPrompt` (the hardcoded
+  build-feature contract) doesn't take one — it's already fully scripted.
+  `validatePlaybookInput`/`validateRoster` reject an instruction keyed to an id
+  off the roster; `seedPlaybooks`' append-missing-member path preserves existing
+  instructions rather than clobbering them. The Playbooks editor grew a
+  per-selected-member textarea for it.
 - **Entrypoints boot from agent config, not `users.profileId`.** Profiles
   retired (see hull/agent/zine.md); the playbook still names WHO starts, but HOW
   is now data on that agent's own `users` row, written by `seedAgentConfig` in

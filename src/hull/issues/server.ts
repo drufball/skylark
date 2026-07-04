@@ -143,6 +143,8 @@ export interface PlaybookView {
   memberHandles: string[]
   entrypointId: string
   entrypointHandle: string
+  /** Per-member role-in-strategy brief, keyed by user id (see playbooks.ts). */
+  memberInstructions: Record<string, string>
   /** True for the ship default (what a null issues.playbookId means). */
   isDefault: boolean
 }
@@ -168,6 +170,7 @@ export const listPlaybooksView = createServerFn({ method: 'GET' }).handler(
         ),
         entrypointId: p.entrypointId,
         entrypointHandle: await handleOf(db, p.entrypointId),
+        memberInstructions: p.memberInstructions,
         isDefault: p.name === BUILD_PLAYBOOK_NAME,
       })),
     )

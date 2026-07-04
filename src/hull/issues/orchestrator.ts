@@ -27,7 +27,7 @@ import {
   runningHands,
   type IssueHandoffPayload,
 } from './handoff'
-import { BUILD_PLAYBOOK_NAME, playbookFor } from './playbooks'
+import { BUILD_PLAYBOOK_NAME, instructionsFor, playbookFor } from './playbooks'
 import type { IssueRow, IssueStatus } from './schema'
 import { buildPrompt, generalPrompt, handoffPrompt } from './prompts'
 
@@ -437,6 +437,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         const { sessionId, entryUserId, build } = await ensureEntrypoint(issue)
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
+        const playbook = await playbookFor(db, issue)
         const prompt = build
           ? buildPrompt(
               fresh ?? issue,
@@ -444,7 +445,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
               entryUserId,
               await babysitterHandleFor(issue),
             )
-          : generalPrompt(fresh ?? issue, thread, entryUserId)
+          : generalPrompt(
+              fresh ?? issue,
+              thread,
+              entryUserId,
+              playbook && instructionsFor(playbook, entryUserId),
+            )
         fireTurn(issueId, sessionId, prompt)
         break
       }
@@ -560,7 +566,13 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     fireTurn(
       issue.id,
       sessionId,
-      handoffPrompt(issue, fromHandle, payload.message, target.id),
+      handoffPrompt(
+        issue,
+        fromHandle,
+        payload.message,
+        target.id,
+        playbook && instructionsFor(playbook, target.id),
+      ),
     )
   }
 

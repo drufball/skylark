@@ -131,6 +131,24 @@ describe('generalPrompt', () => {
     expect(prompt).not.toContain('build-feature')
     expect(prompt).not.toContain('babysitter')
   })
+
+  it('folds in a role-in-strategy brief when the playbook set one', () => {
+    const prompt = generalPrompt(
+      issue,
+      [],
+      'hand-456',
+      'You triage: read the report, file follow-up issues, never fix code.',
+    )
+
+    expect(prompt).toContain('Your role on this playbook:')
+    expect(prompt).toContain('You triage: read the report')
+  })
+
+  it('omits the role paragraph when no brief was set', () => {
+    const prompt = generalPrompt(issue, [], 'hand-456', undefined)
+
+    expect(prompt).not.toContain('Your role on this playbook')
+  })
 })
 
 describe('handoffPrompt', () => {
@@ -173,5 +191,27 @@ describe('handoffPrompt', () => {
     const prompt = handoffPrompt(issue, 'alice', 'Review this', 'bob-789')
 
     expect(prompt).not.toContain('Thread so far')
+  })
+
+  it('folds in the target’s role-in-strategy brief when the playbook set one', () => {
+    const prompt = handoffPrompt(
+      issue,
+      'alice',
+      'Review this',
+      'bob-789',
+      'You review for security holes only — leave style to others.',
+    )
+
+    expect(prompt).toContain('Your role on this playbook:')
+    expect(prompt).toContain('You review for security holes only')
+  })
+
+  it('omits the role paragraph, and keeps clean spacing, when no brief was set', () => {
+    const prompt = handoffPrompt(issue, 'alice', 'Review this', 'bob-789')
+
+    expect(prompt).not.toContain('Your role on this playbook')
+    expect(prompt).toContain(
+      'Their message:\nReview this\n\nYou are in the issue worktree',
+    )
   })
 })
