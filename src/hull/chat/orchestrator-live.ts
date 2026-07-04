@@ -35,12 +35,17 @@ let unsubscribeHook: (() => void) | undefined
  * globalThis-based arm-once registry (defense in depth, survives module
  * re-execution). The boot module's registry prevents redundant boot calls;
  * this ensures the reactor itself is protected even if called directly.
+ * Stores the LIVE INSTANCE so module re-execution returns the same functioning
+ * orchestrator, not a stub (#2wkv).
  */
 interface GlobalWithChatOrchestrator {
-  __SKYLARK_CHAT_ORCHESTRATOR__?: { armed: boolean }
+  __SKYLARK_CHAT_ORCHESTRATOR__?: {
+    armed: boolean
+    instance?: ChatOrchestrator
+  }
 }
 
-function getRegistry(): { armed: boolean } {
+function getRegistry(): { armed: boolean; instance?: ChatOrchestrator } {
   const g = globalThis as GlobalWithChatOrchestrator
   g.__SKYLARK_CHAT_ORCHESTRATOR__ ??= { armed: false }
   return g.__SKYLARK_CHAT_ORCHESTRATOR__
@@ -65,20 +70,12 @@ function getRegistry(): { armed: boolean } {
 export function ensureChatOrchestrator(): ChatOrchestrator {
   const registry = getRegistry()
   if (started) return started
-  if (registry.armed) {
-    // Reactor already armed in a previous module execution but started lost.
-    // This shouldn't happen in normal operation (boot calls us once), but
-    // handle it gracefully: create a minimal stub that does nothing.
-    /* eslint-disable @typescript-eslint/no-empty-function */
-    const stub: ChatOrchestrator = {
-      respond: async () => {},
-      reply: async () => {},
-      wake: async () => {},
-      handleBusNote: async () => {},
-      reconcile: async () => {},
-    }
-    /* eslint-enable @typescript-eslint/no-empty-function */
-    return stub
+  if (registry.armed && registry.instance) {
+    // Reactor armed in a previous module execution but module state lost:
+    // restore the live instance from the registry so callers get the SAME
+    // functioning orchestrator, not a stub that silently drops work.
+    started = registry.instance
+    return registry.instance
   }
   registry.armed = true
   // On HMR reload, module state resets but subscriptions in other modules
@@ -92,6 +89,7 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
   // posture: it reads agents' inboxes and drives their sessions.
   const runtime = createServerRuntime(systemDb)
   const orchestrator = createChatOrchestrator({ db: systemDb, runtime })
+  registry.instance = orchestrator
   started = orchestrator
   unsubscribeBus = subscribeToShipLog(orchestrator, 'chat orchestrator')
 

@@ -37,6 +37,8 @@ let unsubscribe: (() => void) | undefined
  * globalThis-based arm-once registry (defense in depth, survives module
  * re-execution). The boot module's registry prevents redundant boot calls;
  * this ensures the reactor itself is protected even if called directly.
+ * The reactor subscription persists across module executions, so armed-but-lost
+ * is a valid steady state (the old subscription is still active) (#2wkv).
  */
 interface GlobalWithNotificationsReactor {
   __SKYLARK_NOTIFICATIONS_REACTOR__?: { armed: boolean }
@@ -60,7 +62,13 @@ function getRegistry(): { armed: boolean } {
 export function ensureNotificationsReactor(): void {
   const registry = getRegistry()
   if (booted) return
-  if (registry.armed) return // already armed in previous module execution
+  if (registry.armed) {
+    // Reactor armed in a previous module execution but module state lost:
+    // the subscription from the previous execution is still active in the bus,
+    // so just restore the booted flag and return normally.
+    booted = true
+    return
+  }
   registry.armed = true
   booted = true
   // On HMR reload, module state resets but the InProcessBus subscription

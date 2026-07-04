@@ -162,12 +162,20 @@ let unsubscribe: (() => void) | undefined
  * globalThis-based arm-once registry (defense in depth, survives module
  * re-execution). The boot module's registry prevents redundant boot calls;
  * this ensures the reactor itself is protected even if called directly.
+ * Stores the LIVE PROMISE so module re-execution returns the same functioning
+ * orchestrator, not a rejection (#2wkv).
  */
 interface GlobalWithIssuesOrchestrator {
-  __SKYLARK_ISSUES_ORCHESTRATOR__?: { armed: boolean }
+  __SKYLARK_ISSUES_ORCHESTRATOR__?: {
+    armed: boolean
+    instance?: Promise<Orchestrator>
+  }
 }
 
-function getRegistry(): { armed: boolean } {
+function getRegistry(): {
+  armed: boolean
+  instance?: Promise<Orchestrator>
+} {
   const g = globalThis as GlobalWithIssuesOrchestrator
   g.__SKYLARK_ISSUES_ORCHESTRATOR__ ??= { armed: false }
   return g.__SKYLARK_ISSUES_ORCHESTRATOR__
@@ -195,20 +203,22 @@ function getRegistry(): { armed: boolean } {
  */
 export function ensureOrchestrator(): Promise<Orchestrator> {
   const registry = getRegistry()
-  if (registry.armed && started) return started
-  if (registry.armed) {
-    // Reactor already armed in a previous module execution but promise lost.
-    // Return a rejected promise so callers know boot failed.
-    return Promise.reject(
-      new Error('orchestrator armed in previous module execution'),
-    )
+  if (started) return started
+  if (registry.armed && registry.instance) {
+    // Reactor armed in a previous module execution but module state lost:
+    // restore the live promise from the registry so callers get the SAME
+    // functioning orchestrator, not a rejection.
+    started = registry.instance
+    return registry.instance
   }
   registry.armed = true
-  started ??= boot().catch((err: unknown) => {
+  started = boot().catch((err: unknown) => {
     registry.armed = false // allow retry on failure
     started = undefined
+    delete registry.instance
     throw err
   })
+  registry.instance = started
   return started
 }
 
