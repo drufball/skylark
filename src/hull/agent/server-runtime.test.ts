@@ -1,10 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { db } from '@hull/db/client'
+import type { Database } from '@hull/db/client'
+import { freshDb } from '@hull/db/test-db'
 
 import { liveAgentMemoryLoader } from './server-runtime'
 
 describe('liveAgentMemoryLoader', () => {
+  let db: Database
+  let close: () => Promise<void>
+
+  beforeEach(async () => {
+    const fresh = await freshDb()
+    db = fresh.db
+    close = fresh.close
+  })
+
+  afterEach(async () => {
+    await close()
+  })
+
   it('returns an async function that loads agent memory', async () => {
     const loader = liveAgentMemoryLoader(db)
     expect(typeof loader).toBe('function')
