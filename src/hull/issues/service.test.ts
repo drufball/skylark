@@ -343,7 +343,7 @@ describe('listIssues + comments', () => {
     expect(commented).toHaveLength(2)
     // The payload names the issue AND the comment, so a subscriber can fetch
     // exactly the new row without rescanning the thread.
-    expect(commented[0].payload).toEqual({
+    expect(commented[0].payload).toMatchObject({
       issueId: issue.id,
       commentId: comments[0].id,
     })

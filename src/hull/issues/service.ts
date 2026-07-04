@@ -6,6 +6,8 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
 import { PUBLIC_AUDIENCE } from '@hull/events/service'
+import type { NotificationMetadata } from '@hull/notifications/metadata'
+import { handleOf } from '@hull/users/service'
 
 import { issueTopic } from './topic'
 import {
@@ -240,13 +242,23 @@ export async function createIssue(
           originChatId: input.originChatId,
         })
         .returning()
+      const actorHandle = await handleOf(db, input.authorId)
+      const metadata: NotificationMetadata = {
+        autoWatch: true,
+        headline: `@${actorHandle} opened "${row.title}"`,
+      }
       await announce(db, {
         type: ISSUE_OPENED,
         issueId: row.id,
         actorId: input.authorId,
         // ownerId rides along so the notifications reactor can subscribe the
         // owner from the start, even when they aren't the one filing.
-        payload: { issueId: row.id, title: row.title, ownerId: row.ownerId },
+        payload: {
+          issueId: row.id,
+          title: row.title,
+          ownerId: row.ownerId,
+          _notification: metadata,
+        },
       })
       return row
     } catch (err) {
@@ -325,11 +337,20 @@ export async function addComment(
       body: input.body,
     })
     .returning()
+  const actorHandle = await handleOf(db, input.authorId)
+  const metadata: NotificationMetadata = {
+    autoWatch: true,
+    headline: `@${actorHandle} commented`,
+  }
   await announce(db, {
     type: ISSUE_COMMENTED,
     issueId: input.issueId,
     actorId: input.authorId,
-    payload: { issueId: input.issueId, commentId: row.id },
+    payload: {
+      issueId: input.issueId,
+      commentId: row.id,
+      _notification: metadata,
+    },
   })
   return row
 }
@@ -354,10 +375,18 @@ export async function transitionIssue(
     .where(eq(issues.id, input.issueId))
     .returning()
 
-  const payload: IssueStatusChangedPayload = {
+  const actorHandle = await handleOf(db, input.actorId)
+  const metadata: NotificationMetadata = {
+    autoWatch: true,
+    headline: `@${actorHandle} moved it: ${current.status} → ${to}`,
+  }
+  const payload: IssueStatusChangedPayload & {
+    _notification: NotificationMetadata
+  } = {
     issueId: input.issueId,
     from: current.status,
     to,
+    _notification: metadata,
   }
   await announce(db, {
     type: ISSUE_STATUS_CHANGED,
