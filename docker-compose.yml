@@ -41,7 +41,11 @@ services:
       # gateway with a real secret (e.g. when exposing it beyond localhost).
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm}
     ports:
-      - '4000:4000'
+      # Localhost only: the default master key is a public constant, and the
+      # gateway relays to paid provider APIs — never expose it to the LAN by
+      # default. Exposing it deliberately means binding wider AND setting a
+      # real LITELLM_MASTER_KEY.
+      - '127.0.0.1:4000:4000'
     volumes:
       - ./litellm.config.yaml:/app/config.yaml:ro
     extra_hosts:
