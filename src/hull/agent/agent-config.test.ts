@@ -169,7 +169,7 @@ describe('seedAgentConfig', () => {
     expect(builder.readContextFiles).toBe(true)
     expect(builder.useRepoSkills).toBe(true)
     expect(builder.extensionIds).toEqual([ext.id])
-    expect(builder.systemPrompt).toMatch(/ship-feature/i)
+    expect(builder.systemPrompt).toMatch(/build-feature/i)
 
     const hand = defined(await getUserByHandle(db, 'hand'))
     expect(hand.tools).toBeNull()
@@ -180,7 +180,10 @@ describe('seedAgentConfig', () => {
     expect(babysitter.tools).toEqual(['read', 'bash'])
     expect(babysitter.extensionIds).toEqual([])
     expect(babysitter.readContextFiles).toBe(false)
-    expect(babysitter.useRepoSkills).toBe(false)
+    // Repo-skill access — so it can actually load the babysit-pr skill it's
+    // told to follow.
+    expect(babysitter.useRepoSkills).toBe(true)
+    expect(babysitter.systemPrompt).toMatch(/babysit-pr/i)
     expect(babysitter.systemPrompt).toMatch(/background/i)
     expect(babysitter.systemPrompt).toMatch(/@builder/i)
   })
@@ -211,9 +214,8 @@ describe('seedAgentConfig', () => {
     expect(builder.systemPrompt).toContain('END YOUR TURN')
 
     const babysitter = defined(await getUserByHandle(db, 'babysitter'))
+    expect(babysitter.systemPrompt).toContain('babysit-pr')
     expect(babysitter.systemPrompt).toContain('`background` tool')
-    expect(babysitter.systemPrompt).toContain('gh pr merge')
-    expect(babysitter.systemPrompt).toContain('--squash --delete-branch')
     expect(babysitter.systemPrompt).toContain('mark the issue done')
     expect(babysitter.systemPrompt).toContain('hand the baton back')
     expect(babysitter.systemPrompt).toContain('never write code')
@@ -223,24 +225,18 @@ describe('seedAgentConfig', () => {
     expect(hand.systemPrompt).toContain('report back')
   })
 
-  it('babysitter config includes merge state checking instructions', async () => {
+  it('babysitter config points at the babysit-pr skill instead of duplicating it', async () => {
     await seedAgentConfig(db)
     const prompt =
       defined(await getUserByHandle(db, 'babysitter')).systemPrompt ?? ''
 
-    expect(prompt).toContain('gh pr view')
-    expect(prompt).toContain('mergeStateStatus')
-    expect(prompt).toContain('CLEAN')
-    expect(prompt).toContain('UNSTABLE')
-    expect(prompt).toContain('gh pr merge')
-    expect(prompt).toContain('--squash --delete-branch')
-    expect(prompt).toContain('DIRTY')
-    expect(prompt).toContain('git fetch origin && git rebase origin/main')
-    expect(prompt).toContain('git push --force-with-lease')
-    expect(prompt).toContain('BEHIND')
-    expect(prompt).toContain('BLOCKED')
-    expect(prompt).toContain('merge command fails')
-    expect(prompt).toContain('hand off')
+    // The merge-state playbook (mergeStateStatus, CLEAN/DIRTY/BEHIND/BLOCKED,
+    // the rebase-and-force-push recipe) lives only in the skill now — the
+    // system prompt just points at it plus the Skylark-specific handoff bits.
+    expect(prompt).toContain('babysit-pr skill')
+    expect(prompt).not.toContain('mergeStateStatus')
+    expect(prompt).toContain('hand off to OWNER')
+    expect(prompt).toContain('@builder')
   })
 
   it('never overwrites a role agent whose config the captain already touched', async () => {

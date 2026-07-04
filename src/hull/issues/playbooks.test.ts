@@ -323,7 +323,7 @@ describe('seedPlaybooks', () => {
 
   it("gives the builder its builder config — entrypoints boot from the user's own config now", async () => {
     const builder = defined(await getUserByHandle(db, 'builder'))
-    expect(builder.systemPrompt).toMatch(/ship-feature/i)
+    expect(builder.systemPrompt).toMatch(/build-feature/i)
   })
 })
 

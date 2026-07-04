@@ -300,7 +300,7 @@ function AgentConfigForm({
           checked={useRepoSkills}
           onChange={setUseRepoSkills}
           label="Load repo skills"
-          hint="Discover the ship's skills (ship-feature, create-service, …)."
+          hint="Discover the ship's skills (build-feature, create-service, …)."
         />
       </div>
 
