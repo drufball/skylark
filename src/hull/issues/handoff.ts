@@ -4,6 +4,8 @@ import type { Database } from '@hull/db/client'
 import { runningSessionIds } from '@hull/agent/service'
 import { emitEvent } from '@hull/events/bus'
 import { PUBLIC_AUDIENCE } from '@hull/events/service'
+import type { NotificationMetadata } from '@hull/notifications/metadata'
+import { firstLine, truncate } from '@hull/lib/text'
 import { getUserByHandle, handleOf } from '@hull/users/service'
 
 import { issueSessions, type IssueRow } from './schema'
@@ -192,13 +194,24 @@ export async function requestHandoff(
     toHandle = target.handle
   }
 
+  const actorHandle = await handleOf(db, input.actorId)
+  const brief = truncate(firstLine(message), 160)
+
   if (toOwner) {
-    const payload: IssueOwnerPingPayload = {
+    const metadata: NotificationMetadata = {
+      autoWatch: true,
+      headline: `@${actorHandle} needs @${toHandle} (the owner) to look: ${brief}`,
+      addRecipients: [toUserId],
+    }
+    const payload: IssueOwnerPingPayload & {
+      _notification: NotificationMetadata
+    } = {
       issueId: issue.id,
       fromUserId: input.actorId,
       toUserId,
       toHandle,
       message,
+      _notification: metadata,
     }
     await emitEvent(db, {
       type: ISSUE_OWNER_PING,
@@ -209,12 +222,20 @@ export async function requestHandoff(
       payload,
     })
   } else {
-    const payload: IssueHandoffPayload = {
+    const metadata: NotificationMetadata = {
+      autoWatch: true,
+      headline: `@${actorHandle} passed the baton to @${toHandle}: ${brief}`,
+      dropRecipients: [toUserId],
+    }
+    const payload: IssueHandoffPayload & {
+      _notification: NotificationMetadata
+    } = {
       issueId: issue.id,
       fromUserId: input.actorId,
       toUserId,
       toHandle,
       message,
+      _notification: metadata,
     }
     await emitEvent(db, {
       type: ISSUE_HANDOFF,

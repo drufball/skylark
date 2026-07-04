@@ -20,16 +20,13 @@ import {
   ISSUE_STATUS_CHANGED,
 } from '@hull/issues/service'
 import { ISSUE_HANDOFF, ISSUE_OWNER_PING } from '@hull/issues/handoff'
-import {
-  ISSUE_TOPIC_PATTERN,
-  ISSUE_TOPIC_PREFIX,
-  issueTopic,
-} from '@hull/issues/topic'
+import { ISSUE_TOPIC_PREFIX, issueTopic } from '@hull/issues/topic'
 import { errorMessage } from '@hull/lib/errors'
 import { firstLine, truncate } from '@hull/lib/text'
 
 import { notifications, watches, type NotificationRow } from './schema'
 import { notifyTopic } from './topic'
+import { getNotificationMetadata } from './metadata'
 
 /**
  * Every user's inbox, fed by watches. A watch says "tell <user> when something
@@ -50,6 +47,46 @@ import { notifyTopic } from './topic'
 /** The event announcing a new inbox row (on the owner's notify:<id> topic). */
 export const NOTIFICATION_CREATED = 'notification.created'
 
+// Re-export for convenience
+export type { NotificationMetadata } from './metadata'
+
+/**
+ * Extract an entity ID from a topic (e.g., "issue:abc" → "abc"). Returns null
+ * if the topic doesn't match the pattern "<type>:<id>".
+ */
+function getEntityIdFromTopic(topic: string): string | null {
+  const match = /^[^:]+:(.+)$/.exec(topic)
+  return match ? match[1] : null
+}
+
+/**
+ * Validate that add/dropRecipients metadata is legitimate: the payload must
+ * carry an entity ID field that matches the topic's entity ID. This prevents
+ * forged events on one entity's topic from manipulating recipients for another.
+ * Returns true if the metadata is trusted (or absent), false if forged.
+ */
+function validateRecipientMetadata(topic: string, payload: unknown): boolean {
+  const meta = getNotificationMetadata(payload)
+  if (!meta?.addRecipients && !meta?.dropRecipients) return true // no metadata to validate
+
+  const topicEntityId = getEntityIdFromTopic(topic)
+  if (!topicEntityId) return false // malformed topic
+
+  // Check common entity ID fields (issueId, taskId, etc.)
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+
+  // Try common entity ID field names
+  for (const field of ['issueId', 'taskId', 'chatId', 'fileId', 'entityId']) {
+    if (typeof p[field] === 'string') {
+      return p[field] === topicEntityId
+    }
+  }
+
+  // No entity ID found in payload - can't validate
+  return false
+}
+
 /**
  * Should acting on this topic subscribe the actor to it? Issues, for now:
  * filing, commenting, or moving one means you care where it goes. Chat topics
@@ -61,9 +98,12 @@ export function isAutoWatchTopic(topic: string): boolean {
 
 /**
  * One line of inbox copy for a notification, from what the row itself carries.
- * Pure — the door resolves the actor's handle and hands it in. Falls back to
- * "type on topic" for event types this doesn't know, so an unknown event is
- * still legible rather than blank.
+ * Pure — the door resolves the actor's handle and hands it in.
+ *
+ * Prefers the headline from _notification metadata (generic, service-agnostic).
+ * Falls back to hardcoded formatting for backward compatibility with old events
+ * that don't carry metadata yet. Falls back to "type on topic" for unknown
+ * types, so an event is legible rather than blank.
  */
 export function describeNotification(input: {
   type: string
@@ -72,6 +112,14 @@ export function describeNotification(input: {
   actorHandle: string
 }): string {
   const { type, topic, actorHandle } = input
+
+  // Generic: prefer headline from metadata (new self-describing events)
+  const meta = getNotificationMetadata(input.payload)
+  if (meta?.headline) {
+    return meta.headline
+  }
+
+  // Backwards compatibility: hardcoded formatting for old events without metadata
   const payload = input.payload as {
     title?: unknown
     from?: unknown
@@ -321,56 +369,81 @@ export function createNotificationsReactor(deps: {
     // on a topic they can't see.
     if (event.audience && event.audience !== PUBLIC_AUDIENCE) return
 
-    if (event.actorId && isAutoWatchTopic(event.topic)) {
+    // Generic metadata-driven reactor: read optional _notification metadata
+    const meta = getNotificationMetadata(event.payload)
+
+    // Auto-watch: if the event declares autoWatch, subscribe the actor
+    if (event.actorId && meta?.autoWatch) {
       await watchTopic(db, event.actorId, event.topic)
     }
-    // An issue opened for another owner watches that owner from the start —
-    // they answer for the work, so they hear where it goes without ever
-    // having to act on it first.
-    if (event.type === ISSUE_OPENED && isAutoWatchTopic(event.topic)) {
+
+    // Special case: if autoWatch is true and payload has an ownerId distinct
+    // from the actor, watch the owner too (e.g., issue opened for someone else)
+    if (meta?.autoWatch) {
+      const p = event.payload as { ownerId?: unknown }
+      if (typeof p.ownerId === 'string' && p.ownerId !== event.actorId) {
+        await watchTopic(db, p.ownerId, event.topic)
+      }
+    }
+
+    // Backwards compatibility: keep the old hardcoded issue logic for events
+    // that don't carry metadata yet (gradual migration)
+    if (event.actorId && !meta && isAutoWatchTopic(event.topic)) {
+      await watchTopic(db, event.actorId, event.topic)
+    }
+    if (event.type === ISSUE_OPENED && !meta && isAutoWatchTopic(event.topic)) {
       const ownerId = (event.payload as { ownerId?: unknown }).ownerId
       if (typeof ownerId === 'string') {
         await watchTopic(db, ownerId, event.topic)
       }
     }
 
-    // Handoffs adjust the recipients around the watch list: an OWNER ping must
-    // reach the owner even if they never watched, and a baton pass must NOT
-    // also land in the target's inbox — the issues orchestrator is already
-    // driving them a turn, and an inbox wake on top would double-drive. The
-    // payload is only honored when it agrees with the event's own topic: a
-    // forged row naming a foreign issueId doesn't get to pick recipients.
+    // Build the recipient set: start with watchers, then apply add/drop
     const recipients = new Set(await listWatchers(db, event.topic))
-    if (event.type === ISSUE_HANDOFF) {
-      // Baton pass: remove the target from watchers (they're being driven a turn)
-      const p = event.payload as {
-        issueId?: unknown
-        toUserId?: unknown
-        toOwner?: unknown // compatibility: old events may have this
+
+    // Generic add/dropRecipients (validated to prevent forgery)
+    if (meta && validateRecipientMetadata(event.topic, event.payload)) {
+      if (meta.addRecipients) {
+        for (const userId of meta.addRecipients) {
+          recipients.add(userId)
+        }
       }
-      if (
-        typeof p.toUserId === 'string' &&
-        typeof p.issueId === 'string' &&
-        event.topic === issueTopic(p.issueId)
-      ) {
-        // Compatibility: old issue.handoff events with toOwner=true should be
-        // treated as owner pings (add to recipients), not baton passes
-        if (p.toOwner === true) recipients.add(p.toUserId)
-        else recipients.delete(p.toUserId)
+      if (meta.dropRecipients) {
+        for (const userId of meta.dropRecipients) {
+          recipients.delete(userId)
+        }
       }
     }
-    if (event.type === ISSUE_OWNER_PING) {
-      // Owner ping: add the target to watchers (inbox + agent wake)
-      const p = event.payload as {
-        issueId?: unknown
-        toUserId?: unknown
+
+    // Backwards compatibility: keep the old hardcoded handoff/ping logic
+    if (!meta) {
+      if (event.type === ISSUE_HANDOFF) {
+        const p = event.payload as {
+          issueId?: unknown
+          toUserId?: unknown
+          toOwner?: unknown
+        }
+        if (
+          typeof p.toUserId === 'string' &&
+          typeof p.issueId === 'string' &&
+          event.topic === issueTopic(p.issueId)
+        ) {
+          if (p.toOwner === true) recipients.add(p.toUserId)
+          else recipients.delete(p.toUserId)
+        }
       }
-      if (
-        typeof p.toUserId === 'string' &&
-        typeof p.issueId === 'string' &&
-        event.topic === issueTopic(p.issueId)
-      ) {
-        recipients.add(p.toUserId)
+      if (event.type === ISSUE_OWNER_PING) {
+        const p = event.payload as {
+          issueId?: unknown
+          toUserId?: unknown
+        }
+        if (
+          typeof p.toUserId === 'string' &&
+          typeof p.issueId === 'string' &&
+          event.topic === issueTopic(p.issueId)
+        ) {
+          recipients.add(p.toUserId)
+        }
       }
     }
 
@@ -413,29 +486,39 @@ export function createNotificationsReactor(deps: {
    * time-shifted.
    */
   async function reconcile(): Promise<void> {
-    // Replay watches from the durable log
+    // Replay watches from the durable log: scan all public events (generic)
+    // and recover auto-watches based on metadata or old hardcoded rules
     let sinceId: string | undefined
     for (;;) {
       const page = await listEventsSince(db, {
-        topicPatterns: [ISSUE_TOPIC_PATTERN],
+        topicPatterns: ['*'], // All topics, not just issues
         audience: PUBLIC_AUDIENCE,
         sinceId,
       })
       for (const event of page) {
         sinceId = event.id
-        if (event.actorId && event.topic && isAutoWatchTopic(event.topic)) {
+        if (!event.actorId || !event.topic) continue
+
+        const meta = getNotificationMetadata(event.payload)
+
+        // Generic: respect autoWatch metadata
+        if (meta?.autoWatch) {
           await watchTopic(db, event.actorId, event.topic)
+          // Also watch the owner if payload has a distinct ownerId
+          const p = event.payload as { ownerId?: unknown }
+          if (typeof p.ownerId === 'string' && p.ownerId !== event.actorId) {
+            await watchTopic(db, p.ownerId, event.topic)
+          }
         }
-        // Owner watches are durable intent too: an issue opened for a distinct
-        // owner while no reactor was subscribed still ends up watched by them.
-        if (
-          event.type === ISSUE_OPENED &&
-          event.topic &&
-          isAutoWatchTopic(event.topic)
-        ) {
-          const ownerId = (event.payload as { ownerId?: unknown }).ownerId
-          if (typeof ownerId === 'string') {
-            await watchTopic(db, ownerId, event.topic)
+        // Backwards compatibility: old hardcoded issue logic
+        else if (isAutoWatchTopic(event.topic)) {
+          await watchTopic(db, event.actorId, event.topic)
+          // Backwards compatibility: issue owner watches
+          if (event.type === ISSUE_OPENED && event.topic) {
+            const ownerId = (event.payload as { ownerId?: unknown }).ownerId
+            if (typeof ownerId === 'string') {
+              await watchTopic(db, ownerId, event.topic)
+            }
           }
         }
       }
