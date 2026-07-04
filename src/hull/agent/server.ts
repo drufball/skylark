@@ -11,7 +11,7 @@ import { defaultModelRef } from './models'
 import { isHostedProvider, providersWithStatus } from './providers'
 import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
 import { sessionTopic } from './topic'
-import { createServerRuntime } from './fake-session'
+import { createServerRuntime } from './server-runtime'
 import {
   CHAT_PROFILE,
   getProfileByName,

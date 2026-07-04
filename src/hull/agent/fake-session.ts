@@ -1,18 +1,7 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 
-import type { Database } from '@hull/db/client'
-import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
-import { liveFilesService } from '@hull/files/live'
-
-import { loadAgentMemory, type AgentMemoryLoader } from './memory'
-import {
-  type AgentRuntime,
-  createAgentRuntime,
-  createPiSession,
-  type PiSession,
-  type SessionFactory,
-} from './runtime'
+import type { PiSession } from './runtime'
 
 // A deterministic stand-in for a pi.dev session: it returns a canned reply and
 // emits the same turn_end/agent_end boundary events the real session does, so
@@ -20,11 +9,8 @@ import {
 // touches the network. This exists so the REAL server can boot and drive chat /
 // build flows end to end in a smoke test without pi.dev or Claude.
 //
-// The env flag is the only switch: `FAKE_RUNTIME_ENV` set → fake; unset → the
-// live wiring. `resolveSessionFactory` is the single place the choice is made,
-// so every runtime construction site (agent door, chat + issue orchestrators)
-// stays in lockstep. The flag name lives in hull/lib/env so the db isolation
-// (hull/db/url.ts) reads the exact same constant.
+// The production wiring that switches between fake and live sessions lives in
+// server-runtime.ts; this file contains only the fake implementation.
 
 function textMessage(role: string, text: string): AgentMessage {
   return {
@@ -105,33 +91,3 @@ class FakeSession implements PiSession {
  */
 export const createFakeSession = (): Promise<PiSession> =>
   Promise.resolve(new FakeSession())
-
-/**
- * The session factory the server should use: the live pi.dev wiring, or the
- * deterministic fake when `SKYLARK_FAKE_RUNTIME` is set.
- */
-export function resolveSessionFactory(): SessionFactory {
-  return process.env[FAKE_RUNTIME_ENV] ? createFakeSession : createPiSession
-}
-
-/**
- * The memory loader every live runtime uses: a named agent's index is read
- * through the files service (so it sees the staged state like everyone else).
- */
-export function liveAgentMemoryLoader(db: Database): AgentMemoryLoader {
-  return (agentUserId) => loadAgentMemory(db, liveFilesService(), agentUserId)
-}
-
-/**
- * The runtime every SERVER construction site boots — the agent door and the
- * chat + issue orchestrators. Centralised so the factory choice (live vs fake)
- * has exactly one home and the three sites can't drift. (The CLI builds its own
- * always-live runtime directly; it's interactive and never part of a smoke run.)
- */
-export function createServerRuntime(db: Database): AgentRuntime {
-  return createAgentRuntime({
-    db,
-    factory: resolveSessionFactory(),
-    memory: liveAgentMemoryLoader(db),
-  })
-}
