@@ -304,7 +304,8 @@ describe('agent profiles + extensions service', () => {
     // back to the builder, and never writes code itself.
     const babysitter = await prompt(BABYSITTER_PROFILE.name)
     expect(babysitter).toContain('`background` tool')
-    expect(babysitter).toContain('merge it (squash, delete branch)')
+    expect(babysitter).toContain('gh pr merge')
+    expect(babysitter).toContain('--squash --delete-branch')
     expect(babysitter).toContain('mark the issue done')
     expect(babysitter).toContain('hand the baton back')
     expect(babysitter).toContain('never write code')
@@ -313,6 +314,37 @@ describe('agent profiles + extensions service', () => {
     const general = await prompt(GENERAL_PROFILE.name)
     expect(general).toContain('issue')
     expect(general).toContain('report back')
+  })
+
+  it('babysitter profile includes merge state checking instructions', async () => {
+    await seedProfiles(db)
+    const babysitter = defined(
+      await getProfileByName(db, BABYSITTER_PROFILE.name),
+    )
+    const prompt = babysitter.systemPrompt ?? ''
+
+    // Must check merge state status BEFORE merging
+    expect(prompt).toContain('gh pr view')
+    expect(prompt).toContain('mergeStateStatus')
+
+    // Must handle CLEAN/UNSTABLE → merge
+    expect(prompt).toContain('CLEAN')
+    expect(prompt).toContain('UNSTABLE')
+    expect(prompt).toContain('gh pr merge')
+    expect(prompt).toContain('--squash --delete-branch')
+
+    // Must handle CONFLICTING/DIRTY → hand off to builder with rebase brief
+    expect(prompt).toContain('CONFLICTING')
+    expect(prompt).toContain('DIRTY')
+    expect(prompt).toContain('git fetch origin && git rebase origin/main')
+    expect(prompt).toContain('git push --force-with-lease')
+
+    // Must handle BEHIND → rebase+push then re-check
+    expect(prompt).toContain('BEHIND')
+
+    // Must handle merge command failures → hand off with error, never end silently
+    expect(prompt).toContain('merge command fails')
+    expect(prompt).toContain('hand off')
   })
 
   it('re-seeding preserves a deliberately customized crew profile assignment', async () => {
