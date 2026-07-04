@@ -2,8 +2,16 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { currentActor } from '@hull/users/actor'
 
-import { liveFilesService } from './live'
-import { validateFilePath } from './service'
+import { validateFilePath, type FilesService } from './service'
+
+// Lazy helper to get the live files service (keeps node builtins out of client bundle)
+function getFilesService(): FilesService {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { liveFilesService } = require('./live') as {
+    liveFilesService: () => FilesService
+  }
+  return liveFilesService()
+}
 
 // The web doors onto the files service. Reads and writes go through the live
 // service, which routes them to the staging branch when one exists — so every
@@ -26,20 +34,20 @@ function parseSave(input: unknown): { path: string; content: string } {
 
 /** Every shared file's path, sorted. */
 export const listFiles = createServerFn({ method: 'GET' }).handler(() =>
-  liveFilesService().list(),
+  getFilesService().list(),
 )
 
 /** One file's content, or null when it doesn't exist. */
 export const readFile = createServerFn({ method: 'GET' })
   .validator(parsePath)
-  .handler(({ data: path }) => liveFilesService().read(path))
+  .handler(({ data: path }) => getFilesService().read(path))
 
 /** Create or update a file as the current actor. */
 export const saveFile = createServerFn({ method: 'POST' })
   .validator(parseSave)
   .handler(async ({ data }) => {
     const actor = await currentActor()
-    await liveFilesService().write({
+    await getFilesService().write({
       path: data.path,
       content: data.content,
       actor: { id: actor.id, handle: actor.handle },
@@ -54,7 +62,7 @@ export const deleteFile = createServerFn({ method: 'POST' })
   }))
   .handler(async ({ data }) => {
     const actor = await currentActor()
-    await liveFilesService().remove({
+    await getFilesService().remove({
       path: data.path,
       actor: { id: actor.id, handle: actor.handle },
     })

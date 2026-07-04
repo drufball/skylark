@@ -4,8 +4,6 @@ import { db } from '@hull/db/client'
 import { listEventsSince, PUBLIC_AUDIENCE } from '@hull/events/service'
 import { currentActor } from '@hull/users/actor'
 import { handleOf } from '@hull/users/service'
-
-import { ensureOrchestrator } from './orchestrator-live'
 import {
   BUILD_PLAYBOOK_NAME,
   listPlaybooks,
@@ -48,6 +46,11 @@ export type { BoardIssue, IssueThread, ThreadEntry } from './service'
 
 /** Ensure the orchestrator is booted + subscribed in this server process. */
 function bootOrchestrator(): void {
+  // Lazy import orchestrator to keep node builtins out of client bundle
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { ensureOrchestrator } = require('./orchestrator-live') as {
+    ensureOrchestrator: () => Promise<unknown>
+  }
   void ensureOrchestrator().catch((err: unknown) => {
     console.error(`orchestrator boot failed: ${String(err)}`)
   })

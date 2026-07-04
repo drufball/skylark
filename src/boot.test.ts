@@ -20,29 +20,29 @@ interface GlobalWithBoot {
  * 3. The real ensure* functions are protected (not test replicas)
  */
 describe('eager boot with globalThis arm-once', () => {
-  it('boots reactors once, even when boot function is called multiple times', () => {
+  it('boots reactors once, even when boot function is called multiple times', async () => {
     // The globalThis registry should survive across calls
     const g = globalThis as GlobalWithBoot
 
     // First boot (or already happened during module import)
-    bootAllReactors()
+    await bootAllReactors()
     expect(g.__SKYLARK_BOOT__?.booted).toBe(true)
 
     // Calling again should be a no-op (registry stays true)
-    bootAllReactors()
+    await bootAllReactors()
     expect(g.__SKYLARK_BOOT__?.booted).toBe(true)
 
-    bootAllReactors()
+    await bootAllReactors()
     expect(g.__SKYLARK_BOOT__?.booted).toBe(true)
 
     // The registry persists, proving arm-once protection
   })
 
-  it('allows manual re-arming after explicit disarm (for tests)', () => {
+  it('allows manual re-arming after explicit disarm (for tests)', async () => {
     const g = globalThis as GlobalWithBoot
 
     // Boot once
-    bootAllReactors()
+    await bootAllReactors()
     expect(g.__SKYLARK_BOOT__?.booted).toBe(true)
 
     // Disarm
@@ -50,11 +50,11 @@ describe('eager boot with globalThis arm-once', () => {
     expect(g.__SKYLARK_BOOT__?.booted).toBe(false)
 
     // Can boot again
-    bootAllReactors()
+    await bootAllReactors()
     expect(g.__SKYLARK_BOOT__?.booted).toBe(true)
   })
 
-  it('globalThis registry survives module re-execution', () => {
+  it('globalThis registry survives module re-execution', async () => {
     // This test demonstrates the key property: globalThis persists even when
     // module state resets. In a real SSR reload:
     // - Module-level variables reset to their initial values
@@ -64,7 +64,7 @@ describe('eager boot with globalThis arm-once', () => {
     const g = globalThis as GlobalWithBoot
 
     // Set the registry
-    bootAllReactors()
+    await bootAllReactors()
     expect(g.__SKYLARK_BOOT__?.booted).toBe(true)
 
     // Simulate what happens on module reload: local state resets,
@@ -74,7 +74,7 @@ describe('eager boot with globalThis arm-once', () => {
 
     // Even if we call boot again (simulating module re-execution),
     // the globalThis registry prevents re-subscription
-    bootAllReactors()
+    await bootAllReactors()
 
     // Registry still true, proving it survived
     expect(wasBooted).toBe(true)

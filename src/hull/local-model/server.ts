@@ -4,7 +4,6 @@ import { errorMessage } from '@hull/lib/errors'
 
 import { LOCAL_MODEL_CATALOG } from './catalog'
 import { listInstalledModels, pullModel } from './ollama-client'
-import { detectHardware, selectModel } from './service'
 
 // The web doors onto the local-model service: what's installed, what the
 // catalog offers, what this machine should run, and a way to pull more.
@@ -16,6 +15,8 @@ import { detectHardware, selectModel } from './service'
  */
 export const listLocalModels = createServerFn({ method: 'GET' }).handler(
   async () => {
+    // Lazy import server-only functions to keep node builtins out of client bundle
+    const { detectHardware, selectModel } = await import('./service')
     const hardware = await detectHardware()
     const installed = await listInstalledModels().catch((err: unknown) => {
       console.error(`ollama list failed: ${errorMessage(err)}`)

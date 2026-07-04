@@ -16,7 +16,7 @@ import type { RequestHandler } from '@tanstack/react-start/server'
  * node builtins included — into the client graph and breaks the browser.
  * architecture.test.ts enforces that only this file imports @/boot.
  */
-bootAllReactors()
+void bootAllReactors()
 
 /* v8 ignore start -- live server wiring; request handling is TanStack's */
 const fetch = createStartHandler(defaultStreamHandler)

@@ -8,7 +8,6 @@ import {
   getProfileById,
   getProfileByName,
 } from '@hull/agent/profiles'
-import { liveFilesService } from '@hull/files/live'
 
 import { currentActor } from './actor'
 import {
@@ -87,6 +86,13 @@ export const createAgentUser = createServerFn({ method: 'POST' })
       profileId,
     })
     try {
+      // Lazy import files service to keep node builtins out of client bundle
+      interface LiveFilesModule {
+        liveFilesService: () => import('@hull/files/service').FilesService
+      }
+      const { liveFilesService } =
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        require('@hull/files/live') as LiveFilesModule
       await liveFilesService().write({
         path: agentMemoryIndexPath(user.handle),
         content: starterMemoryIndex(user.handle),
