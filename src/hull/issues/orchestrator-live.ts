@@ -159,6 +159,21 @@ let started: Promise<Orchestrator> | undefined
 let unsubscribe: (() => void) | undefined
 
 /**
+ * globalThis-based arm-once registry (defense in depth, survives module
+ * re-execution). The boot module's registry prevents redundant boot calls;
+ * this ensures the reactor itself is protected even if called directly.
+ */
+interface GlobalWithIssuesOrchestrator {
+  __SKYLARK_ISSUES_ORCHESTRATOR__?: { armed: boolean }
+}
+
+function getRegistry(): { armed: boolean } {
+  const g = globalThis as GlobalWithIssuesOrchestrator
+  g.__SKYLARK_ISSUES_ORCHESTRATOR__ ??= { armed: false }
+  return g.__SKYLARK_ISSUES_ORCHESTRATOR__
+}
+
+/**
  * Boot the orchestrator into the server process (idempotent): wire it to the
  * real runtime + git/fs + slug generator, subscribe it to the ship's log so
  * agent-initiated transitions from a separate CLI process are heard, and run
@@ -174,11 +189,23 @@ let unsubscribe: (() => void) | undefined
  * The builder agent identity is the `builder` crew user if present, else the
  * operator — so SKYLARK_ACTOR is always a real id the issue CLI can attribute.
  *
- * HMR-safe: cleans up the old subscription on Vite reload so one orchestrator
- * doesn't stack to N on N reloads (the #xwh2 bug).
+ * Arm-once: uses globalThis registry that survives module re-execution (SSR
+ * reload resets module state but globalThis persists), so subscriptions never
+ * stack even without import.meta.hot.dispose cooperation (#lo0x).
  */
 export function ensureOrchestrator(): Promise<Orchestrator> {
+  const registry = getRegistry()
+  if (registry.armed && started) return started
+  if (registry.armed) {
+    // Reactor already armed in a previous module execution but promise lost.
+    // Return a rejected promise so callers know boot failed.
+    return Promise.reject(
+      new Error('orchestrator armed in previous module execution'),
+    )
+  }
+  registry.armed = true
   started ??= boot().catch((err: unknown) => {
+    registry.armed = false // allow retry on failure
     started = undefined
     throw err
   })
@@ -226,15 +253,5 @@ async function boot(): Promise<Orchestrator> {
 
   unsubscribe = subscribeToShipLog(orch, 'issues orchestrator')
   return orch
-}
-
-// HMR cleanup: unsubscribe on reload so the old orchestrator doesn't stack
-// with the new one. Vite calls dispose() before reloading the module.
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    unsubscribe?.()
-    unsubscribe = undefined
-    started = undefined
-  })
 }
 /* v8 ignore stop */

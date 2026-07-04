@@ -34,15 +34,34 @@ let booted = false
 let unsubscribe: (() => void) | undefined
 
 /**
+ * globalThis-based arm-once registry (defense in depth, survives module
+ * re-execution). The boot module's registry prevents redundant boot calls;
+ * this ensures the reactor itself is protected even if called directly.
+ */
+interface GlobalWithNotificationsReactor {
+  __SKYLARK_NOTIFICATIONS_REACTOR__?: { armed: boolean }
+}
+
+function getRegistry(): { armed: boolean } {
+  const g = globalThis as GlobalWithNotificationsReactor
+  g.__SKYLARK_NOTIFICATIONS_REACTOR__ ??= { armed: false }
+  return g.__SKYLARK_NOTIFICATIONS_REACTOR__
+}
+
+/**
  * Boot the notifications reactor in this process (idempotent): subscribe the
  * fan-out to the ship's log. Runs on systemDb — writing inbox rows across
  * users is system plumbing no single actor's RLS context could do.
  *
- * HMR-safe: cleans up the old subscription on Vite reload so one reactor
- * doesn't stack to N on N reloads (the #xwh2 bug).
+ * Arm-once: uses globalThis registry that survives module re-execution (SSR
+ * reload resets module state but globalThis persists), so subscriptions never
+ * stack even without import.meta.hot.dispose cooperation (#lo0x).
  */
 export function ensureNotificationsReactor(): void {
+  const registry = getRegistry()
   if (booted) return
+  if (registry.armed) return // already armed in previous module execution
+  registry.armed = true
   booted = true
   // On HMR reload, module state resets but the InProcessBus subscription
   // persists (it's in a different module). Clean up the old one first.
@@ -58,15 +77,5 @@ export function ensureNotificationsReactor(): void {
     }),
     'notifications',
   )
-}
-
-// HMR cleanup: unsubscribe on reload so the old reactor doesn't stack with the
-// new one. Vite calls dispose() before reloading the module.
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    unsubscribe?.()
-    unsubscribe = undefined
-    booted = false
-  })
 }
 /* v8 ignore stop */

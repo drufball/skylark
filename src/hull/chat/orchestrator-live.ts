@@ -32,6 +32,21 @@ let unsubscribeBus: (() => void) | undefined
 let unsubscribeHook: (() => void) | undefined
 
 /**
+ * globalThis-based arm-once registry (defense in depth, survives module
+ * re-execution). The boot module's registry prevents redundant boot calls;
+ * this ensures the reactor itself is protected even if called directly.
+ */
+interface GlobalWithChatOrchestrator {
+  __SKYLARK_CHAT_ORCHESTRATOR__?: { armed: boolean }
+}
+
+function getRegistry(): { armed: boolean } {
+  const g = globalThis as GlobalWithChatOrchestrator
+  g.__SKYLARK_CHAT_ORCHESTRATOR__ ??= { armed: false }
+  return g.__SKYLARK_CHAT_ORCHESTRATOR__
+}
+
+/**
  * Boot the chat orchestrator into the server process (idempotent): wire it to
  * the real runtime and subscribe it to the ship's log, so a posted message
  * drives the agent reply off the bus (the same path the issues orchestrator
@@ -43,11 +58,29 @@ let unsubscribeHook: (() => void) | undefined
  * (issues.originChatId) and wakes the agent there with the unread batch —
  * which is why this also ensures the reactor runs in this process.
  *
- * HMR-safe: cleans up the old subscription on Vite reload so one reactor
- * doesn't stack to N on N reloads (the #xwh2 bug).
+ * Arm-once: uses globalThis registry that survives module re-execution (SSR
+ * reload resets module state but globalThis persists), so subscriptions never
+ * stack even without import.meta.hot.dispose cooperation (#lo0x).
  */
 export function ensureChatOrchestrator(): ChatOrchestrator {
+  const registry = getRegistry()
   if (started) return started
+  if (registry.armed) {
+    // Reactor already armed in a previous module execution but started lost.
+    // This shouldn't happen in normal operation (boot calls us once), but
+    // handle it gracefully: create a minimal stub that does nothing.
+    /* eslint-disable @typescript-eslint/no-empty-function */
+    const stub: ChatOrchestrator = {
+      respond: async () => {},
+      reply: async () => {},
+      wake: async () => {},
+      handleBusNote: async () => {},
+      reconcile: async () => {},
+    }
+    /* eslint-enable @typescript-eslint/no-empty-function */
+    return stub
+  }
+  registry.armed = true
   // On HMR reload, module state resets but subscriptions in other modules
   // persist (InProcessBus, deliveryHooks). Clean up the old ones first.
   unsubscribeBus?.()
@@ -89,18 +122,5 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
   ensureNotificationsReactor()
 
   return orchestrator
-}
-
-// HMR cleanup: unsubscribe from both the bus AND the delivery hooks on reload
-// so the old reactor + waker don't stack with the new ones. Vite calls
-// dispose() before reloading the module.
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    unsubscribeBus?.()
-    unsubscribeHook?.()
-    unsubscribeBus = undefined
-    unsubscribeHook = undefined
-    started = undefined
-  })
 }
 /* v8 ignore stop */
