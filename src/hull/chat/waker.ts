@@ -66,13 +66,22 @@ export function createAgentWaker(deps: AgentWakerDeps): {
 } {
   // One pending timer per agent — the debounce window.
   const pending = new Map<string, ReturnType<typeof setTimeout>>()
+  // Track active fire operations to prevent overlapping wakes during async processing
+  const inFlight = new Set<string>()
 
   async function fire(userId: string): Promise<void> {
     pending.delete(userId)
-    if (!(await deps.isAgent(userId))) return
+    inFlight.add(userId)
+    if (!(await deps.isAgent(userId))) {
+      inFlight.delete(userId)
+      return
+    }
 
     const unread = await deps.listUnread(userId)
-    if (unread.length === 0) return
+    if (unread.length === 0) {
+      inFlight.delete(userId)
+      return
+    }
 
     // Group the batch by the chat its work belongs to.
     const routable = new Map<string, WakeableNotification[]>()
@@ -105,11 +114,14 @@ export function createAgentWaker(deps: AgentWakerDeps): {
         batch.map((n) => n.id),
       )
     }
+
+    inFlight.delete(userId)
   }
 
   return {
     onNotified(notification) {
-      if (pending.has(notification.userId)) return // a wake is already gathering
+      if (pending.has(notification.userId) || inFlight.has(notification.userId))
+        return // a wake is already gathering or in flight
       const timer = setTimeout(() => {
         void fire(notification.userId).catch((err: unknown) => {
           console.error(`agent wake failed: ${errorMessage(err)}`)
