@@ -9,7 +9,8 @@ import { currentActor, withCurrentActor } from '@hull/users/actor'
 
 import { defaultModelRef } from './models'
 import { isHostedProvider, providersWithStatus } from './providers'
-import { type AgentRuntime, DEFAULT_MODEL, sessionTopic } from './runtime'
+import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
+import { sessionTopic } from './topic'
 import { createServerRuntime } from './fake-session'
 import {
   CHAT_PROFILE,

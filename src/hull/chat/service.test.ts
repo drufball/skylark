@@ -10,7 +10,6 @@ import { createSession } from '@hull/agent/service'
 import {
   addMember,
   addMessage,
-  chatTopic,
   createChat,
   formatTranscript,
   getChat,
@@ -26,6 +25,7 @@ import {
   targetsForMessage,
   type MemberView,
 } from './service'
+import { chatTopic } from './topic'
 
 /** Did `userId` end up a member of `chatId`? (membership state, via the roster). */
 async function isMemberOf(

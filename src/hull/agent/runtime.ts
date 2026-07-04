@@ -32,6 +32,7 @@ import {
   setStatus,
   type SessionStatus,
 } from './service'
+import { sessionTopic } from './topic'
 
 // `setStatus` is wrapped by `announceStatus` below (which also emits to the
 // ship's log); the runtime never sets status without announcing it.
@@ -45,25 +46,6 @@ import {
  * default wires the real events service, so CLI and web both get live updates.
  */
 export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
-
-/** The prefix every session topic carries — the one home for the session: grammar. */
-const SESSION_TOPIC_PREFIX = 'session:'
-
-/** The ship-log topic every event for a session is published under. */
-export function sessionTopic(sessionId: string): string {
-  return `${SESSION_TOPIC_PREFIX}${sessionId}`
-}
-
-/**
- * The session id a topic refers to, or null if it isn't a session topic — the
- * inverse of `sessionTopic`, so entitlement code asks the agent service "whose
- * session is this?" rather than re-deriving the `session:` format.
- */
-export function sessionIdFromTopic(topic: string): string | null {
-  return topic.startsWith(SESSION_TOPIC_PREFIX)
-    ? topic.slice(SESSION_TOPIC_PREFIX.length)
-    : null
-}
 
 /**
  * Default model when a session doesn't pin one — local-first. Resolved from

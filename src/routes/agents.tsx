@@ -17,6 +17,7 @@ import {
   sendAgentMessage,
 } from '@hull/agent/server'
 import { agentMemoryIndexPath } from '@hull/agent/memory-paths'
+import { sessionTopic } from '@hull/agent/topic'
 import { listLocalModels } from '@hull/local-model/server'
 import { modelPickerOptions } from '@hull/local-model/ollama-client'
 import { listPlaybooksView, savePlaybook } from '@hull/issues/server'
@@ -114,7 +115,7 @@ function AgentsRoute() {
 
   // Watch the active session over the ship's log; re-run the loader on any
   // event. No active session → empty topics → no connection.
-  const topics = activeId ? [`session:${activeId}`] : []
+  const topics = activeId ? [sessionTopic(activeId)] : []
   const onShipLogEvent = useCallback(() => {
     void router.invalidate()
   }, [router])

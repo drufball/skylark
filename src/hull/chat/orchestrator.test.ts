@@ -14,14 +14,8 @@ import {
   type ChatAgentRuntime,
   createChatOrchestrator,
 } from './orchestrator'
-import {
-  addMessage,
-  CHAT_MESSAGE_POSTED,
-  chatTopic,
-  createChat,
-  listMembers,
-  listMessages,
-} from './service'
+import { addMessage, createChat, listMembers, listMessages } from './service'
+import { CHAT_MESSAGE_POSTED, chatTopic } from './topic'
 
 // Pin CHAT_MODEL to a sentinel that can't equal DEFAULT_MODEL: in a keyless
 // test environment the two constants coincide, so asserting the real value

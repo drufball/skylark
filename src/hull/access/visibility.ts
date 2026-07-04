@@ -1,8 +1,9 @@
 import type { Database } from '@hull/db/client'
 import { runAsActor } from '@hull/db/with-actor'
-import { chatIdFromTopic, getChat } from '@hull/chat/service'
+import { getChat } from '@hull/chat/service'
+import { chatIdFromTopic } from '@hull/chat/topic'
 import { getSession } from '@hull/agent/service'
-import { sessionIdFromTopic } from '@hull/agent/runtime'
+import { sessionIdFromTopic } from '@hull/agent/topic'
 import { userIdFromNotifyTopic } from '@hull/notifications/topic'
 
 // The ONE entitlement gate. Everything that needs "may this actor see X?" — the

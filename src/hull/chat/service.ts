@@ -12,6 +12,7 @@ import {
   type ChatRow,
   type ChatMessageRow,
 } from './schema'
+import { CHAT_MESSAGE_POSTED, chatTopic } from './topic'
 
 /**
  * Pure logic + persistence for the chat service. Database-agnostic like every
@@ -23,28 +24,6 @@ import {
  * are scoped to `chat:<id>` — never `public` — and the doors check membership
  * before returning a transcript.
  */
-
-/** The prefix every chat topic carries — the one home for the chat: grammar. */
-const CHAT_TOPIC_PREFIX = 'chat:'
-
-/** The ship-log topic a chat's events ride on; members subscribe to it. */
-export function chatTopic(chatId: string): string {
-  return `${CHAT_TOPIC_PREFIX}${chatId}`
-}
-
-/**
- * The chat id a topic refers to, or null if it isn't a chat topic — the inverse
- * of `chatTopic`. So entitlement code asks chat "is this yours, and whose?"
- * rather than re-deriving the `chat:` format and drifting from it.
- */
-export function chatIdFromTopic(topic: string): string | null {
-  return topic.startsWith(CHAT_TOPIC_PREFIX)
-    ? topic.slice(CHAT_TOPIC_PREFIX.length)
-    : null
-}
-
-/** The event a posted message announces (one name for emitter + subscriber). */
-export const CHAT_MESSAGE_POSTED = 'chat.message_posted'
 
 // --- Pure decision logic (unit-tested directly) ----------------------------
 
