@@ -15,6 +15,11 @@ import {
   updateChat,
 } from '@hull/chat/server'
 import {
+  CHAT_AGENT_PROGRESS,
+  chatTopic,
+  type ChatAgentProgressPayload,
+} from '@hull/chat/topic'
+import {
   ChatView,
   type ChatListItem,
   type ChatMemberItem,
@@ -53,9 +58,7 @@ export const Route = createFileRoute('/')({
   component: ChatRoute,
 })
 
-function readProgress(
-  payload: unknown,
-): { chatId: string; agentUserId: string; line: string } | null {
+function readProgress(payload: unknown): ChatAgentProgressPayload | null {
   if (typeof payload !== 'object' || payload === null) return null
   const p = payload as Record<string, unknown>
   if (
@@ -85,10 +88,10 @@ function ChatRoute() {
   } | null>(null)
 
   const members = useMemo(() => thread?.members ?? [], [thread])
-  const topics = activeId ? [`chat:${activeId}`] : []
+  const topics = activeId ? [chatTopic(activeId)] : []
   const onEvent = useCallback(
     (event: ShipLogEvent) => {
-      if (event.type === 'chat.agent_progress') {
+      if (event.type === CHAT_AGENT_PROGRESS) {
         const progress = readProgress(event.payload)
         if (progress) {
           const handle =
