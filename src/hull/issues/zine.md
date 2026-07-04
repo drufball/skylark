@@ -62,12 +62,13 @@ app-shell nav).
 - **Comment** — a row in `issue_comments`: `id`, `issueId`, `authorId`, `body`.
   A forum reply, or an agent's note when it pauses for clarification.
 - **Handoff** (`handoff.ts`) — the baton: `requestHandoff` validates a pass and
-  announces `issue.handoff` on the issue's topic. A target is a crew **agent**
-  (a turn is driven for it in the shared worktree) or the special word **OWNER**
-  (the issue's owner is pinged through [notifications](../notifications/zine.md)
-  — an inbox row for a human, an agent wake for an agent). One baton per issue:
-  a pass is refused while another agent's session on the issue is mid-turn (the
-  caller being mid-turn is expected — handing off is a turn's last action).
+  announces one of two event types, depending on the target. A target is a crew
+  **agent** — `issue.handoff` drives a turn for it in the shared worktree — or
+  the special word **OWNER** — `issue.owner_ping` pings the issue's owner
+  through [notifications](../notifications/zine.md) (an inbox row for a human,
+  an agent wake for an agent) with no worktree turn. One baton per issue: a pass
+  is refused while another agent's session on the issue is mid-turn (the caller
+  being mid-turn is expected — handing off is a turn's last action).
 - **The state machine** — `assertTransition(from, to)` in `service.ts`: the
   pure, exhaustively-tested heart. Legal moves are `open↔building`,
   `building→done`, `open|building→closed`; `done` and `closed` are terminal; a
@@ -75,12 +76,12 @@ app-shell nav).
   through it, so the rules live in exactly one place.
 - **Events** — `issue.opened` on creation (its `ownerId` payload is how the
   notifications reactor auto-watches the owner), `issue.status_changed` on every
-  transition, `issue.commented` on every comment, and `issue.handoff` on every
-  baton pass or owner ping, each emitted **once** with topic `issue:<id>` and
-  audience `public`. The thread view subscribes to the exact topic
-  (`issue:<id>`); the board subscribes to the wildcard (`issue:*`); the
-  orchestrator and the notifications reactor listen too. One topic, many
-  subscribers — no dual-emit.
+  transition, `issue.commented` on every comment, and `issue.handoff` (baton
+  pass) or `issue.owner_ping` (owner escalation) on every handoff, each emitted
+  **once** with topic `issue:<id>` and audience `public`. The thread view
+  subscribes to the exact topic (`issue:<id>`); the board subscribes to the
+  wildcard (`issue:*`); the orchestrator and the notifications reactor listen
+  too. One topic, many subscribers — no dual-emit.
 - **The orchestrator** (`orchestrator.ts`) — the build-lifecycle brain. Pure of
   I/O by injection: it takes a `GitOps` (worktree/git/fs), an agent runtime, and
   a slug generator as dependencies, so its decisions are unit-tested against
@@ -135,9 +136,9 @@ target's session exists — booted with the **target's own profile**
 (users.profileId) and identity, `cwd` = the same worktree — and fires a turn
 briefed with the message. The notifications reactor fans the same event to the
 issue's watchers, so the crew sees the baton move.
-`handoff <nano> OWNER "<message>"` skips the worktree turn entirely: the reactor
-delivers straight to the owner's inbox, and if the owner is an agent the waker
-wakes it in the issue's origin chat.
+`handoff <nano> OWNER "<message>"` emits `issue.owner_ping` instead and skips
+the worktree turn entirely: the reactor delivers straight to the owner's inbox,
+and if the owner is an agent the waker wakes it.
 
 **Why event-driven, not inline.** The builder runs `npm run issue done <id>`
 from its bash tool — a separate CLI process. That transition is only a durable
@@ -297,6 +298,9 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **Housekeeping** — fixed doc drift: the Components/Structure sections still
+  described owner pings as riding `issue.handoff` with a `toOwner` flag, though
+  #103 split that into a distinct `issue.owner_ping` event type.
 - **#4** — The build split: the `babysitter` agent + profile joins the `build`
   playbook, the builder's contract ends at an open PR + a baton, and ensure-mode
   seeding gains its append exception.

@@ -125,7 +125,6 @@ export function describeNotification(input: {
     from?: unknown
     to?: unknown
     toHandle?: unknown
-    toOwner?: unknown
     message?: unknown
   }
   switch (type) {
