@@ -1,7 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
   bigint,
-  boolean,
   index,
   jsonb,
   pgTable,
@@ -23,43 +22,11 @@ import { users } from '@hull/users/schema'
 // crew-visible (migration 0008; see hull/db/zine.md).
 
 /**
- * A reusable agent configuration. A profile is the full recipe the runtime
- * resolves into pi.dev session options: which tools, what system prompt,
- * whether to read CLAUDE.md, whether to load the repo's skills, which
- * extensions to load, and an optional model override. One runtime drives many
- * kinds of agent (a read-only chat pilot, a full builder) from these rows
- * instead of hardcoded options.
- */
-export const agentProfiles = pgTable('agent_profiles', {
-  /** UUIDv7 — time-ordered, so insertion order is creation order. */
-  id: text('id').primaryKey(),
-  /** Unique name, e.g. "chat" or "builder". How sessions/users reference it. */
-  name: text('name').notNull().unique(),
-  /** System prompt for the agent. Null = pi.dev's default system prompt. */
-  systemPrompt: text('system_prompt'),
-  /**
-   * Allowlist of tool names, e.g. ['read','bash']. Null means "the default
-   * coding tools" (read/bash/edit/write) — the builder's full toolset.
-   */
-  tools: jsonb('tools').$type<string[] | null>(),
-  /** Whether to feed the ship's CLAUDE.md to the agent. */
-  readContextFiles: boolean('read_context_files').notNull(),
-  /** Whether to load the repo's skill directories. */
-  useRepoSkills: boolean('use_repo_skills').notNull(),
-  /** Extension ids (→ extensions.id) to load for this profile. */
-  extensionIds: jsonb('extension_ids').$type<string[]>().notNull().default([]),
-  /** Optional model id override, e.g. "claude-opus-4-5". Null = session/default. */
-  model: text('model'),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-})
-
-/**
  * The extensions registry: a row per pi.dev TS extension available on the ship.
- * Profiles reference these by id. Extensions are code (under the repo) that
- * intercept the agent runtime — the build-gates extension is the first. The
- * registry is how profiles and the future UX name them without hardcoding paths.
+ * Agent users reference these by id (users.extensionIds). Extensions are code
+ * (under the repo) that intercept the agent runtime — the build-gates extension
+ * is the first. The registry is how an agent's config (and the UX) names an
+ * extension without hardcoding paths.
  */
 export const extensions = pgTable('extensions', {
   /** UUIDv7 — time-ordered. */
@@ -83,12 +50,6 @@ export const agentSessions = pgTable('agent_sessions', {
   /** pi.dev model id, e.g. "claude-sonnet-4-5". */
   model: text('model').notNull(),
   /**
-   * The profile this session boots with (→ agent_profiles.id). Null for
-   * sessions created before profiles existed; the runtime falls back to the
-   * built-in coding defaults then.
-   */
-  profileId: text('profile_id').references(() => agentProfiles.id),
-  /**
    * Working directory the session's tools operate in. Null = the repo root
    * (process.cwd()). M3's building agents set this to a per-worktree path so
    * concurrent in-process sessions don't collide.
@@ -96,7 +57,9 @@ export const agentSessions = pgTable('agent_sessions', {
   cwd: text('cwd'),
   /**
    * The crew member this session acts as (→ users.id). Null = unattributed
-   * (the single-tenant default). Lets a session carry an agent's identity.
+   * (the single-tenant default). Carries the agent's identity AND its boot
+   * config: the runtime reads the user row's agent-config columns; a session
+   * with no agentUserId boots the built-in coding defaults.
    */
   agentUserId: text('agent_user_id').references(() => users.id),
   /**
@@ -145,5 +108,4 @@ export const agentMessages = pgTable(
 
 export type AgentSessionRow = typeof agentSessions.$inferSelect
 export type AgentMessageRow = typeof agentMessages.$inferSelect
-export type AgentProfileRow = typeof agentProfiles.$inferSelect
 export type ExtensionRow = typeof extensions.$inferSelect

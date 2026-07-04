@@ -90,6 +90,8 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **Agent profiles retire; config moves onto the agent.** The Agents surface's
+  Profiles tab folds into Crew — see [`hull/agent/zine.md`](hull/agent/zine.md).
 - **#6** — The planning loop closes: files + notifications services, agent
   memory, agent wake-ups back into the origin chat, hosted chat model.
 - **#5** — Chat becomes the ship's front door

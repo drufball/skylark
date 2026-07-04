@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { boolean, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 
 // The users service owns this table: the crew aboard the ship. A user is either
 // a human (you, your friends) or an agent (the ship's residents — tilde, bix,
@@ -20,13 +20,27 @@ export const users = pgTable('users', {
   displayName: text('display_name').notNull(),
   /** Whether this crew member is a person or one of the ship's agents. */
   type: text('type', { enum: ['human', 'agent'] }).notNull(),
+
+  // --- Agent config: how an agent's sessions boot. Null/irrelevant for
+  // humans. Each agent user row carries its own full recipe — there is no
+  // shared profile table to point at (see hull/agent/zine.md).
+
+  /** System prompt for the agent. Null = pi.dev's default system prompt. */
+  systemPrompt: text('system_prompt'),
   /**
-   * Nullable link to an agent's profile (agent_profiles.id). A plain column
-   * with no FK, deliberately: the agent schema already FKs users for its
-   * agentUserId, and a reverse FK here would make the schemas import each
-   * other (see hull/users/zine.md).
+   * Allowlist of tool names, e.g. ['read','bash']. Null means "the default
+   * coding tools" (read/bash/edit/write) — the builder's full toolset.
    */
-  profileId: text('profile_id'),
+  tools: jsonb('tools').$type<string[] | null>(),
+  /** Whether to feed the ship's CLAUDE.md to the agent. */
+  readContextFiles: boolean('read_context_files').notNull().default(true),
+  /** Whether to load the repo's skill directories. */
+  useRepoSkills: boolean('use_repo_skills').notNull().default(true),
+  /** Extension ids (→ extensions.id) to load for this agent's sessions. */
+  extensionIds: jsonb('extension_ids').$type<string[]>().notNull().default([]),
+  /** Optional model id override, e.g. "claude-opus-4-5". Null = session/default. */
+  model: text('model'),
+
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),

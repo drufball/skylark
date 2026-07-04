@@ -5,10 +5,11 @@ _agent zine — issue #49_
 ## tl;dr
 
 The agent is the ship's first resident — a conversation with Claude, driven by
-the [pi.dev](https://pi.dev) coding agent SDK. How it boots is decided by a
-**profile**: a read-only chat pilot, a full builder, or anything in between. The
-service lives in the hull, driven from the CLI (`npm run agent`), the Agents
-monitor view, and the chat + issues orchestrators.
+the [pi.dev](https://pi.dev) coding agent SDK. How it boots — a read-only chat
+pilot, a full builder, or anything in between — is decided by the **agent's own
+config**, carried directly on its `users` row: no separate profile to look up or
+point at. The service lives in the hull, driven from the CLI (`npm run agent`),
+the Agents monitor view, and the chat + issues orchestrators.
 
 The one idea that shapes everything here: **Postgres is the source of truth, not
 the running process.** Every message — what you said, what Claude thought, the
@@ -21,24 +22,27 @@ the **full** history, even across compaction (see Decisions).
 ## Components
 
 - **Session** — one conversation, a row in `agent_sessions`: its model, status,
-  when it last spoke, and how it boots — a `profileId`, a `cwd` (where its tools
-  operate; null = repo root), and an `agentUserId` (which crew member it acts
-  as). Identified by a UUIDv7.
-- **Profile** — a reusable recipe for booting an agent, a row in
-  `agent_profiles`: which `tools` (null = the default coding set), a
+  when it last spoke, a `cwd` (where its tools operate; null = repo root), and
+  an `agentUserId` (which crew member it acts as — and therefore which config it
+  boots with). Identified by a UUIDv7.
+- **Agent config** — the fields on a `users` row that tell the runtime how that
+  agent's sessions boot: which `tools` (null = the default coding set), a
   `systemPrompt`, whether to read CLAUDE.md (`readContextFiles`), whether to
   load the repo's skills (`useRepoSkills`), which `extensionIds` to load, and an
-  optional `model` override. The runtime resolves a profile into pi.dev session
-  options. Four are seeded: **chat** (read+bash, no context/skills/extensions —
-  reads and operates but never writes; to build, it files an issue), **builder**
-  (full coding tools, CLAUDE.md + skills, the build-gates extension — implements
-  to an open PR), **general** (full tools, no build contract — the `general`
-  playbook's deckhand), and **babysitter** (read+bash — waits on CI via the
-  `background` tool, merges or hands a fix brief back).
+  optional `model` override. Irrelevant for human rows. The runtime resolves an
+  agent's config into pi.dev session options. Every ship is seeded with four
+  shapes of it: **chat** (read+bash, no context/skills/extensions — the default
+  for a newly-created agent; reads and operates but never writes; to build, it
+  files an issue), **builder** (full coding tools, CLAUDE.md + skills, the
+  build-gates extension — implements to an open PR), **general** (full tools, no
+  build contract — the `general` playbook's deckhand), and **babysitter**
+  (read+bash — waits on CI via the `background` tool, merges or hands a fix
+  brief back) — written onto the `builder`/`hand`/`babysitter` crew members by
+  `seedAgentConfig`.
 - **Extension** — a pi.dev TS extension, registered as a row in `extensions`
-  (name, description, repo-relative `path`). Profiles reference extensions by
-  id. Extensions intercept the agent's lifecycle — pi.dev's answer to the
-  human's Claude Code hooks.
+  (name, description, repo-relative `path`). Agents reference extensions by id
+  (`users.extensionIds`). Extensions intercept the agent's lifecycle — pi.dev's
+  answer to the human's Claude Code hooks.
 - **build-gates** — the first extension. Mirrors the ship's Claude Code hooks
   for builder agents: run `npm run check` before a `git add`/`git commit` and
   block on failure (commit-gate), warn about unpushed commits at session end
@@ -48,20 +52,21 @@ the **full** history, even across compaction (see Decisions).
 - **Message** — one entry in the transcript, a row in `agent_messages`: a pi.dev
   `AgentMessage` (user / assistant / tool call / tool result / thinking) stored
   verbatim as JSON, ordered by a monotonic `seq`.
-- **Service logic** (`service.ts`, `profiles.ts`) — pure, database-agnostic
-  persistence: sessions/messages in `service.ts`; profiles + the extensions
-  registry (CRUD, idempotent `seedProfiles`) in `profiles.ts`. Touches only the
-  agent's own tables.
+- **Service logic** (`service.ts`, `agent-config.ts`) — pure, database-agnostic
+  persistence: sessions/messages in `service.ts`; the extensions registry (CRUD)
+  and the idempotent `seedAgentConfig` in `agent-config.ts`. Touches only the
+  agent's own tables (`agent-config.ts` also writes onto `users` via the users
+  service's own functions — it doesn't reach into that table directly).
 - **Runtime** (`runtime.ts`) — the impure shell that drives the SDK: resolves a
-  session's profile, boots an ephemeral session from stored history in the
-  session's `cwd`, persists the transcript as it grows (compaction-safe — see
-  Decisions), and owns the live-session registry that makes queueing and
-  cancelling possible. Narrowed to a `PiSession` interface so it can be driven
-  by a fake in tests without a network.
+  session's agent config off its `agentUserId`, boots an ephemeral session from
+  stored history in the session's `cwd`, persists the transcript as it grows
+  (compaction-safe — see Decisions), and owns the live-session registry that
+  makes queueing and cancelling possible. Narrowed to a `PiSession` interface so
+  it can be driven by a fake in tests without a network.
 - **Session config** (`session-config.ts`) — the pure mapping from a resolved
-  profile + cwd to pi.dev session/resource-loader options. Unit-tested apart
-  from the live `createPiSession` wiring, so the decision (which tools, skills,
-  context, extensions) is verifiable without a network.
+  `AgentConfig` + cwd to pi.dev session/resource-loader options. Unit-tested
+  apart from the live `createPiSession` wiring, so the decision (which tools,
+  skills, context, extensions) is verifiable without a network.
 - **Progress helpers** (`progress.ts`) — neutral primitives for translating
   `AgentSessionEvent`s into progress lines: `toolExecutionDetail` extracts tool
   name + args, `isTurnBoundary` identifies turn_end/agent_end, `truncate` limits
@@ -84,9 +89,9 @@ the **full** history, even across compaction (see Decisions).
 - **Ship's-log announcements** — the runtime emits `agent.status` and
   `agent.message` on topic `session:<id>` as a turn runs, which is what the
   session monitor and progress consumers subscribe to.
-- **Doors** — `cli.ts` (the default door: also `seed`, `profiles`, `extensions`)
-  and `server.ts` (the web door behind the Agents monitor view; chat — the
-  ship's front door — is its own hull service driving this runtime, see
+- **Doors** — `cli.ts` (the default door: also `seed`, `extensions`) and
+  `server.ts` (the web door behind the Agents monitor view; chat — the ship's
+  front door — is its own hull service driving this runtime, see
   [`../chat/zine.md`](../chat/zine.md)).
 - **Shared config** (`repo-context.ts`) — resolves the ship's CLAUDE.md and
   skill directories so the runtime can feed them to the agent: one source of
@@ -98,11 +103,11 @@ the **full** history, even across compaction (see Decisions).
 ## Structure
 
 **A turn, end to end.** A message arrives → the runtime resolves the session's
-profile (and its extensions), loads the session's full history from Postgres,
-and seeds it into a fresh in-memory pi.dev session booted in the session's `cwd`
-→ Claude streams its turn (thinking, tool calls, text) → at every turn boundary
-the runtime appends the new tail of the transcript to Postgres. The session is
-marked `running` for the duration and `idle` after.
+agent config (and its extensions), loads the session's full history from
+Postgres, and seeds it into a fresh in-memory pi.dev session booted in the
+session's `cwd` → Claude streams its turn (thinking, tool calls, text) → at
+every turn boundary the runtime appends the new tail of the transcript to
+Postgres. The session is marked `running` for the duration and `idle` after.
 
 **Rebuild, don't resume.** There is no long-lived session object that must
 survive. Seeding works because pi.dev's `AgentState.messages` is assignable;
@@ -170,12 +175,14 @@ idle session, because the truth is in the database, not the registry.
   entry; reusing it would wedge the session forever in a long-lived host. So
   `runTurn` disposes the entry on any error — the next turn rebuilds a clean
   session from the durable log, the same recovery any other process would take.
-- **A session carries a real FK to `users.id` (`agentUserId`); the reverse link
-  is deliberately FK-free.** `agent/schema` imports `users/schema` for that FK,
-  the same one-way pattern the events service uses. The mirror —
-  `users.profileId` pointing at agent profiles — is kept FK-free on purpose to
-  keep the import one-directional (a FK there would make the schemas import each
-  other). See [`../users/zine.md`](../users/zine.md).
+- **A session carries a real FK to `users.id` (`agentUserId`); there's no
+  reverse link to worry about.** `agent/schema` imports `users/schema` for that
+  FK, the same one-way pattern the events service uses. Config used to live on a
+  separate `agent_profiles` row, which forced a second, deliberately FK-free
+  `users.profileId` column to avoid the schemas importing each other. Folding
+  config directly onto `users` retires that whole problem: the agent schema
+  still only reads `users`, and `users` carries its own config columns with no
+  cross-service reference at all. See [`../users/zine.md`](../users/zine.md).
 - **The agent is hull, not rigging.** It's load-bearing — the ship's primary
   resident, the thing other services will route work through — and its
   persistence contract is a foundation you shouldn't have to re-derive per ship.
@@ -190,33 +197,54 @@ idle session, because the truth is in the database, not the registry.
   read by the gateway container alone. The default (`DEFAULT_MODEL`) comes from
   `defaultModelRef()` reading `SKYLARK_DEFAULT_MODEL`, falling back to the
   strong hosted default (`claude-sonnet-5`). One default everywhere — chat,
-  builders, the slug call; pinned per session and overridable per profile.
-- **A profile decides how an agent boots; the runtime is one engine.** Tools,
-  prompt, context, skills, extensions, model — all data on a profile row, not
-  hardcoded. One runtime drives a read-only chat pilot and a full builder alike.
-  A session with no profile falls back to the pre-profiles default (full tools,
-  CLAUDE.md + skills, no extensions), so legacy sessions boot unchanged.
-- **Chat agents read but never write.** The chat profile has only read+bash — an
+  builders, the slug call; pinned per session and overridable per agent.
+- **An agent's own config decides how it boots; the runtime is one engine.**
+  Tools, prompt, context, skills, extensions, model — all columns on that
+  agent's `users` row, not hardcoded and not indirected through a separate
+  template. One runtime drives a read-only chat pilot and a full builder alike.
+  A session with no `agentUserId` falls back to the built-in default (full
+  tools, CLAUDE.md + skills, no extensions), so an unattributed session boots
+  unchanged.
+- **Chat agents read but never write.** The chat config has only read+bash — an
   agent talking to the crew operates the ship's services and reads its code, but
   to build or change something it files an issue. This is the intended end state
   ("file an issue to build"), and a deliberate narrowing from issue #1, where
   the only agent had full write tools.
 - **The agent shares the ship's config; hooks become extensions.** CLAUDE.md and
   the human's skills are fed through pi.dev's resource loader
-  (`repo-context.ts`), so config lives in one place — but a profile can opt out
+  (`repo-context.ts`), so config lives in one place — but an agent can opt out
   of either. Hooks are not shared as shell-commands (those are Claude Code
   harness wiring about the human's git flow); their pi.dev equivalent is **TS
   extensions**, loaded via the loader's `additionalExtensionPaths`. The
   build-gates extension is the commit/landing/session-start gates rebuilt
   against pi's extension API for builder agents — same intent, different
   mechanism, not auto-translated from `settings.json`.
-- **Extensions are referenced by registry, not by path.** A profile names
-  extensions by id; the `extensions` table maps id → repo-relative path. The
-  registry is the single place a profile (and the future UX) names an extension,
-  so code can move without rewriting every profile.
+- **Extensions are referenced by registry, not by path.** An agent names
+  extensions by id (`extensionIds`); the `extensions` table maps id →
+  repo-relative path. The registry is the single place an agent (and the future
+  UX) names an extension, so code can move without rewriting every agent.
+- **Seed converges an agent's config once, and never again.** With no separate
+  profile row, a config edit and a config assignment are the same act — so
+  there's no more "ensure vs. converge" split. `seedAgentConfig` writes the
+  declared shape onto an agent only while its config columns still sit at their
+  schema defaults (`hasAgentConfig` false); the moment anything writes to them —
+  a seed, the migration off profiles, or the captain's own edit in the Crew tab
+  — the row is spoken for and every later seed leaves it alone. This trades away
+  the old explicit "factory-reset a standard agent's prompt back to its declared
+  text" door (`npm run agent seed` used to do this on purpose); if the crew
+  wants a role's shipped prompt back, they copy it from the exported `*_CONFIG`
+  constants in `agent-config.ts` by hand.
 
 ## Changelog
 
+- **Profiles retire; config moves onto the agent.** `agent_profiles` and
+  `users.profileId` are gone — every agent-config field (system prompt, tools,
+  context/skills flags, extensionIds, model) lives directly on that agent's
+  `users` row. `profiles.ts` becomes `agent-config.ts` (keeps the extensions
+  registry, replaces profile CRUD with `seedAgentConfig`); `ResolvedProfile` →
+  `AgentConfig`; the Agents surface's Profiles tab folds into Crew, which now
+  edits an agent's full config inline. The migration backfills every customized
+  profile onto the users that pointed at it before dropping the old tables.
 - **LLM gateway** — model resolution moves behind the LiteLLM gateway: one
   OpenAI-compatible endpoint, model names mapped to providers in
   `litellm.config.yaml`. The Ollama/local-model path and the

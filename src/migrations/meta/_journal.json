@@ -127,6 +127,20 @@
       "when": 1783182648723,
       "tag": "0017_shallow_impossible_man",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1783198741243,
+      "tag": "0018_fold_agent_profiles_add_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783198783700,
+      "tag": "0019_fold_agent_profiles_drop_table",
+      "breakpoints": true
     }
   ]
 }

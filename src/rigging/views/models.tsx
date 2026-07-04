@@ -25,7 +25,7 @@ export function Models({ defaultRef, gateway }: ModelsData) {
             {defaultRef}
           </code>{' '}
           — set <code>SKYLARK_DEFAULT_MODEL</code> in <code>.env</code> to
-          change it, or pin a model per agent profile.
+          change it, or pin a model per agent in Crew.
         </p>
       </header>
 

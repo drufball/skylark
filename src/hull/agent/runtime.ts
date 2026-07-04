@@ -16,10 +16,12 @@ import { errorMessage } from '@hull/lib/errors'
 
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
+import { getUserById } from '@hull/users/service'
+
 import { withAgentMemory, type AgentMemoryLoader } from './memory'
 import { defaultModelRef, gatewayApiKey, resolveModel } from './models'
-import { getProfileById, resolveProfileExtensionPaths } from './profiles'
-import { resolveSessionOptions, type ResolvedProfile } from './session-config'
+import { resolveExtensionPaths } from './agent-config'
+import { resolveSessionOptions, type AgentConfig } from './session-config'
 import {
   appendMessage,
   getMessages,
@@ -47,17 +49,18 @@ export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
  * `SKYLARK_DEFAULT_MODEL`, falling back to the strong hosted default
  * (`claude-sonnet-5`). Every model name is a gateway name — what serves it is
  * litellm.config.yaml's business. Read once at boot; hoist sets the env
- * before `npm run dev` starts. Pin per session / per profile to override.
+ * before `npm run dev` starts. Pin per session / per agent to override.
  */
 export const DEFAULT_MODEL = defaultModelRef()
 
 /**
- * The profile a session boots with when it has no profileId — the pre-profiles
- * default, identical to the old hardcoded behavior: full coding tools, CLAUDE.md
- * and the repo's skills, no extensions, no system-prompt override. Keeps every
- * legacy session (and a bare CLI `new`) booting exactly as it did before M2.
+ * The config a session boots with when it has no agentUserId — identical to
+ * the original hardcoded behavior: full coding tools, CLAUDE.md and the
+ * repo's skills, no extensions, no system-prompt override. Keeps every
+ * unattributed session (and a bare CLI `new`) booting exactly as it always
+ * did.
  */
-export const DEFAULT_PROFILE: ResolvedProfile = {
+export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   systemPrompt: null,
   tools: null,
   readContextFiles: true,
@@ -108,15 +111,16 @@ export interface PiSession {
 }
 
 /**
- * Boots a live pi.dev session for a profile in a given working directory.
- * Profile-driven: the runtime resolves a session's profile (and its registered
- * extensions) and hands the factory everything it needs. A fake stands in for
- * tests; the real one (`createPiSession`) is the live Claude wiring.
+ * Boots a live pi.dev session for an agent config in a given working
+ * directory. Config-driven: the runtime resolves a session's config (off its
+ * agentUserId, and its registered extensions) and hands the factory
+ * everything it needs. A fake stands in for tests; the real one
+ * (`createPiSession`) is the live Claude wiring.
  */
 export type SessionFactory = (
-  profile: ResolvedProfile,
+  config: AgentConfig,
   cwd: string,
-  /** The session's pinned model; the profile's model override wins if set. */
+  /** The session's pinned model; the config's model override wins if set. */
   model: string,
   /** Extra tools to register on the session (e.g. the per-session `background` tool). */
   customTools?: ToolDefinition[],
@@ -125,10 +129,11 @@ export type SessionFactory = (
 /* v8 ignore start -- live pi.dev/Claude wiring, exercised by the CLI not units */
 /**
  * The real session factory: a live pi.dev agent talking to Claude, configured
- * by a profile. The pure profile→options mapping lives in session-config.ts
- * (`resolveSessionOptions`) and is unit-tested; here we only feed those options
- * to pi's resource loader and `createAgentSession`. No file persistence — pi's
- * SessionManager is in-memory because Postgres is our source of truth.
+ * by an agent's config. The pure config→options mapping lives in
+ * session-config.ts (`resolveSessionOptions`) and is unit-tested; here we only
+ * feed those options to pi's resource loader and `createAgentSession`. No file
+ * persistence — pi's SessionManager is in-memory because Postgres is our
+ * source of truth.
  *
  * Per-session `cwd`. Every pi tool (bash/read/edit/write) operates relative to
  * the `cwd` passed here, NOT process.cwd() — verified in the SDK and in
@@ -142,18 +147,18 @@ export type SessionFactory = (
  * on `compaction_start` and rebases its baseline on `compaction_end` (see
  * `ensureEntry`), so the summary is never persisted and no message is lost.
  *
- * The profile decides config: tools, system prompt, whether to feed CLAUDE.md,
+ * The config decides: tools, system prompt, whether to feed CLAUDE.md,
  * whether to load the repo's skills, and which extensions to load. Extensions
  * are pi.dev's answer to the human's Claude Code hooks (build-gates mirrors the
  * commit/landing/session-start gates), wired via additionalExtensionPaths.
  */
 export const createPiSession: SessionFactory = async (
-  profile,
+  config,
   cwd,
   model,
   customTools,
 ) => {
-  const options = resolveSessionOptions(profile, cwd)
+  const options = resolveSessionOptions(config, cwd)
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.loader.cwd,
@@ -221,7 +226,7 @@ export function createAgentRuntime(deps: {
   spawn?: SpawnFn
   /**
    * Loads a named agent's persistent memory at session boot (see memory.ts).
-   * Omitted → sessions boot on their profile alone.
+   * Omitted → sessions boot on their config alone.
    */
   memory?: AgentMemoryLoader
 }) {
@@ -312,29 +317,27 @@ export function createAgentRuntime(deps: {
   }
 
   /**
-   * Resolve the profile a session boots with into a `ResolvedProfile` (its
-   * extension ids turned into repo-relative paths). A session with no profileId
-   * — created before profiles existed, or by a plain CLI `new` — falls back to
-   * the built-in default: full coding tools, CLAUDE.md + repo skills, no
-   * extensions. That keeps every pre-profile session booting exactly as before.
+   * Resolve the config a session boots with into an `AgentConfig` (its
+   * extension ids turned into repo-relative paths). A session with no
+   * agentUserId — unattributed, or a plain CLI `new` — falls back to the
+   * built-in default: full coding tools, CLAUDE.md + repo skills, no
+   * extensions. That keeps every unattributed session booting exactly as
+   * before agent config existed.
    */
-  async function resolveProfile(
-    profileId: string | null,
-  ): Promise<ResolvedProfile> {
-    if (!profileId) return DEFAULT_PROFILE
-    const profile = await getProfileById(db, profileId)
-    /* v8 ignore next -- unreachable behind the agent_sessions.profile_id FK; defensive only */
-    if (!profile) throw new Error(`No such profile: ${profileId}`)
+  async function resolveAgentConfig(
+    agentUserId: string | null,
+  ): Promise<AgentConfig> {
+    if (!agentUserId) return DEFAULT_AGENT_CONFIG
+    const user = await getUserById(db, agentUserId)
+    /* v8 ignore next -- unreachable behind the agent_sessions.agent_user_id FK; defensive only */
+    if (!user) throw new Error(`No such user: ${agentUserId}`)
     return {
-      systemPrompt: profile.systemPrompt,
-      tools: profile.tools,
-      readContextFiles: profile.readContextFiles,
-      useRepoSkills: profile.useRepoSkills,
-      extensionPaths: await resolveProfileExtensionPaths(
-        db,
-        profile.extensionIds,
-      ),
-      model: profile.model,
+      systemPrompt: user.systemPrompt,
+      tools: user.tools,
+      readContextFiles: user.readContextFiles,
+      useRepoSkills: user.useRepoSkills,
+      extensionPaths: await resolveExtensionPaths(db, user.extensionIds),
+      model: user.model,
     }
   }
 
@@ -346,15 +349,15 @@ export function createAgentRuntime(deps: {
     const row = await getSession(db, sessionId)
     if (!row) throw new Error(`No such session: ${sessionId}`)
 
-    let profile = await resolveProfile(row.profileId)
+    let config = await resolveAgentConfig(row.agentUserId)
     // A session acting as a named agent boots with that agent's persistent
     // memory folded into its system prompt (identity, index, how to update).
     if (row.agentUserId && deps.memory) {
       const memory = await deps.memory(row.agentUserId)
-      if (memory) profile = withAgentMemory(profile, memory)
+      if (memory) config = withAgentMemory(config, memory)
     }
     const cwd = row.cwd ?? process.cwd()
-    const session = await factory(profile, cwd, row.model, [
+    const session = await factory(config, cwd, row.model, [
       createBackgroundTool(sessionId, cwd, jobs),
     ])
     const history = (await getMessages(db, sessionId)).map(

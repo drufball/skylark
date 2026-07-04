@@ -46,8 +46,8 @@ app-shell nav).
   upsert key and what `--playbook` accepts), `description`, `memberIds` (agent
   users allowed hands on the issue), `entrypointId` (who a → building seeds).
   Deliberately NOT a state machine: the who-hands-to-whom knowledge lives in the
-  agents' own profiles and prompts; the playbook is the guardrail (membership)
-  and the starting gun (entrypoint). Two are seeded — `build` (the **builder**
+  agents' own config and prompts; the playbook is the guardrail (membership) and
+  the starting gun (entrypoint). Two are seeded — `build` (the **builder**
   implements to an open PR, then batons to the **babysitter**, who waits on CI
   via the `background` tool and merges — or hands a fix brief back) and
   `general` (the `hand` crew agent, full tools, the issue's own words as the
@@ -131,14 +131,14 @@ action, runs
 `SKYLARK_ACTOR=<its id> npm run issue -- handoff <nano> babysitter "PR #12 open — take it home"`.
 `requestHandoff` validates (target is an agent, issue is building, no other hand
 mid-turn) and emits `issue.handoff`. The orchestrator hears it, ensures the
-target's session exists — booted with the **target's own profile**
-(users.profileId) and identity, `cwd` = the same worktree — and fires a turn
-briefed with the message. The notifications reactor fans the same event to the
-issue's watchers, so the crew sees the baton move.
-`handoff <nano> OWNER "<message>"` emits `issue.owner_ping` instead and skips
-the worktree turn entirely: the reactor delivers straight to the owner's inbox,
-and if the owner is an agent the waker wakes it on its own inbox session,
-briefed to find the right chat itself (see [chat](../chat/zine.md)).
+target's session exists — booted as the **target's own identity**, its config
+riding on that `users` row, `cwd` = the same worktree — and fires a turn briefed
+with the message. The notifications reactor fans the same event to the issue's
+watchers, so the crew sees the baton move. `handoff <nano> OWNER "<message>"`
+emits `issue.owner_ping` instead and skips the worktree turn entirely: the
+reactor delivers straight to the owner's inbox, and if the owner is an agent the
+waker wakes it on its own inbox session, briefed to find the right chat itself
+(see [chat](../chat/zine.md)).
 
 **Why event-driven, not inline.** The builder runs `npm run issue done <id>`
 from its bash tool — a separate CLI process. That transition is only a durable
@@ -258,35 +258,38 @@ their public functions, not their tables.
   If the baton was with a NON-entrypoint agent when the server died, that hand
   stays paused until the next handoff or a human nudge — the honest gap that
   remains.
-- **Playbook entrypoints boot from `users.profileId`.** The playbook names WHO
-  starts; how that agent boots is the agent's own profile — one source of truth,
-  the same one a handoff target uses. Corollary: the seeding wires the
-  `builder`, `hand`, and `babysitter` crew members to their profiles (the chat
-  default is never right for them), and `ensureOrchestrator` converges crew +
-  profiles + playbooks on every boot so entrypoint resolution never runs against
-  half-seeded config. An issue whose playbook (or entrypoint agent) is gone
-  falls back to the legacy builder path, loudly.
+- **Playbook entrypoints boot from the entrypoint user's own config.** The
+  playbook names WHO starts; how that agent boots is data on its own `users` row
+  — one source of truth, the same one a handoff target uses. Corollary:
+  `seedAgentConfig` (hull/agent) writes the `builder`, `hand`, and `babysitter`
+  crew members' config directly (the chat default is never right for them), and
+  `ensureOrchestrator` runs crew + agent-config + playbook seeding on every boot
+  so entrypoint resolution never runs against half-seeded config. An issue whose
+  playbook (or entrypoint agent) is gone falls back to the legacy builder path,
+  loudly.
 - **`playbookId` is nullable, and null MEANS build.** No backfill, no required
   field on every door: a bare `issue new`, every pre-playbooks issue, and every
   agent that never heard of playbooks all keep their meaning. The default is
   resolved at orchestration time (`playbookFor`), not stamped at creation.
-- **Boot ENSURES; seed CONVERGES.** `ensureOrchestrator` runs the seeders every
-  boot with create-if-absent semantics, so an edit made in the
-  Profiles/Playbooks editors survives a restart. The explicit
-  `npm run agent seed` (and `convergeAll: true` programmatically) is the
-  factory-reset door that rewrites the standard rows to their declared shape. A
-  seeder that silently converges on boot un-does the very edits the editors
-  invite — that bug shipped once in review and must not ship again. Ensure mode
-  has exactly one exception: newly-standard members are APPENDED to an existing
+- **Playbook seeding: boot ENSURES, the explicit CLI seed CONVERGES.**
+  `ensureOrchestrator` runs `seedPlaybooks` every boot with create-if-absent
+  semantics, so an edit made in the Playbooks editor survives a restart. The
+  explicit `npm run agent seed` (`convergeAll: true`) is the factory-reset door
+  that rewrites the standard playbook rows to their declared shape. A seeder
+  that silently converges on boot un-does the very edits the editor invites —
+  that bug shipped once in review and must not ship again. Ensure mode has
+  exactly one exception: newly-standard members are APPENDED to an existing
   standard playbook's roster (the factory flow must stay whole when the standard
-  roster grows), while every other edit survives.
+  roster grows), while every other edit survives. Agent config
+  (`seedAgentConfig`) doesn't need this split at all — see hull/agent/zine.md's
+  "seed converges an agent's config once, and never again."
 - **The build prompt is keyed on the playbook NAME — a known crack.** The
   entrypoint's turn prompt is `buildPrompt` iff the playbook is literally named
   `build`, else `generalPrompt`; the work contract therefore lives in two places
-  (the agent's profile, by user; the turn prompt, by name). Fine while `build`
-  is the one code-shaped playbook. The intended refit: one uniform turn prompt
-  (issue brief + CLI contract) with the ship-feature contract living only in the
-  builder's profile/skill — do that before cloning build-like playbooks.
+  (the agent's own config, by user; the turn prompt, by name). Fine while
+  `build` is the one code-shaped playbook. The intended refit: one uniform turn
+  prompt (issue brief + CLI contract) with the ship-feature contract living only
+  in the builder's config/skill — do that before cloning build-like playbooks.
 - **The live end-to-end builder is exercised manually, not in CI.** The
   orchestrator's decision logic is unit-tested against fake git/runtime/slug
   (`orchestrator.test.ts`), but a real LLM building real code to a real merged
@@ -298,6 +301,10 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **Entrypoints boot from agent config, not `users.profileId`.** Profiles
+  retired (see hull/agent/zine.md); the playbook still names WHO starts, but HOW
+  is now data on that agent's own `users` row, written by `seedAgentConfig` in
+  place of the old profile seeding + wiring.
 - **Decouple issues from chat** — Dropped `issues.originChatId` and the CLI's
   `--chat` flag: issues carry no reference to chat at all. An agent's wake now
   arrives on its own inbox session (see the [chat zine](../chat/zine.md)), which

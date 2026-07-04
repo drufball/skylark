@@ -132,7 +132,6 @@ export interface ChatMemberView {
   handle: string
   displayName: string
   type: UserRow['type']
-  profileId: string | null
   sessionId: string | null
 }
 
@@ -146,7 +145,6 @@ export async function listMembers(
       handle: users.handle,
       displayName: users.displayName,
       type: users.type,
-      profileId: users.profileId,
       sessionId: chatMembers.sessionId,
     })
     .from(chatMembers)

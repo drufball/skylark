@@ -183,7 +183,7 @@ export async function playbookFor(
  * Seed the standard playbooks: `build` (builder implements to an open PR,
  * babysitter shepherds it home) and `general` (the hand — full tools, no
  * build contract, does what the issue says). A playbook whose crew isn't
- * aboard yet is skipped, not fatal — seedCrew (users) and the profile seeding
+ * aboard yet is skipped, not fatal — seedCrew (users) and seedAgentConfig
  * (agent) run first in every boot path, so this is a fresh-database corner,
  * not a live one.
  *

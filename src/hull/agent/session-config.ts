@@ -4,26 +4,27 @@ import {
   readContextFiles as defaultReadContextFiles,
   skillDirs as defaultSkillDirs,
 } from './repo-context'
-import type { ProfileInput } from './profiles'
+import type { AgentConfigInput } from './agent-config'
 
 /**
- * The pure mapping from an agent profile to pi.dev session options. Kept apart
+ * The pure mapping from an agent's config to pi.dev session options. Kept apart
  * from the live `createPiSession` wiring (runtime.ts) so the decision — what
  * tools, which skills, whether to read CLAUDE.md, which extensions — is
  * unit-testable without a network or a real pi session. The runtime resolves a
- * profile row (and its extension registry rows) into a `ResolvedProfile`, calls
- * this, then hands the result to `createAgentSession` + `DefaultResourceLoader`.
+ * user row's config (and its extension registry rows) into an `AgentConfig`,
+ * calls this, then hands the result to `createAgentSession` +
+ * `DefaultResourceLoader`.
  */
 
 /**
- * A profile as the runtime resolves it for booting a session: the stored
- * `ProfileInput` minus its identity (`name`) and with the extension *ids*
- * already turned into repo-relative `extensionPaths`. Derived from
- * `ProfileInput` so the profile shape has one home — add a knob there and the
- * runtime's mapping fails to compile until it's threaded through here.
+ * An agent's config as the runtime resolves it for booting a session: the
+ * stored `AgentConfigInput` with the extension *ids* already turned into
+ * repo-relative `extensionPaths`. Derived from `AgentConfigInput` so the
+ * config shape has one home — add a knob there and the runtime's mapping
+ * fails to compile until it's threaded through here.
  */
-export type ResolvedProfile = Omit<ProfileInput, 'name' | 'extensionIds'> & {
-  /** Repo-relative paths to the profile's extension modules, in load order. */
+export type AgentConfig = Omit<AgentConfigInput, 'extensionIds'> & {
+  /** Repo-relative paths to the config's extension modules, in load order. */
   extensionPaths: string[]
 }
 
@@ -72,7 +73,7 @@ function resolveAgainst(cwd: string, path: string): string {
 }
 
 /**
- * Map a resolved profile + working directory to pi.dev session options.
+ * Map a resolved agent config + working directory to pi.dev session options.
  *
  * - `tools` allowlist → `tools`; null → undefined (pi's default coding tools).
  * - `readContextFiles===false` → `noContextFiles: true` and no context files;
@@ -83,27 +84,27 @@ function resolveAgainst(cwd: string, path: string): string {
  * - `systemPrompt`, `model` → passed through.
  */
 export function resolveSessionOptions(
-  profile: ResolvedProfile,
+  config: AgentConfig,
   cwd: string,
   deps: Partial<SessionConfigDeps> = {},
 ): SessionOptions {
   const { skillDirs, readContextFiles } = { ...defaultDeps, ...deps }
   return {
     session: {
-      tools: profile.tools ?? undefined,
+      tools: config.tools ?? undefined,
       cwd,
     },
     loader: {
       cwd,
-      systemPrompt: profile.systemPrompt,
-      noContextFiles: !profile.readContextFiles,
-      noSkills: !profile.useRepoSkills,
-      additionalSkillPaths: profile.useRepoSkills ? skillDirs(cwd) : [],
-      additionalExtensionPaths: profile.extensionPaths.map((p) =>
+      systemPrompt: config.systemPrompt,
+      noContextFiles: !config.readContextFiles,
+      noSkills: !config.useRepoSkills,
+      additionalSkillPaths: config.useRepoSkills ? skillDirs(cwd) : [],
+      additionalExtensionPaths: config.extensionPaths.map((p) =>
         resolveAgainst(cwd, p),
       ),
-      contextFiles: profile.readContextFiles ? readContextFiles(cwd) : [],
+      contextFiles: config.readContextFiles ? readContextFiles(cwd) : [],
     },
-    model: profile.model,
+    model: config.model,
   }
 }

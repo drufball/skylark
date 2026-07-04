@@ -12,9 +12,9 @@ import {
   starterMemoryIndex,
   withAgentMemory,
 } from './memory'
-import type { ResolvedProfile } from './session-config'
+import type { AgentConfig } from './session-config'
 
-const PROFILE: ResolvedProfile = {
+const CONFIG: AgentConfig = {
   systemPrompt: 'You pilot the ship.',
   tools: ['read', 'bash'],
   readContextFiles: false,
@@ -37,8 +37,8 @@ describe('withAgentMemory', () => {
     index: '# Tilde\n\nI review architecture.',
   }
 
-  it('appends identity, the index content, and the update commands after the profile prompt', () => {
-    const boosted = withAgentMemory(PROFILE, memory)
+  it("appends identity, the index content, and the update commands after the config's prompt", () => {
+    const boosted = withAgentMemory(CONFIG, memory)
     expect(boosted.systemPrompt).toContain('You pilot the ship.')
     expect(boosted.systemPrompt?.indexOf('You pilot the ship.')).toBe(0)
     expect(boosted.systemPrompt).toContain('You are @tilde')
@@ -46,19 +46,19 @@ describe('withAgentMemory', () => {
     expect(boosted.systemPrompt).toContain(
       'SKYLARK_ACTOR=user-1 npm run files -- write agents/tilde/<file>',
     )
-    // Everything else about the profile is untouched.
-    expect(boosted.tools).toEqual(PROFILE.tools)
+    // Everything else about the config is untouched.
+    expect(boosted.tools).toEqual(CONFIG.tools)
     expect(boosted.model).toBeNull()
   })
 
-  it('stands alone when the profile has no prompt of its own', () => {
-    const boosted = withAgentMemory({ ...PROFILE, systemPrompt: null }, memory)
+  it('stands alone when the config has no prompt of its own', () => {
+    const boosted = withAgentMemory({ ...CONFIG, systemPrompt: null }, memory)
     expect(boosted.systemPrompt?.startsWith('You are @tilde')).toBe(true)
   })
 
   it('says the index is empty when it is missing or blank', () => {
     for (const index of [null, '', '   \n']) {
-      const boosted = withAgentMemory(PROFILE, { ...memory, index })
+      const boosted = withAgentMemory(CONFIG, { ...memory, index })
       expect(boosted.systemPrompt).toContain('your index is empty')
     }
   })

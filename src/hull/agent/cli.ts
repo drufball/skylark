@@ -7,10 +7,9 @@ import { withCliActor } from '@hull/users/actor'
 
 import {
   listExtensions,
-  listProfiles,
   registerExtension,
-  seedAndWireProfiles,
-} from './profiles'
+  seedAgentConfig,
+} from './agent-config'
 import { liveAgentMemoryLoader } from './server-runtime'
 import { toolExecutionDetail, truncate } from './progress'
 import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
@@ -165,27 +164,13 @@ async function cmdCancel(args: string[]): Promise<void> {
 }
 
 async function cmdSeed(): Promise<void> {
-  const { profiles, exts } = await withCliActor(async (tx) => {
-    await seedAndWireProfiles(tx)
-    return { profiles: await listProfiles(tx), exts: await listExtensions(tx) }
+  const exts = await withCliActor(async (tx) => {
+    await seedAgentConfig(tx)
+    return listExtensions(tx)
   })
   process.stdout.write(
-    `Seeded ${String(profiles.length)} profile(s), ${String(exts.length)} extension(s); agents → chat profile.\n`,
+    `Seeded agent config; ${String(exts.length)} extension(s) registered.\n`,
   )
-}
-
-async function cmdProfiles(): Promise<void> {
-  const profiles = await withCliActor((tx) => listProfiles(tx))
-  if (profiles.length === 0) {
-    process.stdout.write('No profiles — run `npm run agent seed`.\n')
-    return
-  }
-  for (const p of profiles) {
-    const tools = p.tools ? p.tools.join(',') : 'default-coding'
-    process.stdout.write(
-      `${p.name}  ${DIM}tools=${tools} ctx=${String(p.readContextFiles)} skills=${String(p.useRepoSkills)} ext=${String(p.extensionIds.length)} · ${p.id}${RESET}\n`,
-    )
-  }
 }
 
 async function cmdExtensions(args: string[]): Promise<void> {
@@ -229,19 +214,16 @@ async function main(): Promise<void> {
       return cmdCancel(args)
     case 'seed':
       return cmdSeed()
-    case 'profiles':
-      return cmdProfiles()
     case 'extensions':
       return cmdExtensions(args)
     default:
       process.stdout.write(
-        'usage: agent <new|send|list|cancel|seed|profiles|extensions> …\n' +
+        'usage: agent <new|send|list|cancel|seed|extensions> …\n' +
           '  new <message> [--model <id>]   start a session and send the first message\n' +
           '  send <session-id> <message>    send a message (queued if mid-turn)\n' +
           '  list [--running] [--since D]   list sessions, newest first\n' +
           '  cancel <session-id>            cancel a running session\n' +
-          '  seed                           seed the standard profiles + extensions\n' +
-          '  profiles                       list agent profiles\n' +
+          '  seed                           seed the standard agent config + extensions\n' +
           '  extensions [register …]        list or register extensions\n',
       )
       process.exitCode = command ? 1 : 0

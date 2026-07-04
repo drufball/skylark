@@ -15,7 +15,7 @@ import {
 } from '@hull/agent/models'
 import { createServerRuntime } from '@hull/agent/server-runtime'
 import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
-import { seedAndWireProfiles } from '@hull/agent/profiles'
+import { seedAgentConfig } from '@hull/agent/agent-config'
 import { operatorHandle, operatorSeed } from '@hull/users/actor'
 import { getUserByHandle, seedCrew } from '@hull/users/service'
 import { errorMessage } from '@hull/lib/errors'
@@ -238,17 +238,17 @@ async function boot(): Promise<Orchestrator> {
   unsubscribe?.()
   unsubscribe = undefined
 
-  // ENSURE the config the orchestrator runs on — crew, profiles, playbooks —
-  // every boot, idempotently. hoist seeds the crew too, but the server must
-  // not depend on how it was launched: entrypoint resolution reads
-  // users.profileId and the playbooks table, so both must exist before the
-  // first → building. Ensure, don't converge: a boot only creates what's
-  // missing, so edits made in the Profiles/Playbooks editors survive a
-  // restart (the explicit `npm run agent seed` is the converge-back door).
+  // ENSURE the config the orchestrator runs on — crew, agent config,
+  // playbooks — every boot, idempotently. hoist seeds the crew too, but the
+  // server must not depend on how it was launched: entrypoint resolution
+  // reads each agent's own config columns and the playbooks table, so both
+  // must exist before the first → building. seedAgentConfig only ever writes
+  // an agent's NEVER-customized config, so a hand-edit made in the Crew
+  // editor survives every restart with no separate ensure/converge mode.
   // Best-effort: a seed hiccup mustn't hold the ship.
   try {
     await seedCrew(systemDb, operatorSeed())
-    await seedAndWireProfiles(systemDb, { convergeAll: false })
+    await seedAgentConfig(systemDb)
     await seedPlaybooks(systemDb)
   } catch (err) {
     console.error(`orchestrator boot seeding failed: ${errorMessage(err)}`)

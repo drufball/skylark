@@ -1,6 +1,6 @@
 {
-  "id": "e87e99b2-08ee-4283-97d0-9abeddaa9798",
-  "prevId": "88a13efa-1af7-4a4c-ad8a-826c35b20a8f",
+  "id": "9ca304b9-a0c7-4207-b19e-0be1a80657c3",
+  "prevId": "e87e99b2-08ee-4283-97d0-9abeddaa9798",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -188,12 +188,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "profile_id": {
-          "name": "profile_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "cwd": {
           "name": "cwd",
           "type": "text",
@@ -202,6 +196,12 @@
         },
         "agent_user_id": {
           "name": "agent_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "profile_id": {
+          "name": "profile_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -236,12 +236,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "agent_sessions_profile_id_agent_profiles_id_fk": {
-          "name": "agent_sessions_profile_id_agent_profiles_id_fk",
+        "agent_sessions_agent_user_id_users_id_fk": {
+          "name": "agent_sessions_agent_user_id_users_id_fk",
           "tableFrom": "agent_sessions",
-          "tableTo": "agent_profiles",
+          "tableTo": "users",
           "columnsFrom": [
-            "profile_id"
+            "agent_user_id"
           ],
           "columnsTo": [
             "id"
@@ -249,12 +249,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "agent_sessions_agent_user_id_users_id_fk": {
-          "name": "agent_sessions_agent_user_id_users_id_fk",
+        "agent_sessions_profile_id_agent_profiles_id_fk": {
+          "name": "agent_sessions_profile_id_agent_profiles_id_fk",
           "tableFrom": "agent_sessions",
-          "tableTo": "users",
+          "tableTo": "agent_profiles",
           "columnsFrom": [
-            "agent_user_id"
+            "profile_id"
           ],
           "columnsTo": [
             "id"
@@ -1266,6 +1266,45 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "system_prompt": {
+          "name": "system_prompt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tools": {
+          "name": "tools",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_context_files": {
+          "name": "read_context_files",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "use_repo_skills": {
+          "name": "use_repo_skills",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "extension_ids": {
+          "name": "extension_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "profile_id": {
           "name": "profile_id",

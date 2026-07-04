@@ -29,7 +29,7 @@ Start here:
 ./scripts/setup          bootstrap a fresh clone/worktree/session (idempotent)
 ./scripts/hoist          setup + Postgres + LLM gateway + dev — the "go live" one move
 npm run dev              start the ship (port 3000)
-npm run agent            the agent service CLI (sessions, seed, profiles, extensions)
+npm run agent            the agent service CLI (sessions, seed, extensions)
 npm run users            the users service CLI (seed, list, whoami)
 npm run issue            the issues service CLI (new, list, show, comment, handoff, …)
 npm run files            the files service CLI (list, read, write, rm)

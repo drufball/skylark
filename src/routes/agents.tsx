@@ -11,10 +11,8 @@ import {
   getAgentChat,
   getDefaultModel,
   listAgentExtensions,
-  listAgentProfiles,
   listAgentSessions,
   listGatewayModels,
-  saveAgentProfile,
   sendAgentMessage,
 } from '@hull/agent/server'
 import { agentMemoryIndexPath } from '@hull/agent/memory-paths'
@@ -22,29 +20,27 @@ import { sessionTopic } from '@hull/agent/topic'
 import { listPlaybooksView, savePlaybook } from '@hull/issues/server'
 import { createAgentUser, listCrew, updateAgentUser } from '@hull/users/server'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
-import { AgentCrew, type CrewMemberSummary } from '@rigging/views/agent-crew'
-import { Playbooks, type PlaybookFormValue } from '@rigging/views/playbooks'
 import {
-  AgentProfiles,
+  AgentCrew,
+  type AgentConfigValue,
+  type CrewMemberSummary,
   type ExtensionSummary,
-  type ProfileFormValue,
-  type ProfileSummary,
-} from '@rigging/views/agent-profiles'
+} from '@rigging/views/agent-crew'
+import { Playbooks, type PlaybookFormValue } from '@rigging/views/playbooks'
 import { Dock } from '@rigging/views/dock'
 import { cn } from '@rigging/lib/utils'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 
-// The Agents surface: the dedicated agent-management view. Four sub-tabs —
+// The Agents surface: the dedicated agent-management view. Three sub-tabs —
 // the session **monitor** (the old front-door chat ux, which was only ever a
 // way to watch sessions and unstick a wedged one with a direct message), the
-// **profiles** editor (the data that tells the runtime how to boot an agent),
-// the **crew** roster (named agents: create one, rename it, point it at a
-// profile, open its memory), and **playbooks** (issue-handling strategies:
-// which agents work an issue, and who starts). Live updates ride the ship's
-// log, same as the front door.
+// **crew** roster (named agents: create one, rename it, edit its boot config,
+// open its memory), and **playbooks** (issue-handling strategies: which
+// agents work an issue, and who starts). Live updates ride the ship's log,
+// same as the front door.
 
-type AgentTab = 'sessions' | 'profiles' | 'crew' | 'playbooks'
+type AgentTab = 'sessions' | 'crew' | 'playbooks'
 
 interface AgentsSearch {
   tab: AgentTab
@@ -54,19 +50,16 @@ interface AgentsSearch {
 export const Route = createFileRoute('/agents')({
   validateSearch: (search: Record<string, unknown>): AgentsSearch => ({
     tab:
-      search.tab === 'profiles' ||
-      search.tab === 'crew' ||
-      search.tab === 'playbooks'
+      search.tab === 'crew' || search.tab === 'playbooks'
         ? search.tab
         : 'sessions',
     session: typeof search.session === 'string' ? search.session : undefined,
   }),
   loaderDeps: ({ search }) => ({ session: search.session }),
   loader: async ({ deps }) => {
-    const [sessions, profiles, extensions, gateway, def, crew, playbooks] =
+    const [sessions, extensions, gateway, def, crew, playbooks] =
       await Promise.all([
         listAgentSessions(),
-        listAgentProfiles(),
         listAgentExtensions(),
         listGatewayModels(),
         getDefaultModel(),
@@ -83,7 +76,6 @@ export const Route = createFileRoute('/agents')({
       : null
     return {
       sessions,
-      profiles,
       extensions,
       modelOptions,
       chat,
@@ -96,15 +88,8 @@ export const Route = createFileRoute('/agents')({
 
 function AgentsRoute() {
   const { tab, session: activeId } = Route.useSearch()
-  const {
-    sessions,
-    profiles,
-    extensions,
-    modelOptions,
-    chat,
-    crew,
-    playbooks,
-  } = Route.useLoaderData()
+  const { sessions, extensions, modelOptions, chat, crew, playbooks } =
+    Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
 
@@ -134,20 +119,9 @@ function AgentsRoute() {
     await router.invalidate()
   }
 
-  async function saveProfile(value: ProfileFormValue) {
-    setSaving(true)
-    try {
-      await saveAgentProfile({ data: value })
-      await router.invalidate()
-    } finally {
-      setSaving(false)
-    }
-  }
-
   async function createCrewAgent(input: {
     handle: string
     displayName: string
-    profileId: string | null
   }) {
     setSaving(true)
     try {
@@ -158,11 +132,19 @@ function AgentsRoute() {
     }
   }
 
-  async function updateCrew(input: {
-    userId: string
-    displayName?: string
-    profileId?: string
-  }) {
+  async function updateCrew(input: { userId: string; displayName?: string }) {
+    setSaving(true)
+    try {
+      await updateAgentUser({ data: input })
+      await router.invalidate()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function updateCrewConfig(
+    input: { userId: string } & AgentConfigValue,
+  ) {
     setSaving(true)
     try {
       await updateAgentUser({ data: input })
@@ -194,16 +176,6 @@ function AgentsRoute() {
     title: s.title,
     status: s.status,
   }))
-  const profileSummaries: ProfileSummary[] = profiles.map((p) => ({
-    id: p.id,
-    name: p.name,
-    systemPrompt: p.systemPrompt,
-    tools: p.tools,
-    readContextFiles: p.readContextFiles,
-    useRepoSkills: p.useRepoSkills,
-    extensionIds: p.extensionIds,
-    model: p.model,
-  }))
   const extensionSummaries: ExtensionSummary[] = extensions.map((e) => ({
     id: e.id,
     name: e.name,
@@ -214,7 +186,12 @@ function AgentsRoute() {
     handle: m.handle,
     displayName: m.displayName,
     type: m.type,
-    profileId: m.profileId,
+    systemPrompt: m.systemPrompt,
+    tools: m.tools,
+    readContextFiles: m.readContextFiles,
+    useRepoSkills: m.useRepoSkills,
+    extensionIds: m.extensionIds,
+    model: m.model,
   }))
 
   return (
@@ -241,7 +218,8 @@ function AgentsRoute() {
           ) : tab === 'crew' ? (
             <AgentCrew
               crew={crewSummaries}
-              profiles={profiles.map((p) => ({ id: p.id, name: p.name }))}
+              extensions={extensionSummaries}
+              modelOptions={modelOptions}
               saving={saving}
               onCreate={(input) => {
                 void createCrewAgent(input)
@@ -249,21 +227,14 @@ function AgentsRoute() {
               onUpdate={(input) => {
                 void updateCrew(input)
               }}
+              onUpdateConfig={(input) => {
+                void updateCrewConfig(input)
+              }}
               onOpenMemory={(handle) => {
                 void navigate({
                   to: '/files',
                   search: { path: agentMemoryIndexPath(handle) },
                 })
-              }}
-            />
-          ) : tab === 'profiles' ? (
-            <AgentProfiles
-              profiles={profileSummaries}
-              extensions={extensionSummaries}
-              modelOptions={modelOptions}
-              saving={saving}
-              onSave={(value) => {
-                void saveProfile(value)
               }}
             />
           ) : (
@@ -302,7 +273,7 @@ function TabBar({
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1 border-b bg-muted/20 px-3 py-2">
-      {(['sessions', 'profiles', 'crew', 'playbooks'] as const).map((t) => (
+      {(['sessions', 'crew', 'playbooks'] as const).map((t) => (
         <button
           key={t}
           type="button"

@@ -1,7 +1,6 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
-import { getProfileByName } from '@hull/agent/profiles'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { createSession, getSession } from '@hull/agent/service'
 import type { NotifyPayload } from '@hull/events/bus'
@@ -289,13 +288,13 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 
   /**
    * Ensure an agent's session on this issue exists (one per issue × agent,
-   * recorded on issue_sessions), in the issue's worktree, booted with the
-   * given profile and the agent's identity. Reused on every later turn.
+   * recorded on issue_sessions), in the issue's worktree, booted as the
+   * agent's own identity — its config rides on the user row. Reused on every
+   * later turn.
    */
   async function ensureAgentSession(input: {
     issue: IssueRow
     agentUserId: string
-    profileId: string | null
     worktreePath: string
     title: string
   }): Promise<string> {
@@ -311,7 +310,6 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       id: sessionId,
       model: DEFAULT_MODEL,
       title: input.title,
-      profileId: input.profileId,
       cwd: input.worktreePath,
       agentUserId: input.agentUserId,
     })
@@ -324,22 +322,20 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /**
-   * Who starts this issue, and with what: the playbook's entrypoint agent
-   * (booting from its own users.profileId), or — on a ship with nothing
-   * seeded, or a roster whose agent has left the crew — the legacy builder
-   * path (the builder identity + the `builder` profile). `build` is whether
-   * the entrypoint runs the ship-feature contract or the plain general brief.
+   * Who starts this issue: the playbook's entrypoint agent, or — on a ship
+   * with nothing seeded, or a roster whose agent has left the crew — the
+   * legacy builder identity. `build` is whether the entrypoint runs the
+   * ship-feature contract or the plain general brief.
    */
   async function entryFor(
     issue: IssueRow,
-  ): Promise<{ userId: string; profileId: string | null; build: boolean }> {
+  ): Promise<{ userId: string; build: boolean }> {
     const playbook = await playbookFor(db, issue)
     if (playbook) {
       const entry = await getUserById(db, playbook.entrypointId)
       if (entry) {
         return {
           userId: entry.id,
-          profileId: entry.profileId,
           build: playbook.name === BUILD_PLAYBOOK_NAME,
         }
       }
@@ -347,12 +343,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         `playbook ${playbook.name} entrypoint is gone; falling back to the builder`,
       )
     }
-    const builder = await getProfileByName(db, 'builder')
-    return {
-      userId: builderUserId,
-      profileId: builder?.id ?? null,
-      build: true,
-    }
+    return { userId: builderUserId, build: true }
   }
 
   /**
@@ -387,7 +378,6 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const sessionId = await ensureAgentSession({
       issue,
       agentUserId: entry.userId,
-      profileId: entry.profileId,
       worktreePath,
       title: issue.title,
     })
@@ -514,8 +504,9 @@ export function createOrchestrator(deps: OrchestratorDeps) {
 
   /**
    * React to a baton pass: ensure the target agent's session exists in the
-   * issue's ONE worktree (booted with the target's own profile + identity) and
-   * fire a turn briefed with the handoff message. Owner pings never land here
+   * issue's ONE worktree (booted as the target's own identity — its config
+   * rides on the user row) and fire a turn briefed with the handoff message.
+   * Owner pings never land here
    * — the notifications reactor carries those to an inbox/wake instead.
    * Re-reads the issue so a stale event (the issue moved on before this note
    * was handled) is dropped rather than acted on.
@@ -562,7 +553,6 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     const sessionId = await ensureAgentSession({
       issue,
       agentUserId: target.id,
-      profileId: target.profileId,
       worktreePath,
       title: `${issue.title} (@${target.handle})`,
     })

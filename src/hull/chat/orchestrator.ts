@@ -160,7 +160,6 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     chatId: string,
     agent: {
       userId: string
-      profileId: string | null
       sessionId: string | null
     },
   ): Promise<string> {
@@ -168,9 +167,8 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     const id = uuidv7()
     await createSession(db, {
       id,
-      // The ship default (a profile's model override still wins at boot).
+      // The ship default (the agent's own model override still wins at boot).
       model: DEFAULT_MODEL,
-      profileId: agent.profileId,
       agentUserId: agent.userId,
     })
     await setMemberSession(db, chatId, agent.userId, id)
@@ -263,10 +261,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
    * agent (one in flight, never two), so find-or-create doesn't race with
    * itself in this process.
    */
-  async function ensureInboxSession(agent: {
-    id: string
-    profileId: string | null
-  }): Promise<string> {
+  async function ensureInboxSession(agent: { id: string }): Promise<string> {
     const existing = await findAgentSessionByTitle(
       db,
       agent.id,
@@ -276,10 +271,9 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     const id = uuidv7()
     await createSession(db, {
       id,
-      // The ship default (a profile's model override still wins at boot).
+      // The ship default (an agent's own model override still wins at boot).
       model: DEFAULT_MODEL,
       title: INBOX_SESSION_TITLE,
-      profileId: agent.profileId,
       agentUserId: agent.id,
       // cwd omitted → repo root: the wake turn drives `npm run chat` etc.
     })

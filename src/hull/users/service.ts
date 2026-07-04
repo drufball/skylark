@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { and, asc, eq, isNotNull, isNull, notInArray } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 
@@ -15,6 +15,20 @@ import { users, type UserRow } from './schema'
 
 export type UserType = UserRow['type']
 
+/**
+ * The agent-config fields a user row carries (how an agent's sessions boot);
+ * all optional on write — an omitted field keeps its schema default (or, on
+ * update, its current value). See hull/agent/zine.md for what each means.
+ */
+export interface AgentConfigFields {
+  systemPrompt?: string | null
+  tools?: string[] | null
+  readContextFiles?: boolean
+  useRepoSkills?: boolean
+  extensionIds?: string[]
+  model?: string | null
+}
+
 export async function createUser(
   db: Database,
   input: {
@@ -22,8 +36,7 @@ export async function createUser(
     handle: string
     displayName: string
     type: UserType
-    profileId?: string
-  },
+  } & AgentConfigFields,
 ): Promise<UserRow> {
   const [row] = await db.insert(users).values(input).returning()
   return row
@@ -85,12 +98,12 @@ export function validateHandle(handle: string): string {
 /**
  * Update a named AGENT's mutable fields; undefined leaves a field alone.
  * Scoped to agents at the query so a human row can never be renamed or handed
- * an agent profile through this path — a human target reads as not-found.
+ * agent config through this path — a human target reads as not-found.
  */
 export async function updateAgentUser(
   db: Database,
   userId: string,
-  patch: { displayName?: string; profileId?: string },
+  patch: { displayName?: string } & AgentConfigFields,
 ): Promise<UserRow | undefined> {
   const [row] = await db
     .update(users)
@@ -103,54 +116,6 @@ export async function updateAgentUser(
 /** Remove a user row — the compensating delete for a failed agent creation. */
 export async function deleteUser(db: Database, userId: string): Promise<void> {
   await db.delete(users).where(eq(users.id, userId))
-}
-
-/** Point one crew member at an agent profile (by id). Writes only the users table. */
-export async function setUserProfile(
-  db: Database,
-  userId: string,
-  profileId: string,
-): Promise<void> {
-  await db.update(users).set({ profileId }).where(eq(users.id, userId))
-}
-
-/**
- * Null out profile references that no longer resolve. The users table has no
- * FK onto agent_profiles (the services stay decoupled), so a rebuilt profiles
- * table can leave users pointing at ghost ids — and every session boot for
- * that agent then dies on agent_sessions' real FK. The agent service passes
- * the ids that exist; anything else becomes null, which the very next wire
- * step re-points at the default. Self-healing, every boot.
- */
-export async function clearDanglingProfiles(
-  db: Database,
-  validProfileIds: string[],
-): Promise<void> {
-  const dangling =
-    validProfileIds.length === 0
-      ? isNotNull(users.profileId)
-      : and(
-          isNotNull(users.profileId),
-          notInArray(users.profileId, validProfileIds),
-        )
-  await db.update(users).set({ profileId: null }).where(dangling)
-}
-
-/**
- * Give every agent crew member without a profile the supplied default profile,
- * idempotently. Humans are left alone; agents that already have a profile keep
- * it (so a hand-assigned profile survives). The agent profiles live in another
- * service, so the caller passes the id — users only ever writes its own column.
- * This is how the loose `profileId` text column gets wired once profiles exist.
- */
-export async function assignDefaultAgentProfile(
-  db: Database,
-  profileId: string,
-): Promise<void> {
-  await db
-    .update(users)
-    .set({ profileId })
-    .where(and(eq(users.type, 'agent'), isNull(users.profileId)))
 }
 
 /**
