@@ -17,12 +17,7 @@ import { errorMessage } from '@hull/lib/errors'
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
 import { withAgentMemory, type AgentMemoryLoader } from './memory'
-import {
-  chatModelRef,
-  defaultModelRef,
-  providerConfigured,
-  resolveModel,
-} from './models'
+import { defaultModelRef, gatewayApiKey, resolveModel } from './models'
 import { getProfileById, resolveProfileExtensionPaths } from './profiles'
 import { resolveSessionOptions, type ResolvedProfile } from './session-config'
 import {
@@ -48,28 +43,13 @@ import { sessionTopic } from './topic'
 export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
 
 /**
- * Default model when a session doesn't pin one — local-first. Resolved from
- * `SKYLARK_DEFAULT_MODEL` (set by the hoist bring-up to the machine's
- * auto-selected Ollama model, or by a crew member to a hosted model), falling
- * back to a local model so the ship runs with no key. Read once at boot; hoist
- * sets the env before `npm run dev` starts. Pin per session / per profile to
- * override (e.g. `anthropic/claude-sonnet-4-5`).
+ * Default model when a session doesn't pin one. Resolved from
+ * `SKYLARK_DEFAULT_MODEL`, falling back to the strong hosted default
+ * (`claude-sonnet-5`). Every model name is a gateway name — what serves it is
+ * litellm.config.yaml's business. Read once at boot; hoist sets the env
+ * before `npm run dev` starts. Pin per session / per profile to override.
  */
 export const DEFAULT_MODEL = defaultModelRef()
-
-/**
- * The model chat agents' backing sessions boot with — the strong hosted model
- * when a key makes it reachable, else the local default (see `chatModelRef`).
- * Read once at boot, like DEFAULT_MODEL. The auth probe fails soft to "not
- * configured" so a broken credential store degrades to local, never crashes
- * the boot.
- */
-export const CHAT_MODEL = chatModelRef((provider) =>
-  providerConfigured(
-    (p) => AuthStorage.create().getAuthStatus(p).configured,
-    provider,
-  ),
-)
 
 /**
  * The profile a session boots with when it has no profileId — the pre-profiles
@@ -189,12 +169,12 @@ export const createPiSession: SessionFactory = async (
   })
   await resourceLoader.reload()
 
-  // Auth resolves from the environment (ANTHROPIC_API_KEY, OPENAI_API_KEY, …)
-  // for hosted models. Ollama is local and keyless, but pi's OpenAI client still
-  // requires a non-empty key, so register a dummy for the `ollama` provider —
-  // Ollama ignores it. Without this the local-first default can't take a turn.
+  // Every model resolves to the LiteLLM gateway; register its key with pi's
+  // auth store so the OpenAI client authenticates. Provider keys (Anthropic,
+  // OpenAI, …) never reach the app — they live in .env and are read by the
+  // gateway container alone.
   const authStorage = AuthStorage.create()
-  authStorage.setRuntimeApiKey('ollama', 'ollama')
+  authStorage.setRuntimeApiKey('litellm', gatewayApiKey())
 
   const { session } = await createAgentSession({
     model: resolveModel(options.model ?? model),

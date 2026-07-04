@@ -10,8 +10,7 @@ holds the database foundation (two connection handles + Row-Level Security), the
 health service, the agent (the ship's first resident), the ship's log (a durable
 event bus), the crew (the users every action is attributed to), the issues board
 (and its building agents), chat (the ship's front door), shared files,
-notifications, the local-model bring-up, and the access gate that says who may
-see what.
+notifications, and the access gate that says who may see what.
 
 ## Components
 
@@ -46,9 +45,6 @@ see what.
 - **notifications service** (`notifications/`) — every user's inbox, fed by
   watches on ship-log topics; for an agent, a notification is a wake-up. See
   [`notifications/zine.md`](notifications/zine.md).
-- **local-model service** (`local-model/`) — the hardware-fitted Ollama
-  bring-up: detect what the machine can run, pick and pull a model, and the
-  Models surface.
 - **access gate** (`access/`) — `canSeeTopic` (`access/visibility.ts`), the one
   entitlement gate for "may this actor see X?". It probes the parent resource
   under the actor's RLS context, so the policies stay the single source of
@@ -98,6 +94,9 @@ into rigging or home. (drizzle-kit finds tables on its own by globbing every
 
 ## Changelog
 
+- **LLM gateway** — the local-model service retires; every model call routes
+  through the LiteLLM gateway (a docker-compose service beside Postgres),
+  configured in `litellm.config.yaml`.
 - **#6** — Files, notifications, and local-model join the hull; RLS enforcement
   goes live everywhere (two db handles, `withActor`, the `canSeeTopic` gate in
   `access/`), discharging the agent service's single-tenant debt.

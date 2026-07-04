@@ -45,10 +45,10 @@ the rigging.
   `wake` with the batch briefed. A batch is marked read only AFTER its wake
   succeeds — a failed wake leaves the rows unread to retry; notifications with
   no route home are consumed without a wake.
-- **CHAT_MODEL** — a chat agent's backing session boots with the strong model:
-  `SKYLARK_CHAT_MODEL`, else the preferred hosted model when its provider key
-  exists, else the local default (`chatModelRef` in the agent service). Chat is
-  the planning surface; builders stay on `DEFAULT_MODEL`.
+- **Chat agents boot on the ship default model** (`DEFAULT_MODEL` in the agent
+  service — one default everywhere, through the LLM gateway); a profile's model
+  override still wins at boot. The old `CHAT_MODEL`/`SKYLARK_CHAT_MODEL` split
+  retired with the gateway move.
 - **The live shell** (`orchestrator-live.ts`) — the impure wiring:
   `ensureChatOrchestrator` boots the orchestrator into the server process on
   `systemDb` with `createServerRuntime` (live pi.dev sessions, or the fake when
@@ -126,6 +126,8 @@ agent.
 
 ## Changelog
 
+- **LLM gateway** — chat sessions boot on the ship default model; `CHAT_MODEL`
+  retired.
 - **#67** — The wake loop: `wake` on the orchestrator, the debounced per-(agent,
   origin-chat) waker, `turnContext` on every turn, and chat sessions booting on
   `CHAT_MODEL`.

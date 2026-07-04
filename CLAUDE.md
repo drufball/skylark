@@ -27,9 +27,7 @@ Start here:
 
 ```
 ./scripts/setup          bootstrap a fresh clone/worktree/session (idempotent)
-./scripts/hoist          setup + Postgres + local model + dev — the "go live" one move
-./scripts/ensure-ollama  install/start Ollama, auto-pick & pull a model that fits (best-effort)
-npm run local-model      detect|select|catalog — what model fits this machine
+./scripts/hoist          setup + Postgres + LLM gateway + dev — the "go live" one move
 npm run dev              start the ship (port 3000)
 npm run agent            the agent service CLI (sessions, seed, profiles, extensions)
 npm run users            the users service CLI (seed, list, whoami)
@@ -46,18 +44,20 @@ npm run lint             eslint .            (lint:fix to autofix)
 npm run format           prettier --write .  (format:check to verify)
 npm run typecheck        tsc --noEmit
 npm run db:up            start local Postgres (Docker)
+npm run gateway:up       start the LiteLLM gateway (Docker)
 npm run db:generate      drizzle-kit: migration from every src/**/schema.ts  (· db:migrate to apply)
 npm run generate-routes  regenerate src/routeTree.gen.ts (gitignored)
 npm run mutate           Stryker mutation test, whole project (periodic sweep)
 npm run mutate:diff      mutation-test only the files this branch changed vs main
 ```
 
-Ollama and pi.dev run **natively** (Docker can't reach the Mac GPU); only
-Postgres is containerized. Skylark is **local-first**: `hoist` brings up Ollama
-and a hardware-fitted model, so a fresh clone runs with no API key. The default
-model is `SKYLARK_DEFAULT_MODEL` (provider-prefixed, e.g.
-`ollama/qwen3-coder:30b` or `anthropic/claude-sonnet-4-5`); add a provider key
-to `.env` only to use a hosted model.
+The app and pi.dev run **natively**; Postgres and the **LiteLLM gateway** run in
+Docker (`docker compose up -d --wait`, which hoist does). Every model call goes
+through the gateway: `litellm.config.yaml` maps model names to providers
+(Anthropic by default; OpenAI, Together, Fireworks, or a bring-your-own local
+server are config edits, not code), and provider keys live in `.env` where only
+the gateway container reads them. The default model is `SKYLARK_DEFAULT_MODEL`,
+a gateway model name (unset → `claude-sonnet-5`).
 
 ## Skills
 

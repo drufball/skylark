@@ -1,5 +1,4 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { AuthStorage } from '@earendil-works/pi-coding-agent'
 import { createServerFn } from '@tanstack/react-start'
 
 import { db, systemDb } from '@hull/db/client'
@@ -7,8 +6,12 @@ import { canSeeTopic } from '@hull/access/visibility'
 import { errorMessage } from '@hull/lib/errors'
 import { currentActor, withCurrentActor } from '@hull/users/actor'
 
-import { defaultModelRef } from './models'
-import { isHostedProvider, providersWithStatus } from './providers'
+import {
+  defaultModelRef,
+  gatewayApiKey,
+  gatewayBaseUrl,
+  parseGatewayModels,
+} from './models'
 import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
 import { sessionTopic } from './topic'
 import { createServerRuntime } from './server-runtime'
@@ -176,45 +179,39 @@ export const saveAgentProfile = createServerFn({ method: 'POST' })
   .validator((input: ProfileInput) => normalizeProfileInput(input))
   .handler(({ data }) => upsertProfile(db, data))
 
-// --- Model providers & keys (the Models surface) ---------------------------
+// --- Models (the gateway surface) -------------------------------------------
 
 /** The model a new session defaults to (the resolved SKYLARK_DEFAULT_MODEL). */
 export const getDefaultModel = createServerFn({ method: 'GET' }).handler(() =>
   Promise.resolve({ ref: defaultModelRef() }),
 )
 
+/** What the gateway probe reports: reachable + the model names it serves. */
+export interface GatewayModels {
+  ok: boolean
+  models: string[]
+}
+
+/* v8 ignore start -- live HTTP edge to the gateway; parseGatewayModels is the
+   unit-tested part */
 /**
- * The hosted providers and whether each has a key configured. Auth lives in
- * pi.dev's own credential store (env var or `~/.pi/agent/auth.json`), the same
- * store the runtime reads when it boots a session — so a key added here is live
- * on the next turn.
+ * The models the LiteLLM gateway serves (`GET /v1/models`), best-effort: a
+ * gateway that's down or misconfigured reads as `ok: false` with no models —
+ * the Models page renders that as guidance, never an error. The short timeout
+ * keeps a down gateway from stalling page loads.
  */
-export const listModelProviders = createServerFn({ method: 'GET' }).handler(
-  () => {
-    const auth = AuthStorage.create()
-    return Promise.resolve(
-      providersWithStatus((id) => auth.getAuthStatus(id).configured),
-    )
+export const listGatewayModels = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<GatewayModels> => {
+    try {
+      const res = await fetch(`${gatewayBaseUrl()}/models`, {
+        headers: { authorization: `Bearer ${gatewayApiKey()}` },
+        signal: AbortSignal.timeout(1500),
+      })
+      if (!res.ok) return { ok: false, models: [] }
+      return { ok: true, models: parseGatewayModels(await res.json()) }
+    } catch {
+      return { ok: false, models: [] }
+    }
   },
 )
-
-/** Store an API key for a hosted provider. Rejects unknown providers / blanks. */
-export const setProviderKey = createServerFn({ method: 'POST' })
-  .validator((input: { provider: string; key: string }) => input)
-  .handler(({ data }) => {
-    if (!isHostedProvider(data.provider)) {
-      throw new Error(`Unknown provider: ${data.provider}`)
-    }
-    const key = data.key.trim()
-    if (!key) throw new Error('API key is empty')
-    AuthStorage.create().set(data.provider, { type: 'api_key', key })
-    return Promise.resolve({ ok: true })
-  })
-
-/** Remove a stored API key for a hosted provider. */
-export const removeProviderKey = createServerFn({ method: 'POST' })
-  .validator((provider: string) => provider)
-  .handler(({ data: provider }) => {
-    AuthStorage.create().remove(provider)
-    return Promise.resolve({ ok: true })
-  })
+/* v8 ignore stop */

@@ -1,10 +1,11 @@
-# Local Postgres for the ship.
+# Local Postgres + the LLM gateway for the ship.
 #
-# Tests do NOT need this — they run on in-memory PGlite. This is only for
-# running the live app against a persistent database.
+# Tests do NOT need these — they run on in-memory PGlite and never call a
+# model. This is only for running the live app.
 #
-#   npm run db:up        # start it (detached)
-#   docker compose down  # stop it (data persists in ./.pgdata)
+#   npm run db:up        # start Postgres (detached)
+#   npm run gateway:up   # start the LiteLLM gateway (detached)
+#   docker compose down  # stop everything (pg data persists in ./.pgdata)
 services:
   db:
     image: postgres:16
@@ -22,3 +23,44 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # The LLM gateway (LiteLLM proxy). The app speaks OpenAI-compatible HTTP to
+  # this one endpoint; litellm.config.yaml maps model names to providers.
+  # Provider keys are interpolated from .env (compose reads it automatically).
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    command: ['--config', '/app/config.yaml']
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TOGETHERAI_API_KEY: ${TOGETHERAI_API_KEY:-}
+      FIREWORKS_AI_API_KEY: ${FIREWORKS_AI_API_KEY:-}
+      # The key the gateway requires on every request; the app sends the same
+      # value automatically (see gatewayApiKey). Override in .env to lock the
+      # gateway with a real secret (e.g. when exposing it beyond localhost).
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm}
+    ports:
+      # Localhost only: the default master key is a public constant, and the
+      # gateway relays to paid provider APIs — never expose it to the LAN by
+      # default. Exposing it deliberately means binding wider AND setting a
+      # real LITELLM_MASTER_KEY.
+      - '127.0.0.1:4000:4000'
+    volumes:
+      - ./litellm.config.yaml:/app/config.yaml:ro
+    extra_hosts:
+      # Lets a model_list entry reach an OpenAI-compatible server on the host
+      # (bring-your-own local model) via host.docker.internal, on Linux too.
+      - 'host.docker.internal:host-gateway'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request;
+          urllib.request.urlopen('http://localhost:4000/health/liveliness')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
