@@ -599,15 +599,19 @@ describe('chat orchestrator', () => {
     errSpy.mockRestore()
   })
 
-  /** A fake runtime that records every prompt it was driven with. */
+  /** A fake runtime that records every prompt (and session id) it was driven with. */
   function promptRecordingRuntime(replyText: string): ChatAgentRuntime & {
     prompts: string[]
+    sessionIds: string[]
   } {
     const prompts: string[] = []
+    const sessionIds: string[] = []
     return {
       prompts,
+      sessionIds,
       async runTurn(sessionId, text) {
         prompts.push(text)
+        sessionIds.push(sessionId)
         const message = {
           role: 'assistant',
           content: [{ type: 'text', text: replyText }],
@@ -631,59 +635,65 @@ describe('chat orchestrator', () => {
     expect(prompt).toContain(`chat ${chatId}`)
     expect(prompt).toContain('@tilde')
     expect(prompt).toContain(
-      `SKYLARK_ACTOR=${tilde} npm run issue -- new "<title>" --body "<details>" --chat ${chatId}`,
+      `SKYLARK_ACTOR=${tilde} npm run issue -- new "<title>" --body "<details>"`,
     )
+    // Filing no longer carries a --chat flag — issues know nothing about chat.
+    expect(prompt).not.toContain('--chat')
+    expect(prompt).toContain('npm run chat -- post')
     // The actual conversation still follows the header.
     expect(prompt).toContain('@dru: plan?')
   })
 
-  it('wake runs a briefed turn and posts the reply as the agent', async () => {
+  it("wake runs a briefed turn on the agent's own inbox session, posting nothing to a chat", async () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
 
     const runtime = promptRecordingRuntime('the build looks good — reviewing')
     const orch = createChatOrchestrator({ db, runtime })
-    await orch.wake(chatId, tilde, '1 update: @builder moved it: open → done')
+    await orch.wake(tilde, '1 update: @builder moved it: open → done')
 
     const [prompt] = runtime.prompts
     expect(prompt).toContain('@builder moved it: open → done')
-    expect(prompt).toContain(`chat ${chatId}`) // wake turns get the header too
+    expect(prompt).toContain('This is your inbox session')
+    expect(prompt).toContain('npm run chat -- list')
+    expect(prompt).toContain('npm run chat -- show')
+    expect(prompt).toContain('npm run chat -- post')
 
-    const messages = await listMessages(db, chatId)
-    expect(messages.map((m) => `${m.authorHandle}:${m.body}`)).toEqual([
-      'tilde:the build looks good — reviewing',
-    ])
+    // Nothing lands in the chat — routing an update is the agent's own job,
+    // done from its bash tool, not something the orchestrator posts for it.
+    expect(await listMessages(db, chatId)).toHaveLength(0)
+
+    // The turn ran on a fresh session recorded under the agent, titled
+    // "Inbox" — not bound to the chat above.
+    const session = defined(
+      await getSession(db, defined(runtime.sessionIds[0])),
+    )
+    expect(session.title).toBe('Inbox')
+    expect(session.agentUserId).toBe(tilde)
+    expect(session.model).toBe(TEST_DEFAULT_MODEL)
+    expect(session.cwd).toBeNull()
   })
 
-  it('wake folds unseen chat messages into the briefing turn', async () => {
-    const chatId = uuidv7()
-    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
-    await addMessage(db, {
-      id: uuidv7(),
-      chatId,
-      authorId: dru,
-      body: 'ps: also check the docs',
-    })
-
-    const runtime = promptRecordingRuntime('on it')
+  it('wake reuses the same inbox session across calls', async () => {
+    const runtime = promptRecordingRuntime('ok')
     const orch = createChatOrchestrator({ db, runtime })
-    await orch.wake(chatId, tilde, 'the briefing')
+    await orch.wake(tilde, 'first batch')
+    await orch.wake(tilde, 'second batch')
 
-    const [prompt] = runtime.prompts
-    expect(prompt).toContain('the briefing')
-    expect(prompt).toContain('Meanwhile in this chat:')
-    expect(prompt).toContain('@dru: ps: also check the docs')
+    expect(runtime.sessionIds[0]).toBe(runtime.sessionIds[1])
   })
 
-  it('wake refuses a target that is not an agent member of the chat', async () => {
-    const chatId = uuidv7()
-    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
-
+  it('wake refuses a human — humans read their inbox, they are never woken', async () => {
     const runtime = promptRecordingRuntime('never')
     const orch = createChatOrchestrator({ db, runtime })
-    await orch.wake(chatId, dru, 'briefing') // a human
-    await orch.wake(chatId, bix, 'briefing') // an agent, but not a member
+    await orch.wake(dru, 'briefing')
     expect(runtime.prompts).toHaveLength(0)
-    expect(await listMessages(db, chatId)).toHaveLength(0)
+  })
+
+  it('wake refuses an unknown user id', async () => {
+    const runtime = promptRecordingRuntime('never')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.wake('no-such-user', 'briefing')
+    expect(runtime.prompts).toHaveLength(0)
   })
 })

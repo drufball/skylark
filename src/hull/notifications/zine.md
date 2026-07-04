@@ -7,10 +7,11 @@ _notifications zine — issue #2_
 Every user — human or agent — has an **inbox** fed by **watches**. A watch says
 "tell me when something happens on `<topic>`"; a reactor on the ship's log turns
 watched events into inbox rows. Humans read theirs on the Inbox surface. For an
-agent, a notification is a **wake-up**: the chat orchestrator runs a turn in the
-chat the work was filed from, briefed on everything unread — which is what
-closes the planning loop (chat agent files issues → builder works them → the
-agent is woken to review and file the next piece).
+agent, a notification is a **wake-up**: the chat orchestrator runs a turn on the
+agent's own inbox session, briefed on everything unread, and the agent decides
+for itself which chat (if any) to post an update to — which is what closes the
+planning loop (chat agent files issues → builder works them → the agent is woken
+to review, update the right conversation, and file the next piece).
 
 ## Components
 
@@ -22,8 +23,9 @@ agent is woken to review and file the next piece).
 - **The reactor** (`service.ts` / `live.ts`) — a `ShipLogReactor` on systemDb
   that turns durable events into inbox rows for the topic's watchers.
 - **The waker** (`hull/chat/waker.ts`) — the agent delivery: turns an agent's
-  unread notifications into wake turns in the chats the work came from. Its
-  mechanics live in the [chat zine](../chat/zine.md).
+  unread notifications into one wake turn on its own inbox session, leaving the
+  chat-finding judgment to the agent. Its mechanics live in the
+  [chat zine](../chat/zine.md).
 - **Doors** — `myInbox`, `markInboxRead`, `watchState`, `setWatch`; all run
   under the current actor so RLS is the gate.
 
@@ -45,14 +47,14 @@ re-delivers every unread notification through the hooks, so a reload never
 strands an already-durable row unshown.
 
 **A wake, end to end.** A delivery hook hands an agent's notification to the
-waker → a debounce gathers the flurry, then the batch is grouped by the chat its
-work belongs to (the issue's `originChatId`) → **one wake per (agent, origin
-chat)**: a briefing turn driven through the chat orchestrator, whose reply lands
-in that chat. Consumption follows delivery: a batch is marked read only
-**after** its wake succeeds, so a failed wake leaves the rows unread and the
-next notification retries the backlog; notifications with no route home (a topic
-with no origin chat) are consumed without a wake — an agent's inbox has no other
-reader.
+waker → a debounce gathers the flurry into the whole unread backlog → **one wake
+per agent**: a briefing turn driven through the chat orchestrator on the agent's
+own inbox session (not any particular chat), which the agent uses to find the
+right conversation itself and post an update, or do nothing. Consumption follows
+delivery: a batch is marked read only **after** its wake succeeds, so a failed
+wake leaves the rows unread and the next notification retries the backlog. Every
+batch wakes — there is no "no route home" case anymore; routing is the agent's
+own judgment, not the queue's.
 
 ## Decisions
 
@@ -75,6 +77,9 @@ reader.
 
 ## Changelog
 
+- **Decouple issues from chat** — A wake now always fires (no more "no route
+  home" orphan case): it lands on the agent's own inbox session, and the agent
+  finds the chat to update itself via the new chat CLI.
 - **Housekeeping** — fixed doc drift: `reconcile` was documented as recovering
   watches only from issue events, but it also scans every public topic and
   re-delivers unread notifications; `issue.handoff`/`toOwner` language updated

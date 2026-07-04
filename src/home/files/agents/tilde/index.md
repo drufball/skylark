@@ -1,9 +1,8 @@
 # tilde — memory index
 
 ## Issue system facts
-- An issue's origin chat (`--chat`) is set only at creation (src/hull/issues/service.ts); there is NO way to re-anchor it later. If an issue was filed from CLI with no chat, re-file it from a live chat and close the old one with a pointer.
-- CLI: `npm run issue -- new|list|show|comment|handoff|playbooks|status|building|open|done|close` (run with SKYLARK_ACTOR=<my id>).
-- Filer can only claim a chat they're a member of (provenance check in cli.ts).
+- Issues carry no reference to chat (`originChatId` and `--chat` were removed — decouple-issues-from-chat). CLI: `npm run issue -- new|list|show|comment|handoff|playbooks|status|building|open|done|close` (run with SKYLARK_ACTOR=<my id>).
+- An agent wake now lands on its own inbox session (find-or-create by well-known title, `findAgentSessionByTitle` in agent/service.ts), briefed on the whole unread batch. To route an update, use the new chat CLI: `npm run chat -- list|show <id>|post <id> <message>`.
 
 ## Log
 - 2026-07-03 maintenance sweep of the build loop, with @drufball. One build at a time until gates are fixed.

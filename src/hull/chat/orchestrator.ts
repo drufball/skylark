@@ -9,7 +9,8 @@ import {
 } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
 import { actorCmd } from '@hull/lib/actor-cmd'
-import { createSession } from '@hull/agent/service'
+import { createSession, findAgentSessionByTitle } from '@hull/agent/service'
+import { getUserById } from '@hull/users/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
 import { chatProgressLine } from '@hull/agent/progress'
@@ -42,8 +43,15 @@ import {
  * It reacts to the ship's log, not to an inline call: every posted message emits
  * a durable `chat.message_posted` event, and `handleBusNote` drives the reply
  * off the bus — the same path whether the message came from the web door or
- * (in future) another process, mirroring the issues orchestrator. `reconcile`
+ * another process (the chat CLI), mirroring the issues orchestrator. `reconcile`
  * re-drives any human message left unanswered by a restart.
+ *
+ * `wake` is the other entrance: when the waker delivers an agent's unread
+ * notifications, the orchestrator drives one turn on the agent's own INBOX
+ * session — a bare session owned by the agent, bound to no chat, cwd the repo
+ * root. The turn is briefed on the updates and told to decide for itself which
+ * conversation they belong in, using the chat CLI to search its chats and post
+ * there; nothing is posted on the agent's behalf.
  *
  * The clean chat transcript and the agent's full tool-call transcript are two
  * surfaces over one conversation: we feed the agent the chat messages it hasn't
@@ -71,10 +79,8 @@ export function assistantTextFrom(messages: unknown[]): string {
 
 /**
  * The situational header every agent turn opens with: which chat this is, who
- * the agent is, and the concrete command for filing work — including `--chat`,
- * which is what routes the issue's notifications back to this conversation so
- * the agent gets woken here as the work moves. Repeated per turn (cheap, and
- * it survives session compaction).
+ * the agent is, and the concrete command for filing work. Repeated per turn
+ * (cheap, and it survives session compaction).
  */
 export function turnContext(input: {
   chatId: string
@@ -88,13 +94,59 @@ export function turnContext(input: {
     '"<title>"',
     '--body',
     '"<details>"',
-    '--chat',
-    input.chatId,
   )
   return `[You are @${input.handle} in chat ${input.chatId}.
 To file work for the ship, use bash:
   ${cmd}
-You will be woken in this chat as filed issues move, to review and follow up.]`
+As filed work moves you will be woken on your own inbox session with the
+updates — post follow-ups back to this chat with the chat CLI
+(\`npm run chat -- post ${input.chatId} "<update>"\`).]`
+}
+
+/**
+ * The well-known title of an agent's inbox session — the find-or-create key.
+ * Session titles are set only at creation and never rewritten (see the agent
+ * service), so looking up (agentUserId, INBOX_SESSION_TITLE) always converges
+ * on the same session.
+ */
+export const INBOX_SESSION_TITLE = 'Inbox'
+
+/**
+ * The situational header a wake turn opens with: who the agent is, that this
+ * is its inbox (not a chat), and the concrete chat-CLI commands for routing
+ * an update to the conversation it belongs in.
+ */
+export function inboxTurnContext(input: {
+  handle: string
+  userId: string
+}): string {
+  const listCmd = actorCmd(input.userId, 'chat', 'list')
+  const showCmd = actorCmd(input.userId, 'chat', 'show', '<chatId>')
+  const postCmd = actorCmd(
+    input.userId,
+    'chat',
+    'post',
+    '<chatId>',
+    '"<update>"',
+  )
+  const fileCmd = actorCmd(
+    input.userId,
+    'issue',
+    'new',
+    '"<title>"',
+    '--body',
+    '"<details>"',
+  )
+  return `[You are @${input.handle}. This is your inbox session — updates on
+work you're watching land here; it is not a chat. Decide which conversation
+each update belongs in: search your chats for where the work was planned, use
+bash:
+  ${listCmd}
+  ${showCmd}
+and post a concise update there with:
+  ${postCmd}
+If no chat fits, do nothing. To file follow-up work:
+  ${fileCmd}]`
 }
 
 export interface ChatOrchestratorDeps {
@@ -205,34 +257,54 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
   }
 
   /**
-   * Wake an agent in a chat with a briefing (the notifications door composes
-   * it): run a turn on its backing session and post the reply here — the same
-   * spine as an ordinary reply, with the briefing in place of a human message.
-   * Any chat messages the agent hasn't seen ride along so the wake turn has
-   * full context.
+   * The agent's inbox session: a bare session the agent owns — bound to no
+   * chat, cwd the repo root (so the ship's CLIs work) — found by its
+   * well-known title or created on first wake. The waker serializes wakes per
+   * agent (one in flight, never two), so find-or-create doesn't race with
+   * itself in this process.
    */
-  async function wake(
-    chatId: string,
-    agentUserId: string,
-    briefing: string,
-  ): Promise<void> {
-    const members = await listMembers(db, chatId)
-    const agent = members.find((m) => m.userId === agentUserId)
+  async function ensureInboxSession(agent: {
+    id: string
+    profileId: string | null
+  }): Promise<string> {
+    const existing = await findAgentSessionByTitle(
+      db,
+      agent.id,
+      INBOX_SESSION_TITLE,
+    )
+    if (existing) return existing.id
+    const id = uuidv7()
+    await createSession(db, {
+      id,
+      // The ship default (a profile's model override still wins at boot).
+      model: DEFAULT_MODEL,
+      title: INBOX_SESSION_TITLE,
+      profileId: agent.profileId,
+      agentUserId: agent.id,
+      // cwd omitted → repo root: the wake turn drives `npm run chat` etc.
+    })
+    return id
+  }
+
+  /**
+   * Wake an agent with a briefing (the waker composes it): run one turn on the
+   * agent's own inbox session. The turn's instructions (inboxTurnContext) tell
+   * the agent to route the update itself — find the chat where the work was
+   * planned via the chat CLI and post there — so nothing is posted on its
+   * behalf; the assistant text stays in the session (the Agents view).
+   * A failed turn rejects, which is what keeps the waker's batch unread for a
+   * retry. Humans are never woken — their inbox has the bell.
+   */
+  async function wake(agentUserId: string, briefing: string): Promise<void> {
+    const agent = await getUserById(db, agentUserId)
     if (agent?.type !== 'agent') return
 
-    const unseen = await messagesSinceAgent(db, chatId, agentUserId)
-    const meanwhile =
-      unseen.length > 0
-        ? `\n\nMeanwhile in this chat:\n${formatTranscript(
-            unseen.map((m) => ({ handle: m.authorHandle, body: m.body })),
-          )}`
-        : ''
-    const prompt = `${turnContext({
-      chatId,
+    const sessionId = await ensureInboxSession(agent)
+    const prompt = `${inboxTurnContext({
       handle: agent.handle,
-      userId: agent.userId,
-    })}\n\n${briefing}${meanwhile}`
-    await driveTurn(chatId, agent, prompt)
+      userId: agent.id,
+    })}\n\n${briefing}`
+    await runtime.runTurn(sessionId, prompt)
   }
 
   /**

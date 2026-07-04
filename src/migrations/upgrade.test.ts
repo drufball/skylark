@@ -14,7 +14,14 @@ import { describe, expect, it } from 'vitest'
 
 const MIGRATIONS_DIR = 'src/migrations'
 
-/** Apply every .sql migration whose filename sorts within [from, to]. */
+/**
+ * Apply every .sql migration whose numeric prefix sorts within [from, to].
+ * Compares the `NNNN` prefix, not the full filename: a cutoff like '0012'
+ * naming migration 0012 must include exactly that file. Comparing full
+ * filenames against a bare cutoff would exclude it — '0012_foo.sql' > '0012'
+ * lexically, since the cutoff is a proper prefix of the filename — silently
+ * skipping the boundary migration on both sides of a range.
+ */
 async function applyRange(
   client: PGlite,
   range: { from?: string; to?: string },
@@ -23,8 +30,9 @@ async function applyRange(
     .filter((f) => f.endsWith('.sql'))
     .sort()
   for (const file of files) {
-    if (range.from && file < range.from) continue
-    if (range.to && file > range.to) continue
+    const prefix = file.split('_')[0]
+    if (range.from && prefix < range.from) continue
+    if (range.to && prefix > range.to) continue
     await client.exec(await readFile(join(MIGRATIONS_DIR, file), 'utf8'))
   }
 }

@@ -34,11 +34,17 @@ describe('wakeBriefing', () => {
     expect(briefing).toContain('Review what happened')
     expect(wakeBriefing(['a', 'b'])).toContain('2 updates')
   })
+
+  it('tells the agent to route the update itself via the chat CLI', () => {
+    const briefing = wakeBriefing(['something moved'])
+    expect(briefing).toContain('chat CLI')
+    expect(briefing).toContain('If no chat fits')
+  })
 })
 
 describe('createAgentWaker', () => {
   let deps: AgentWakerDeps & {
-    wakes: { chatId: string; agentUserId: string; briefing: string }[]
+    wakes: { agentUserId: string; briefing: string }[]
     unread: WakeableNotification[]
   }
 
@@ -55,11 +61,9 @@ describe('createAgentWaker', () => {
         deps.unread = deps.unread.filter((n) => !ids.includes(n.id))
         return Promise.resolve()
       },
-      chatForTopic: (topic) =>
-        Promise.resolve(topic === 'issue:aa11' ? 'chat-1' : null),
       describe: (n) => Promise.resolve(`describe(${n.type})`),
-      wake: (chatId, agentUserId, briefing) => {
-        wakes.push({ chatId, agentUserId, briefing })
+      wake: (agentUserId, briefing) => {
+        wakes.push({ agentUserId, briefing })
         return Promise.resolve()
       },
       debounceMs: 10_000,
@@ -86,7 +90,7 @@ describe('createAgentWaker', () => {
     })
 
     const [wake] = deps.wakes
-    expect(wake).toMatchObject({ chatId: 'chat-1', agentUserId: 'agent-1' })
+    expect(wake.agentUserId).toBe('agent-1')
     expect(wake.briefing).toContain('2 updates')
     expect(wake.briefing).toContain('describe(issue.status_changed)')
     expect(wake.briefing).toContain('describe(issue.commented)')
@@ -123,29 +127,22 @@ describe('createAgentWaker', () => {
     expect(deps.unread).toHaveLength(1)
   })
 
-  it('wakes per chat when the batch spans several origins; orphans are consumed without one', async () => {
-    deps.chatForTopic = (topic) =>
-      Promise.resolve(
-        topic === 'issue:aa11'
-          ? 'chat-1'
-          : topic === 'issue:bb22'
-            ? 'chat-2'
-            : null,
-      )
+  it('one wake per agent even when the batch spans several issues', async () => {
     const waker = createAgentWaker(deps)
     deps.unread = [
       notification({ topic: 'issue:aa11' }),
-      notification({ topic: 'issue:bb22' }),
-      notification({ topic: 'issue:orphan' }), // no origin chat — no wake
+      notification({ topic: 'issue:bb22', type: 'issue.commented' }),
+      notification({ topic: 'issue:cc33', type: 'issue.opened' }),
     ]
     waker.onNotified(deps.unread[0])
     await vi.advanceTimersByTimeAsync(10_000)
     await vi.waitFor(() => {
-      expect(deps.wakes).toHaveLength(2)
+      expect(deps.wakes).toHaveLength(1)
     })
-    expect(deps.wakes.map((w) => w.chatId).sort()).toEqual(['chat-1', 'chat-2'])
-    // Everything consumed: two by delivery, the orphan because an agent inbox
-    // has no other reader.
+    // The whole backlog rides one briefing — routing is the agent's judgment,
+    // not the waker's — and delivery consumes everything.
+    expect(deps.wakes[0].briefing).toContain('3 updates')
+    expect(deps.wakes[0].briefing).toContain('describe(issue.opened)')
     expect(deps.unread).toHaveLength(0)
   })
 
@@ -173,8 +170,8 @@ describe('createAgentWaker', () => {
       expect(deps.unread).toHaveLength(1)
 
       // A later notification re-arms; the retried wake carries the backlog.
-      deps.wake = (chatId, agentUserId, briefing) => {
-        deps.wakes.push({ chatId, agentUserId, briefing })
+      deps.wake = (agentUserId, briefing) => {
+        deps.wakes.push({ agentUserId, briefing })
         return Promise.resolve()
       }
       const second = notification()
@@ -199,8 +196,8 @@ describe('createAgentWaker', () => {
     const first = notification()
     deps.unread = [first]
     // A slow wake: resolves 5s after being called (fake-timer time).
-    deps.wake = (chatId, agentUserId, briefing) => {
-      deps.wakes.push({ chatId, agentUserId, briefing })
+    deps.wake = (agentUserId, briefing) => {
+      deps.wakes.push({ agentUserId, briefing })
       return new Promise((resolve) => setTimeout(resolve, 5_000))
     }
     const waker = createAgentWaker(deps)
@@ -246,8 +243,8 @@ describe('createAgentWaker', () => {
 
       // The guard must not outlive the failed fire: a later notification
       // arms a fresh timer and delivers the backlog.
-      deps.wake = (chatId, agentUserId, briefing) => {
-        deps.wakes.push({ chatId, agentUserId, briefing })
+      deps.wake = (agentUserId, briefing) => {
+        deps.wakes.push({ agentUserId, briefing })
         return Promise.resolve()
       }
       const second = notification()

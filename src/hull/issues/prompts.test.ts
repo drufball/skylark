@@ -40,7 +40,6 @@ describe('buildPrompt', () => {
     worktreePath: null,
     statusLine: null,
     visibility: 'public' as const,
-    originChatId: null,
   }
 
   it('includes title, body, thread, and handoff to babysitter', () => {
@@ -105,7 +104,6 @@ describe('generalPrompt', () => {
     worktreePath: null,
     statusLine: null,
     visibility: 'public' as const,
-    originChatId: null,
   }
 
   it('includes title, body, thread, and general CLI contract', () => {
@@ -151,7 +149,6 @@ describe('handoffPrompt', () => {
     worktreePath: null,
     statusLine: null,
     visibility: 'public' as const,
-    originChatId: null,
   }
 
   it('includes handoff message and CLI contract', () => {
