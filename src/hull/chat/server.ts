@@ -29,12 +29,9 @@ import {
 // bootOrchestrator boots + subscribes the chat orchestrator in this
 // process (idempotent, synchronous) — the doors below call it so opening the
 // app recovers any agent reply a restart interrupted, without blocking.
-function bootOrchestrator(): void {
-  // Lazy import orchestrator to keep node builtins out of client bundle
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { ensureChatOrchestrator } = require('./orchestrator-live') as {
-    ensureChatOrchestrator: () => void
-  }
+// Uses dynamic import to keep node builtins out of client bundle.
+async function bootOrchestrator(): Promise<void> {
+  const { ensureChatOrchestrator } = await import('./orchestrator-live')
   ensureChatOrchestrator()
 }
 
@@ -44,8 +41,8 @@ export const listChatCrew = createServerFn({ method: 'GET' }).handler(() =>
 )
 
 /** The current actor's chats, newest first — the sidebar. */
-export const listChats = createServerFn({ method: 'GET' }).handler(() => {
-  bootOrchestrator()
+export const listChats = createServerFn({ method: 'GET' }).handler(async () => {
+  await bootOrchestrator()
   return withCurrentActor(async (tx, me) => {
     const chats = await listChatSummaries(tx, me.id)
     return { me: { id: me.id, handle: me.handle }, chats }
@@ -101,10 +98,10 @@ export const createChatFn = createServerFn({ method: 'POST' })
 /** Post a message as the current actor, then let agents respond in the background. */
 export const postChatMessage = createServerFn({ method: 'POST' })
   .validator((input: { chatId: string; body: string }) => input)
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
     // Subscribe the orchestrator BEFORE the post, so the message's ship-log
     // event is heard and drives the reply — off the bus, not inline here.
-    bootOrchestrator()
+    await bootOrchestrator()
     return withCurrentActor(async (tx, me) => {
       // A non-member can't see the chat → clean refusal (the chat_messages
       // WITH CHECK policy would reject the insert regardless).
