@@ -20,7 +20,7 @@ describe('actorCmd', () => {
     expect(cmd).toBe('SKYLARK_ACTOR=user-789 npm run issue --')
   })
 
-  it('escapes special characters in arguments', () => {
+  it('passes through pre-quoted arguments as-is', () => {
     const cmd = actorCmd(
       'user-abc',
       'issue',

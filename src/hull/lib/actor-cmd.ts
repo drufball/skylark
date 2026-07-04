@@ -13,9 +13,13 @@
 /**
  * Format a shell command with SKYLARK_ACTOR prefix for agent attribution.
  *
+ * Arguments are joined with spaces and passed through as-is. Callers are
+ * responsible for pre-quoting arguments that contain spaces or special
+ * characters (e.g., '"my title"' not 'my title').
+ *
  * @param userId - The agent's user ID (for SKYLARK_ACTOR)
  * @param tool - The npm script name (e.g., 'issue', 'files')
- * @param args - Command arguments (e.g., 'new', '<title>', '--body', '<details>')
+ * @param args - Command arguments (e.g., 'new', '"<title>"', '--body', '"<details>"')
  * @returns The formatted command string
  *
  * @example

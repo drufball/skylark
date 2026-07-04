@@ -478,6 +478,47 @@ describe('orchestrator → building (from open)', () => {
     const after = defined(await getIssue(db, issue.id))
     expect(after.branchName).toBe('first-slug-cc33')
   })
+
+  it('uses resolved babysitter handle from playbook, not hardcoded fallback', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    // Create a custom babysitter with a non-default handle
+    const customBuilder = await createUser(db, {
+      id: uuidv7(),
+      handle: 'coder',
+      displayName: 'Coder',
+      type: 'agent',
+    })
+    const prShepherd = await createUser(db, {
+      id: uuidv7(),
+      handle: 'pr-shepherd',
+      displayName: 'PR Shepherd',
+      type: 'agent',
+    })
+    // Create a custom build playbook with the non-default babysitter
+    await seedPlaybooks(db)
+    const { upsertPlaybook } = await import('./playbooks')
+    const customPlaybook = await upsertPlaybook(db, {
+      name: 'build',
+      description: 'Custom build playbook',
+      memberIds: [customBuilder.id, prShepherd.id],
+      entrypointId: customBuilder.id,
+    })
+    const issue = await createIssue(db, {
+      title: 'Test custom PR shepherd',
+      authorId,
+      nano: 'cs99',
+      playbookId: customPlaybook.id,
+    })
+
+    await drive(orch, issue.id, 'building')
+
+    // The prompt should include the custom babysitter handle, not 'babysitter'
+    expect(runtime.turns).toHaveLength(1)
+    expect(runtime.turns[0].text).toContain('handoff cs99 pr-shepherd')
+    expect(runtime.turns[0].text).toContain("pr-shepherd's job, not yours")
+    expect(runtime.turns[0].text).not.toContain('babysitter')
+  })
 })
 
 describe('orchestrator → open (agent paused)', () => {
