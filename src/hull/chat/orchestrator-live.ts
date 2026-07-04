@@ -1,8 +1,6 @@
 import { systemDb } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
 import { createServerRuntime } from '@hull/agent/server-runtime'
-import { getIssue } from '@hull/issues/service'
-import { issueIdFromTopic } from '@hull/issues/topic'
 import {
   ensureNotificationsReactor,
   onNotificationDelivered,
@@ -58,10 +56,11 @@ function getRegistry(): { armed: boolean; instance?: ChatOrchestrator } {
  * uses). `subscribeToShipLog` registers the subscription synchronously and kicks
  * startup reconciliation in the background, so booting never blocks a door.
  *
- * Also arms the agent waker: the notifications reactor's delivery hook routes
- * an agent's inbox entries back to the chat the work was filed from
- * (issues.originChatId) and wakes the agent there with the unread batch —
- * which is why this also ensures the reactor runs in this process.
+ * Also arms the agent waker: the notifications reactor's delivery hook batches
+ * an agent's inbox entries and wakes it on its own inbox session with the
+ * unread batch — the agent decides for itself which chat (if any) an update
+ * belongs in — which is why this also ensures the reactor runs in this
+ * process.
  *
  * Arm-once: uses globalThis registry that survives module re-execution (SSR
  * reload resets module state but globalThis persists), so subscriptions never
@@ -98,11 +97,6 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
       (await getUserById(systemDb, userId))?.type === 'agent',
     listUnread: (userId) => listUnread(systemDb, userId),
     markRead: (userId, ids) => markRead(systemDb, userId, ids),
-    chatForTopic: async (topic) => {
-      const issueId = issueIdFromTopic(topic)
-      if (!issueId) return null
-      return (await getIssue(systemDb, issueId))?.originChatId ?? null
-    },
     describe: async (n) =>
       describeNotification({
         type: n.type,
@@ -110,8 +104,7 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
         payload: n.payload,
         actorHandle: await handleOf(systemDb, n.actorId),
       }),
-    wake: (chatId, agentUserId, briefing) =>
-      orchestrator.wake(chatId, agentUserId, briefing),
+    wake: (agentUserId, briefing) => orchestrator.wake(agentUserId, briefing),
     debounceMs: WAKE_DEBOUNCE_MS,
   })
   unsubscribeHook = onNotificationDelivered((notification) => {

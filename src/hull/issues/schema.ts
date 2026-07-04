@@ -8,7 +8,6 @@ import {
 } from 'drizzle-orm/pg-core'
 
 import { agentSessions } from '@hull/agent/schema'
-import { chats } from '@hull/chat/schema'
 import { users } from '@hull/users/schema'
 
 // The issues service owns these four tables: the ship's message board. An
@@ -101,15 +100,6 @@ export const issues = pgTable(
     branchName: text('branch_name'),
     /** Absolute path to the build worktree, set alongside branchName. */
     worktreePath: text('worktree_path'),
-    /**
-     * The chat this issue was filed from (→ chats.id), when it was filed from
-     * one — how a notification about this issue finds its way back to the
-     * conversation that planned it (the agent wake-up). Null for issues filed
-     * from the board or a bare CLI.
-     */
-    originChatId: text('origin_chat_id').references(() => chats.id, {
-      onDelete: 'set null',
-    }),
     /** Latest one-line builder progress, shown live on the board/thread. */
     statusLine: text('status_line'),
     createdAt: timestamp('created_at', { withTimezone: true })

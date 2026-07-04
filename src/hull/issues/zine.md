@@ -37,11 +37,11 @@ app-shell nav).
   (`open|building|done|closed`), `authorId` (→ users.id), `ownerId` (→ users.id
   — who answers for it, the creator unless set otherwise), `playbookId` (→
   playbooks.id; null = the `build` default), `visibility` (`public` for now —
-  room to grow), `originChatId` (→ chats.id — the chat this issue was filed from
-  via `--chat`, how notifications about it find their way back to the
-  conversation that planned it; null when filed from the board or a bare CLI),
-  and the build context filled in on the first build: `branchName`,
-  `worktreePath`, and `statusLine` (the latest agent progress).
+  room to grow), and the build context filled in on the first build:
+  `branchName`, `worktreePath`, and `statusLine` (the latest agent progress).
+  Issues carry no notion of where they were filed from — an agent that wants to
+  report back on one finds the right conversation itself (see
+  [chat](../chat/zine.md)).
 - **Playbook** (`playbooks.ts`) — a row in `playbooks`: `name` (unique — the
   upsert key and what `--playbook` accepts), `description`, `memberIds` (agent
   users allowed hands on the issue), `entrypointId` (who a → building seeds).
@@ -94,14 +94,13 @@ app-shell nav).
   the server process, subscribes it to `shipLogBus`, runs reconciliation). All
   `v8 ignore`d — the live builder is exercised manually, not in CI.
 - **Doors** — `cli.ts` (`npm run issue`:
-  `new <title> [--body <text>] [--chat <id>] [--owner <handle>] [--playbook <name>]`,
-  `list`, `show`, `comment`, `handoff <id> <agent|OWNER> <message>`,
-  `playbooks`, `status`, and the verb shorthands
-  `building`/`open`/`done`/`close`) and `server.ts` (the web doors, including
-  `listPlaybooksView`/`savePlaybook` for the editor tab). The CLI attributes
-  every action to `cliActor()`, so the orchestrator's `SKYLARK_ACTOR=<agent id>`
-  command prefix makes each agent's comments, transitions, and handoffs show as
-  that agent.
+  `new <title> [--body <text>] [--owner <handle>] [--playbook <name>]`, `list`,
+  `show`, `comment`, `handoff <id> <agent|OWNER> <message>`, `playbooks`,
+  `status`, and the verb shorthands `building`/`open`/`done`/`close`) and
+  `server.ts` (the web doors, including `listPlaybooksView`/`savePlaybook` for
+  the editor tab). The CLI attributes every action to `cliActor()`, so the
+  orchestrator's `SKYLARK_ACTOR=<agent id>` command prefix makes each agent's
+  comments, transitions, and handoffs show as that agent.
 - **The views** (rigging) — the **board** (issues grouped by status, author +
   comment count + the live status line for building issues), the **thread**
   (body, the merged comment/status-change timeline, a composer, status
@@ -138,7 +137,8 @@ briefed with the message. The notifications reactor fans the same event to the
 issue's watchers, so the crew sees the baton move.
 `handoff <nano> OWNER "<message>"` emits `issue.owner_ping` instead and skips
 the worktree turn entirely: the reactor delivers straight to the owner's inbox,
-and if the owner is an agent the waker wakes it.
+and if the owner is an agent the waker wakes it on its own inbox session,
+briefed to find the right chat itself (see [chat](../chat/zine.md)).
 
 **Why event-driven, not inline.** The builder runs `npm run issue done <id>`
 from its bash tool — a separate CLI process. That transition is only a durable
@@ -237,13 +237,13 @@ their public functions, not their tables.
 - **Owner ≠ author, and OWNER rides notifications, not a turn.** `ownerId`
   defaults to the creator and exists so an agent can file work someone else
   answers for. A `handoff OWNER` never boots a worktree session — the owner
-  reviews from wherever they are (inbox for a human, an agent wake in the origin
-  chat for an agent; see [notifications](../notifications/zine.md)). Corollary:
-  a baton pass to an agent is delivered ONLY as the orchestrator's turn — the
-  reactor excludes the target from fan-out so an inbox wake can't double-drive
-  it. And an owner may not ping **themself**: your own action is never your own
-  news, so a self-ping would vanish silently — `requestHandoff` refuses it and
-  points the agent at comment-and-pause instead.
+  reviews from wherever they are (inbox for a human, an agent wake on its own
+  inbox session for an agent; see [notifications](../notifications/zine.md)).
+  Corollary: a baton pass to an agent is delivered ONLY as the orchestrator's
+  turn — the reactor excludes the target from fan-out so an inbox wake can't
+  double-drive it. And an owner may not ping **themself**: your own action is
+  never your own news, so a self-ping would vanish silently — `requestHandoff`
+  refuses it and points the agent at comment-and-pause instead.
 - **A row in `issue_sessions` is a key, so it's guarded like one.** The RLS
   session-visibility rule reads "does an issue point at this session?" from
   `issue_sessions` — which makes inserting a link the power to flip a session
@@ -298,6 +298,10 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **Decouple issues from chat** — Dropped `issues.originChatId` and the CLI's
+  `--chat` flag: issues carry no reference to chat at all. An agent's wake now
+  arrives on its own inbox session (see the [chat zine](../chat/zine.md)), which
+  is where it decides which conversation an update belongs in.
 - **Housekeeping** — fixed doc drift: the Components/Structure sections still
   described owner pings as riding `issue.handoff` with a `toOwner` flag, though
   #103 split that into a distinct `issue.owner_ping` event type.

@@ -26,13 +26,10 @@ import { describe, expect, it } from 'vitest'
  *   from any hull file.
  * - Declared FKs between service schemas (referential integrity is worth the
  *   coupling on a small ship). Allowed ONLY from the owning service's own
- *   schema.ts: issues → agent, issues → chat, chat → agent.
+ *   schema.ts: issues → agent, chat → agent. Issues knows nothing about chat —
+ *   an agent finds the right conversation itself (see the chat waker).
  */
-const SCHEMA_FK_ALLOWLIST = new Set([
-  'issues -> agent',
-  'issues -> chat',
-  'chat -> agent',
-])
+const SCHEMA_FK_ALLOWLIST = new Set(['issues -> agent', 'chat -> agent'])
 
 const SRC = join(import.meta.dirname)
 

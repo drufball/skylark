@@ -215,8 +215,6 @@ export async function createIssue(
     ownerId?: string
     /** How it gets worked (→ playbooks.id); null = the `build` default. */
     playbookId?: string
-    /** The chat this was filed from (agent wake-ups route back to it). */
-    originChatId?: string
     /** Force a nano (tests/seeding); otherwise generated + retried for uniqueness. */
     nano?: string
     /** Injectable generator so the collision-retry path is testable. */
@@ -238,7 +236,6 @@ export async function createIssue(
           authorId: input.authorId,
           ownerId: input.ownerId ?? input.authorId,
           playbookId: input.playbookId,
-          originChatId: input.originChatId,
         })
         .returning()
       const actorHandle = await handleOf(db, input.authorId)

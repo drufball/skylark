@@ -34,27 +34,33 @@ the rigging.
   message drives the reply); `wake` runs a briefing turn when a notification
   arrives; `reconcile` is startup recovery. Injected runtime, so the decisions
   are unit-tested against PGlite with a fake.
-- **turnContext** — the situational header every agent turn opens with: who the
+- **turnContext** — the situational header every reply turn opens with: who the
   agent is, which chat this is, and the concrete
-  `npm run issue -- new … --chat <id>` command for filing work (which is what
-  routes the issue's notifications back to this conversation). Repeated per turn
-  — cheap, and it survives session compaction.
+  `npm run issue -- new … --body …` command for filing work. Repeated per turn —
+  cheap, and it survives session compaction. `inboxTurnContext` is its
+  counterpart for a wake turn: it opens instead with "this is your inbox, not a
+  chat" and the chat-CLI commands (`list`/`show`/`post`) for finding and
+  updating the right conversation.
 - **The waker** (`waker.ts`) — the bridge from notifications to a sleeping
-  agent: debounces a flurry (10s) into one wake per (agent, origin chat), routes
-  each notification to its issue's `originChatId`, and drives the orchestrator's
-  `wake` with the batch briefed. A batch is marked read only AFTER its wake
-  succeeds — a failed wake leaves the rows unread to retry; notifications with
-  no route home are consumed without a wake.
-- **Chat agents boot on the ship default model** (`DEFAULT_MODEL` in the agent
-  service — one default everywhere, through the LLM gateway); a profile's model
-  override still wins at boot. The old `CHAT_MODEL`/`SKYLARK_CHAT_MODEL` split
-  retired with the gateway move.
+  agent: debounces a flurry (10s) into ONE wake per agent (not per chat — the
+  waker knows nothing about chat), and drives the orchestrator's `wake` with the
+  whole batch briefed. A batch is marked read only AFTER its wake succeeds — a
+  failed wake leaves the rows unread to retry. Every batch wakes; routing an
+  update to a chat (or not) is the agent's own judgment, made from its bash tool
+  via the chat CLI, not the waker's.
+- **Chat and inbox sessions boot on the ship default model** (`DEFAULT_MODEL` in
+  the agent service — one default everywhere, through the LLM gateway); a
+  profile's model override still wins at boot. The old
+  `CHAT_MODEL`/`SKYLARK_CHAT_MODEL` split retired with the gateway move.
 - **The live shell** (`orchestrator-live.ts`) — the impure wiring:
   `ensureChatOrchestrator` boots the orchestrator into the server process on
   `systemDb` with `createServerRuntime` (live pi.dev sessions, or the fake when
   `SKYLARK_FAKE_RUNTIME` is set), subscribes it to the ship's log, arms the
   waker, and ensures the notifications reactor runs. `v8 ignore`d.
-- **Doors** — `server.ts` (the web doors; the front-door route is the chat UI).
+- **Doors** — `server.ts` (the web doors; the front-door route is the chat UI)
+  and `cli.ts` (`npm run chat`: `list`, `show <chatId> [--limit N]`,
+  `post <chatId> <message>` — how a woken agent finds a chat and posts to it
+  from its bash tool, mirroring the issues CLI's conventions exactly).
 
 ## Structure
 
@@ -74,14 +80,20 @@ agents, so a reply can't cascade into a loop). In a **1:1** (one human + one
 agent) the agent always answers; in a **group** only the agents whose handle is
 `@mentioned` do.
 
-**A wake, end to end.** An agent files an issue from a chat (`--chat` records
-the provenance) → the work moves and the notifications reactor writes the agent
-an inbox row → the waker's debounce gathers the flurry, groups it by the issue's
-`originChatId`, and calls the orchestrator's `wake` → a normal turn on the
-agent's backing session, prompted with the briefing (plus any chat messages it
-hasn't seen), whose reply lands in the chat like any other. Then the batch is
-marked read. This is what closes the planning loop: file → build → woken to
-review and file the next piece.
+**A wake, end to end.** An agent files an issue from a chat
+(`npm run issue -- new …`, no chat reference recorded — issues know nothing
+about chat) → the work moves and the notifications reactor writes the agent an
+inbox row → the waker's debounce gathers the flurry and calls the orchestrator's
+`wake` with the whole batch briefed → a turn on the agent's own **inbox
+session** (found by its well-known title, `agent/service.ts`'s
+`findAgentSessionByTitle`, or created on first wake — a bare session, no chat,
+`cwd` the repo root), prompted with the briefing plus instructions to find the
+right conversation itself: use `npm run chat -- list`/`show` to locate the chat
+where the work was planned, then `npm run chat -- post` to update it — or do
+nothing if none fits. Then the batch is marked read. This is what closes the
+planning loop: file → build → woken to review, post an update to the right chat,
+and file the next piece — the routing judgment now lives with the agent, not the
+plumbing.
 
 **Identity.** Every door resolves the acting user with `currentActor()` (see the
 users zine) — you never tell the system it's you. Creating a chat always
@@ -113,10 +125,18 @@ agent.
 - **The reply is event-driven, not inline — and that is the point.** Posting is
   durable the instant the row is written; the reply is driven off the ship's log
   by `handleBusNote`, not by an inline call from the web door. Same reasoning as
-  the issues orchestrator: a message that arrives from another process (a future
-  chat CLI, an agent posting elsewhere) is still heard, because the trigger is a
-  durable event, not an in-process call. A failed reply is logged, never blocks
-  the post.
+  the issues orchestrator: a message posted from another process (the chat CLI —
+  an agent posting from its own bash tool) is still heard, because the trigger
+  is a durable event, not an in-process call. A failed reply is logged, never
+  blocks the post.
+- **A wake drives the agent's own inbox session, never a chat directly.** The
+  waker (and the notifications layer generally) knows nothing about which chat
+  an update belongs in — that coupling used to live in `issues.originChatId` and
+  has been removed. Instead a wake is a turn on a session keyed only to the
+  agent (found by a well-known title, `findAgentSessionByTitle`), briefed on the
+  batch and told to route it itself via the chat CLI. This is what let `issues`
+  stop importing `chats` at all: the routing judgment moved from a foreign-key
+  to the agent's own reasoning.
 - **Startup reconciliation recovers an interrupted reply.** A
   `chat.message_posted` event reaches the subscription only live, so a human
   message posted just before a restart would leave a reply owed but undriven. On
@@ -126,6 +146,12 @@ agent.
 
 ## Changelog
 
+- **Decouple issues from chat** — `wake` now drives the agent's own inbox
+  session (found by a well-known title) instead of a chat determined by
+  `issues.originChatId` (removed). The waker debounces one wake per agent,
+  briefed on the whole batch; the agent finds the right chat itself with the new
+  `npm run chat` CLI (`list`/`show`/`post`) and posts an update, or does nothing
+  if none fits.
 - **LLM gateway** — chat sessions boot on the ship default model; `CHAT_MODEL`
   retired.
 - **#67** — The wake loop: `wake` on the orchestrator, the debounced per-(agent,

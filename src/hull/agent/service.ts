@@ -86,6 +86,33 @@ export async function listSessions(
 }
 
 /**
+ * The agent's session with this exact title, if any — how another service
+ * finds a well-known session it owns (the chat waker's per-agent inbox
+ * session) without keeping its own link table. Titles are only set at session
+ * creation, never rewritten, so a well-known title is a stable key. Oldest
+ * first (ids are UUIDv7), so a duplicate created by a rare race converges on
+ * one winner.
+ */
+export async function findAgentSessionByTitle(
+  db: Database,
+  agentUserId: string,
+  title: string,
+): Promise<AgentSessionRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.agentUserId, agentUserId),
+        eq(agentSessions.title, title),
+      ),
+    )
+    .orderBy(asc(agentSessions.id))
+    .limit(1)
+  return row
+}
+
+/**
  * Which of these sessions have a turn in flight right now? The question other
  * services ask (issues' handoff gate: "is the baton taken?") without reading
  * this service's table — sessions stay the agent service's own business.

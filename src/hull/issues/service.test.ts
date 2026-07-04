@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { listEventsSince } from '@hull/events/service'
 import { defined, freshDb } from '@hull/db/test-db'
-import { createChat } from '@hull/chat/service'
 import { createSession } from '@hull/agent/service'
 import { createUser } from '@hull/users/service'
 
@@ -229,20 +228,6 @@ describe('createIssue', () => {
   it('defaults body to empty', async () => {
     const issue = await createIssue(db, { title: 'Bare', authorId })
     expect(issue.body).toBe('')
-  })
-
-  it('records the origin chat when filed from one — the wake-up route home', async () => {
-    const chatId = uuidv7()
-    await createChat(db, { id: chatId, memberIds: [authorId] })
-    const issue = await createIssue(db, {
-      title: 'From a conversation',
-      authorId,
-      originChatId: chatId,
-    })
-    expect(issue.originChatId).toBe(chatId)
-    // Filed from the board or a bare CLI → no origin.
-    const bare = await createIssue(db, { title: 'From the board', authorId })
-    expect(bare.originChatId).toBeNull()
   })
 
   it('defaults the owner to the creator when none is named', async () => {
@@ -497,7 +482,6 @@ describe('view-data shaping (pure)', () => {
       visibility: 'public',
       branchName: 'add-widget-aa11',
       worktreePath: '/wt/add-widget-aa11',
-      originChatId: null,
       statusLine: 'on it',
       createdAt: new Date(),
       updatedAt: new Date(),

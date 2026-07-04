@@ -7,6 +7,7 @@ import { defined, freshDb } from '@hull/db/test-db'
 import {
   appendMessage,
   createSession,
+  findAgentSessionByTitle,
   getMessages,
   getSession,
   listSessions,
@@ -145,6 +146,57 @@ describe('agent service persistence', () => {
           (s) => s.id,
         ),
       ).toEqual(['new', 'mid'])
+    })
+  })
+
+  describe('findAgentSessionByTitle', () => {
+    it('finds the agent session with the well-known title, oldest first', async () => {
+      const { createUser } = await import('@hull/users/service')
+      await createUser(db, {
+        id: 'agent-a',
+        handle: 'tilde',
+        displayName: 'Tilde',
+        type: 'agent',
+      })
+      await createUser(db, {
+        id: 'agent-b',
+        handle: 'bix',
+        displayName: 'Bix',
+        type: 'agent',
+      })
+      // Same title on another agent, other titles on this one — neither match.
+      await createSession(db, {
+        id: 's-other-agent',
+        model: 'm',
+        title: 'Inbox',
+        agentUserId: 'agent-b',
+      })
+      await createSession(db, {
+        id: 's-other-title',
+        model: 'm',
+        title: 'Build #aa11',
+        agentUserId: 'agent-a',
+      })
+      expect(
+        await findAgentSessionByTitle(db, 'agent-a', 'Inbox'),
+      ).toBeUndefined()
+
+      await createSession(db, {
+        id: 's-inbox-1',
+        model: 'm',
+        title: 'Inbox',
+        agentUserId: 'agent-a',
+      })
+      // A duplicate (rare race) converges on the OLDEST — one stable winner.
+      await createSession(db, {
+        id: 's-inbox-2',
+        model: 'm',
+        title: 'Inbox',
+        agentUserId: 'agent-a',
+      })
+      expect(
+        defined(await findAgentSessionByTitle(db, 'agent-a', 'Inbox')).id,
+      ).toBe('s-inbox-1')
     })
   })
 
