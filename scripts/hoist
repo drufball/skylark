@@ -9,8 +9,11 @@ cd "$(dirname "$0")/.."
 
 [ -d node_modules ] || ./scripts/setup
 
-# Bring up Postgres. (Assumes Docker is running — making hoist start Docker
-# itself is a later issue.) If it can't, sail anyway: the app degrades to
+# Bring up Postgres and WAIT for it to be healthy — db:up runs
+# `docker compose up -d --wait db`, which blocks on the pg_isready
+# healthcheck, so migrate/seed below can't race a still-booting server
+# (#u4ct). (Assumes Docker is running — making hoist start Docker itself is
+# a later issue.) If it can't, sail anyway: the app degrades to
 # "database: down" rather than refusing to start.
 if npm run db:up; then
   # Migrate and seed the crew so a fresh ship boots with a resolvable actor —
