@@ -169,3 +169,27 @@ describe('architecture: the import graph is acyclic', () => {
     expect(cycle, cycle ? `import cycle: ${cycle.join(' → ')}` : '').toBeNull()
   })
 })
+
+describe('architecture: boot is server-entry-only', () => {
+  /**
+   * src/boot.ts arms every reactor and transitively imports the whole hull —
+   * node builtins included. The ONLY file that may import it is src/server.ts
+   * (the TanStack Start server entry, which never reaches the client bundle).
+   * Importing boot from anywhere else — a route, a router, or a serverFn
+   * module like hull/chat/server.ts — drags server code into the client graph
+   * ("ReferenceError: Buffer is not defined", observed live after PR #92).
+   */
+  it('only src/server.ts imports src/boot.ts', () => {
+    const violations: string[] = []
+    for (const [file, edges] of buildGraph()) {
+      if (file === 'server.ts' || file === 'boot.test.ts') continue
+      if (edges.includes('boot.ts')) {
+        violations.push(
+          `${file} imports @/boot — boot belongs to the server entry (src/server.ts) only; ` +
+            `client-reachable modules must never pull it into their graph.`,
+        )
+      }
+    }
+    expect(violations).toEqual([])
+  })
+})
