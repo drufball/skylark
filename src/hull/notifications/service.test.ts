@@ -755,31 +755,40 @@ describe('notifications service', () => {
     expect(await unreadCount(db, alice)).toBe(1) // still unread until consumed
   })
 
-  it('reconcile ignores unread notifications beyond the 24-hour horizon', async () => {
-    // Old unread notifications (beyond 24 hours) are either already consumed
-    // or stale enough to skip — reconcile shouldn't re-deliver them.
-    const { notifications } = await import('./schema')
-    await db.insert(notifications).values({
-      id: uuidv7(),
-      userId: alice,
-      eventId: 'old-event',
-      type: 'issue.commented',
-      topic: 'issue:old',
-      payload: {},
-      actorId: bob,
-      readAt: null, // unread
-      createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000), // 48 hours ago
+  it('reconcile survives hook delivery failures during unread re-delivery', async () => {
+    // Create two unread notifications
+    const issue = await createIssue(db, { title: 'x', authorId: bob })
+    await watchTopic(db, alice, issueTopic(issue.id))
+    await watchTopic(db, bob, issueTopic(issue.id))
+    const reactor1 = createNotificationsReactor({ db })
+    await addComment(db, { issueId: issue.id, authorId: bob, body: 'first' })
+    const events1 = await listEventsSince(db, {
+      topicPatterns: [issueTopic(issue.id)],
+      audience: 'public',
     })
+    const comment1 = events1.find((e) => e.type === 'issue.commented')
+    await reactor1.handleBusNote({ id: defined(comment1).id, type: 'x' })
 
+    // Second reactor: hook throws on alice, reconcile should still deliver bob's
     const delivered: string[] = []
-    const reactor = createNotificationsReactor({
+    const reactor2 = createNotificationsReactor({
       db,
-      onNotified: (n) => delivered.push(n.userId),
+      onNotified: (n) => {
+        delivered.push(n.userId)
+        if (n.userId === alice) throw new Error('hook failed')
+      },
     })
-    await reactor.reconcile()
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await reactor2.reconcile()
 
-    // The old notification should NOT be re-delivered
-    expect(delivered).toEqual([])
-    expect(await unreadCount(db, alice)).toBe(1) // still exists, just not re-delivered
+      // Both should be attempted, despite alice's failure
+      expect(delivered).toEqual([alice])
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('reconcile notification delivery failed'),
+      )
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
