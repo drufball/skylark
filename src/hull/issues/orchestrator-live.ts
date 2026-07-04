@@ -213,7 +213,9 @@ export function ensureOrchestrator(): Promise<Orchestrator> {
     started = registry.instance
     return registry.instance
   }
-  if (started) return started
+  // Guard local cache with registry.armed: if the registry self-healed (armed=false)
+  // after a boot failure, don't return a stale cached rejection (#cn8g).
+  if (started && registry.armed) return started
   registry.armed = true
   started = boot().catch((err: unknown) => {
     registry.armed = false // allow retry on failure
