@@ -28,7 +28,7 @@ import {
   type IssueHandoffPayload,
 } from './handoff'
 import { BUILD_PLAYBOOK_NAME, instructionsFor, playbookFor } from './playbooks'
-import type { IssueRow, IssueStatus } from './schema'
+import type { IssueRow, IssueStatus, PlaybookRow } from './schema'
 import { buildPrompt, generalPrompt, handoffPrompt } from './prompts'
 
 /**
@@ -322,22 +322,29 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /**
+   * The playbook a non-build entrypoint resolved through — carried alongside
+   * `build: false` so callers that need it (a role brief on the general
+   * prompt) don't have to re-fetch it and re-derive the same nullability
+   * `entryFor` already resolved.
+   */
+  type Entry =
+    | { userId: string; build: true }
+    | { userId: string; build: false; playbook: PlaybookRow }
+
+  /**
    * Who starts this issue: the playbook's entrypoint agent, or — on a ship
    * with nothing seeded, or a roster whose agent has left the crew — the
    * legacy builder identity. `build` is whether the entrypoint runs the
    * build-feature contract or the plain general brief.
    */
-  async function entryFor(
-    issue: IssueRow,
-  ): Promise<{ userId: string; build: boolean }> {
+  async function entryFor(issue: IssueRow): Promise<Entry> {
     const playbook = await playbookFor(db, issue)
     if (playbook) {
       const entry = await getUserById(db, playbook.entrypointId)
       if (entry) {
-        return {
-          userId: entry.id,
-          build: playbook.name === BUILD_PLAYBOOK_NAME,
-        }
+        return playbook.name === BUILD_PLAYBOOK_NAME
+          ? { userId: entry.id, build: true }
+          : { userId: entry.id, build: false, playbook }
       }
       console.warn(
         `playbook ${playbook.name} entrypoint is gone; falling back to the builder`,
@@ -370,9 +377,15 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /** Ensure the worktree + the entrypoint's session exist, idempotently. */
-  async function ensureEntrypoint(
-    issue: IssueRow,
-  ): Promise<{ sessionId: string; entryUserId: string; build: boolean }> {
+  async function ensureEntrypoint(issue: IssueRow): Promise<
+    | { sessionId: string; entryUserId: string; build: true }
+    | {
+        sessionId: string
+        entryUserId: string
+        build: false
+        playbook: PlaybookRow
+      }
+  > {
     const entry = await entryFor(issue)
     const worktreePath = await ensureWorktree(issue)
     const sessionId = await ensureAgentSession({
@@ -381,7 +394,14 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       worktreePath,
       title: issue.title,
     })
-    return { sessionId, entryUserId: entry.userId, build: entry.build }
+    return entry.build
+      ? { sessionId, entryUserId: entry.userId, build: true }
+      : {
+          sessionId,
+          entryUserId: entry.userId,
+          build: false,
+          playbook: entry.playbook,
+        }
   }
 
   /** Tear down the worktree + every hand's session (done/closed). Idempotent. */
@@ -434,24 +454,23 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         // ensure the playbook entrypoint's hand exists (idempotent), then
         // seed/resume the turn with the latest thread — the build-feature
         // contract for the build playbook, the plain brief for anything else.
-        const { sessionId, entryUserId, build } = await ensureEntrypoint(issue)
+        const entry = await ensureEntrypoint(issue)
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
-        const playbook = await playbookFor(db, issue)
-        const prompt = build
+        const prompt = entry.build
           ? buildPrompt(
               fresh ?? issue,
               thread,
-              entryUserId,
+              entry.entryUserId,
               await babysitterHandleFor(issue),
             )
           : generalPrompt(
               fresh ?? issue,
               thread,
-              entryUserId,
-              playbook && instructionsFor(playbook, entryUserId),
+              entry.entryUserId,
+              instructionsFor(entry.playbook, entry.entryUserId),
             )
-        fireTurn(issueId, sessionId, prompt)
+        fireTurn(issueId, entry.sessionId, prompt)
         break
       }
       case 'open':
