@@ -8,6 +8,7 @@ import {
   trustedEvent,
 } from '@hull/events/service'
 import { errorMessage } from '@hull/lib/errors'
+import { actorCmd } from '@hull/lib/actor-cmd'
 import { createSession } from '@hull/agent/service'
 import { CHAT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
@@ -80,9 +81,19 @@ export function turnContext(input: {
   handle: string
   userId: string
 }): string {
+  const cmd = actorCmd(
+    input.userId,
+    'issue',
+    'new',
+    '"<title>"',
+    '--body',
+    '"<details>"',
+    '--chat',
+    input.chatId,
+  )
   return `[You are @${input.handle} in chat ${input.chatId}.
 To file work for the ship, use bash:
-  SKYLARK_ACTOR=${input.userId} npm run issue -- new "<title>" --body "<details>" --chat ${input.chatId}
+  ${cmd}
 You will be woken in this chat as filed issues move, to review and follow up.]`
 }
 
