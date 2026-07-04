@@ -44,3 +44,35 @@ jobs:
       - name: Diff coverage gate (changed lines vs main)
         if: github.event_name == 'pull_request'
         run: npm run coverage:diff
+
+  # Smoke: boot the REAL server (fake agent runtime, dedicated skylark_smoke
+  # db) and drive the critical paths with Playwright. Catches what verify +
+  # coverage structurally can't — routes, serverFn doors, actor resolution,
+  # the SSE stream — i.e. "the app actually starts". Motivating incident:
+  # PR #92 merged fully green while GET / threw in the browser (#u4ct).
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: skylark
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d skylark" --health-interval 5s
+          --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: ./scripts/setup
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      # global-setup creates/migrates/seeds skylark_smoke on the service db;
+      # the app boots with SKYLARK_FAKE_RUNTIME=1 so no model is ever called.
+      - run: npm run smoke
