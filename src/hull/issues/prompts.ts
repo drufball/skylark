@@ -7,7 +7,7 @@ import type { IssueRow } from './schema'
  *
  * Extracted from orchestrator.ts (~150 lines) to keep the orchestrator lean
  * and the wording reviewable + testable without booting an agent. Three
- * prompts cover the lifecycle: buildPrompt (ship-feature contract),
+ * prompts cover the lifecycle: buildPrompt (build-feature contract),
  * generalPrompt (plain "do what it says"), and handoffPrompt (baton pass).
  *
  * The threadBlock and actorCmd helpers eliminate duplication across chat,
@@ -64,7 +64,7 @@ export function buildPrompt(
     `Title: ${issue.title}\n` +
     (issue.body ? `\n${issue.body}\n` : '') +
     thread +
-    '\n\nFollow the ship-feature skill through OPENING the PR: red-green TDD, ' +
+    '\n\nFollow the build-feature skill through OPENING the PR: red-green TDD, ' +
     '`npm run check` clean, branch, push, open a PR. You are already on the ' +
     'issue branch in a dedicated worktree. Shepherding CI and merging is the ' +
     `${babysitterHandle}'s job, not yours.\n\n` +
@@ -82,7 +82,7 @@ export function buildPrompt(
 /**
  * The prompt a non-build playbook's entrypoint is seeded with: the issue and
  * thread, plus the plain CLI contract — comment, hand off (roster or OWNER),
- * pause, done. No ship-feature script, no PR talk: the issue's own words are
+ * pause, done. No build-feature script, no PR talk: the issue's own words are
  * the instructions. Pure, so the wording is testable.
  */
 export function generalPrompt(

@@ -124,11 +124,11 @@ describe('generalPrompt', () => {
     expect(prompt).toContain('done xyz9')
   })
 
-  it('does not mention PR or ship-feature', () => {
+  it('does not mention PR or build-feature', () => {
     const prompt = generalPrompt(issue, [], 'hand-456')
 
     expect(prompt).not.toContain('PR')
-    expect(prompt).not.toContain('ship-feature')
+    expect(prompt).not.toContain('build-feature')
     expect(prompt).not.toContain('babysitter')
   })
 })

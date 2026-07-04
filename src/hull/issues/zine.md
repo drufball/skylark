@@ -118,7 +118,7 @@ subscription reads the full event by id and calls `onStatusChanged`. On
 `→ building` it generates a slug (LLM, cheap) into `<slug>-<nano>`, creates the
 worktree if absent, copies the `.worktreeinclude` files in, boots (or reuses)
 the playbook entrypoint's session with `cwd` = the worktree, and fires a turn
-seeded with the issue + the contract (ship-feature-to-an-open-PR for `build`,
+seeded with the issue + the contract (build-feature-to-an-open-PR for `build`,
 the plain brief otherwise). The turn's live events become the issue's
 `statusLine`. On the `build` playbook the builder ends its part by batoning to
 the babysitter, which waits on `gh pr checks --watch` through the agent
@@ -288,8 +288,9 @@ their public functions, not their tables.
   `build`, else `generalPrompt`; the work contract therefore lives in two places
   (the agent's own config, by user; the turn prompt, by name). Fine while
   `build` is the one code-shaped playbook. The intended refit: one uniform turn
-  prompt (issue brief + CLI contract) with the ship-feature contract living only
-  in the builder's config/skill — do that before cloning build-like playbooks.
+  prompt (issue brief + CLI contract) with the build-feature contract living
+  only in the builder's config/skill — do that before cloning build-like
+  playbooks.
 - **The live end-to-end builder is exercised manually, not in CI.** The
   orchestrator's decision logic is unit-tested against fake git/runtime/slug
   (`orchestrator.test.ts`), but a real LLM building real code to a real merged
