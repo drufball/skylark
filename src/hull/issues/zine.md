@@ -68,11 +68,11 @@ app-shell nav).
   — an inbox row for a human, an agent wake for an agent). One baton per issue:
   a pass is refused while another agent's session on the issue is mid-turn (the
   caller being mid-turn is expected — handing off is a turn's last action).
-- **The state machine** — `nextStatus(from, to)` in `service.ts`: the pure,
-  exhaustively-tested heart. Legal moves are `open↔building`, `building→done`,
-  `open|building→closed`; `done` and `closed` are terminal; a status never
-  transitions to itself. Every door (web, CLI, orchestrator) routes through it,
-  so the rules live in exactly one place.
+- **The state machine** — `assertTransition(from, to)` in `service.ts`: the
+  pure, exhaustively-tested heart. Legal moves are `open↔building`,
+  `building→done`, `open|building→closed`; `done` and `closed` are terminal; a
+  status never transitions to itself. Every door (web, CLI, orchestrator) routes
+  through it, so the rules live in exactly one place.
 - **Events** — `issue.opened` on creation (its `ownerId` payload is how the
   notifications reactor auto-watches the owner), `issue.status_changed` on every
   transition, `issue.commented` on every comment, and `issue.handoff` on every
@@ -111,7 +111,7 @@ app-shell nav).
 
 **A build, end to end.** A human clicks "Build it" (or an agent runs
 `npm run issue building <id>`) → `transitionIssue` moves the row through
-`nextStatus` and emits `issue.status_changed` once on topic `issue:<id>`
+`assertTransition` and emits `issue.status_changed` once on topic `issue:<id>`
 (audience `public`) → the durable row + `pg_notify` reach the server's one
 LISTEN connection, which fans onto `shipLogBus` → the orchestrator's
 subscription reads the full event by id and calls `onStatusChanged`. On
@@ -179,9 +179,9 @@ their public functions, not their tables.
   still be heard. Subscribing to the ship's log is what makes "the agent reports
   back by running the CLI" work at all. A future change that "optimizes" this
   into an inline call breaks cross-process builds silently.
-- **Decisions route through one pure state machine.** `nextStatus` is the only
-  place the legal transitions live. New doors call it; they don't re-encode the
-  rules. A transition that isn't legal throws before any write or emit, so a
+- **Decisions route through one pure state machine.** `assertTransition` is the
+  only place the legal transitions live. New doors call it; they don't re-encode
+  the rules. A transition that isn't legal throws before any write or emit, so a
   rejected move leaves both the row and the log untouched.
 - **The done-refresh is a known sharp edge, kept defensive.** On `→ done` the
   orchestrator pulls `main` into the **running server's own checkout**

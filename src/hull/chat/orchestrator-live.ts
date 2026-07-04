@@ -1,6 +1,6 @@
 import { systemDb } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
-import { createServerRuntime } from '@hull/agent/fake-session'
+import { createServerRuntime } from '@hull/agent/server-runtime'
 import { getIssue } from '@hull/issues/service'
 import { issueIdFromTopic } from '@hull/issues/topic'
 import {

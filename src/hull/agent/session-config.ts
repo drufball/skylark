@@ -3,7 +3,7 @@ import { isAbsolute, join } from 'node:path'
 import {
   readContextFiles as defaultReadContextFiles,
   skillDirs as defaultSkillDirs,
-} from './config'
+} from './repo-context'
 import type { ProfileInput } from './profiles'
 
 /**

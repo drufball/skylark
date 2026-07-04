@@ -76,7 +76,7 @@ the **full** history, even across compaction (see Decisions).
   agent crew member owns `agents/<handle>/` in the ship's shared files, and at
   session boot the runtime folds the folder's index into the system prompt. The
   agent updates its own memory through the files CLI, attributed as itself.
-- **The runtime seam** (`fake-session.ts`) — `createServerRuntime` is the one
+- **The runtime seam** (`server-runtime.ts`) — `createServerRuntime` is the one
   place every host (agent door, chat + issues orchestrators) builds a runtime:
   live pi.dev sessions normally, a deterministic fake when
   `SKYLARK_FAKE_RUNTIME` is set — which is how the real server smoke-tests chat
@@ -88,9 +88,9 @@ the **full** history, even across compaction (see Decisions).
   and `server.ts` (the web door behind the Agents monitor view; chat — the
   ship's front door — is its own hull service driving this runtime, see
   [`../chat/zine.md`](../chat/zine.md)).
-- **Shared config** (`config.ts`) — resolves the ship's CLAUDE.md and skill
-  directories so the runtime can feed them to the agent: one source of config
-  for both the human and the agent.
+- **Shared config** (`repo-context.ts`) — resolves the ship's CLAUDE.md and
+  skill directories so the runtime can feed them to the agent: one source of
+  config for both the human and the agent.
 - **Status** — `idle` | `running` | `error`. More than display: it's the
   cross-process signal for "a turn is in flight." A row stuck on `running` after
   a crash is stale, and cancelling forces it back to idle.
@@ -206,14 +206,14 @@ idle session, because the truth is in the database, not the registry.
   ("file an issue to build"), and a deliberate narrowing from issue #1, where
   the only agent had full write tools.
 - **The agent shares the ship's config; hooks become extensions.** CLAUDE.md and
-  the human's skills are fed through pi.dev's resource loader (`config.ts`), so
-  config lives in one place — but a profile can opt out of either. Hooks are not
-  shared as shell-commands (those are Claude Code harness wiring about the
-  human's git flow); their pi.dev equivalent is **TS extensions**, loaded via
-  the loader's `additionalExtensionPaths`. The build-gates extension is the
-  commit/landing/session-start gates rebuilt against pi's extension API for
-  builder agents — same intent, different mechanism, not auto-translated from
-  `settings.json`.
+  the human's skills are fed through pi.dev's resource loader
+  (`repo-context.ts`), so config lives in one place — but a profile can opt out
+  of either. Hooks are not shared as shell-commands (those are Claude Code
+  harness wiring about the human's git flow); their pi.dev equivalent is **TS
+  extensions**, loaded via the loader's `additionalExtensionPaths`. The
+  build-gates extension is the commit/landing/session-start gates rebuilt
+  against pi's extension API for builder agents — same intent, different
+  mechanism, not auto-translated from `settings.json`.
 - **Extensions are referenced by registry, not by path.** A profile names
   extensions by id; the `extensions` table maps id → repo-relative path. The
   registry is the single place a profile (and the future UX) names an extension,

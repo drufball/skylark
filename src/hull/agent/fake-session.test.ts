@@ -4,11 +4,8 @@ import type { Database } from '@hull/db/client'
 import { freshDb } from '@hull/db/test-db'
 import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
 
-import {
-  createFakeSession,
-  fakeReply,
-  resolveSessionFactory,
-} from './fake-session'
+import { createFakeSession, fakeReply } from './fake-session'
+import { resolveSessionFactory } from './server-runtime'
 import { createAgentRuntime, createPiSession } from './runtime'
 import { createSession, getMessages } from './service'
 

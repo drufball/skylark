@@ -11,7 +11,7 @@ import {
   registerExtension,
   seedAndWireProfiles,
 } from './profiles'
-import { liveAgentMemoryLoader } from './fake-session'
+import { liveAgentMemoryLoader } from './server-runtime'
 import { toolExecutionDetail, truncate } from './progress'
 import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
 import {

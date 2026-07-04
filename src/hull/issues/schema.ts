@@ -69,7 +69,7 @@ export const issues = pgTable(
     body: text('body').notNull().default(''),
     /**
      * The lifecycle state. The legal transitions live in service.ts
-     * (`nextStatus`): open↔building, building→done, open|building→closed; done
+     * (`assertTransition`): open↔building, building→done, open|building→closed; done
      * and closed are terminal.
      */
     status: text('status', { enum: ['open', 'building', 'done', 'closed'] })

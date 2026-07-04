@@ -119,7 +119,10 @@ export class IssueTransitionError extends Error {
  * exhaustively unit-tested — every door in the system (CLI, web, orchestrator)
  * routes its transitions through here so the rules live in exactly one place.
  */
-export function nextStatus(from: IssueStatus, to: IssueStatus): IssueStatus {
+export function assertTransition(
+  from: IssueStatus,
+  to: IssueStatus,
+): IssueStatus {
   if (!ALLOWED[from].includes(to)) throw new IssueTransitionError(from, to)
   return to
 }
@@ -343,7 +346,7 @@ export async function transitionIssue(
 ): Promise<IssueRow> {
   const current = await getIssue(db, input.issueId)
   if (!current) throw new Error(`No such issue: ${input.issueId}`)
-  const to = nextStatus(current.status, input.to)
+  const to = assertTransition(current.status, input.to)
 
   const [row] = await db
     .update(issues)

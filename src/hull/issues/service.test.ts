@@ -18,7 +18,7 @@ import {
   listComments,
   listIssues,
   listIssueSessions,
-  nextStatus,
+  assertTransition,
   resolveIssueRef,
   resolveStatusWord,
   setBuildContext,
@@ -70,35 +70,35 @@ describe('generateNano', () => {
   })
 })
 
-describe('nextStatus — the legal state machine', () => {
+describe('assertTransition — the legal state machine', () => {
   it('allows open ↔ building', () => {
-    expect(nextStatus('open', 'building')).toBe('building')
-    expect(nextStatus('building', 'open')).toBe('open')
+    expect(assertTransition('open', 'building')).toBe('building')
+    expect(assertTransition('building', 'open')).toBe('open')
   })
 
   it('allows building → done', () => {
-    expect(nextStatus('building', 'done')).toBe('done')
+    expect(assertTransition('building', 'done')).toBe('done')
   })
 
   it('allows open|building → closed', () => {
-    expect(nextStatus('open', 'closed')).toBe('closed')
-    expect(nextStatus('building', 'closed')).toBe('closed')
+    expect(assertTransition('open', 'closed')).toBe('closed')
+    expect(assertTransition('building', 'closed')).toBe('closed')
   })
 
   it('rejects open → done (must build first)', () => {
-    expect(() => nextStatus('open', 'done')).toThrow(/open.*done/i)
+    expect(() => assertTransition('open', 'done')).toThrow(/open.*done/i)
   })
 
   it('treats done and closed as terminal', () => {
     for (const to of ['open', 'building', 'done', 'closed'] as const) {
-      expect(() => nextStatus('done', to)).toThrow()
-      expect(() => nextStatus('closed', to)).toThrow()
+      expect(() => assertTransition('done', to)).toThrow()
+      expect(() => assertTransition('closed', to)).toThrow()
     }
   })
 
   it('rejects a no-op transition to the same status', () => {
-    expect(() => nextStatus('open', 'open')).toThrow()
-    expect(() => nextStatus('building', 'building')).toThrow()
+    expect(() => assertTransition('open', 'open')).toThrow()
+    expect(() => assertTransition('building', 'building')).toThrow()
   })
 })
 

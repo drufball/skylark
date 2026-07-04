@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { readContextFiles, skillDirs } from './config'
+import { readContextFiles, skillDirs } from './repo-context'
 
 // Hermetic fixtures: a throwaway "ship" on disk, so these test the functions'
 // behaviour rather than the real repo's current layout.
