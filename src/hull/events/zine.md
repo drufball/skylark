@@ -113,6 +113,20 @@ Claude wiring.
 
 ## Decisions
 
+- **Reactors recover via crash-only, not cooperative drain (#lo0x).** Server
+  reloads are routine (HMR on merged code, the done-refresh, the files sweep)
+  and frequent. The notification/session mechanics survive them via CRASH-ONLY
+  recovery: (1) EAGER BOOT — arm all reactors at server start from a
+  composition-root boot module (`src/boot.ts`), instead of lazily on first door
+  use, so after every reload reconcile runs immediately and the deaf window is
+  ~0; (2) ARM-ONCE without HMR cooperation — globalThis-keyed registry prevents
+  duplicate subscriptions that survive module re-execution (SSR reload resets
+  module state but globalThis persists), because `import.meta.hot.dispose` hooks
+  do NOT fire for SSR module reloads (proven by #xwh2 residual: post-#91 forced
+  reload delivered one message 3x). Crash-only means no cooperative 'prepare for
+  reload' protocol to maintain — reloads are involuntary and the common case
+  bypasses any drain path. Reconcile is the recovery; idempotent arm is the
+  guard.
 - **The log is durable by default; ephemeral is a narrow opt-in.** Most events
   are rows; NOTIFY is the doorbell. This is why a reconnect replays, why a crash
   loses nothing, and why the CLI's emits reach the web server. The ephemeral

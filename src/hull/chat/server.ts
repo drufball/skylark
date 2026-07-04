@@ -1,11 +1,17 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { createServerFn } from '@tanstack/react-start'
 
+import { bootAllReactors } from '@/boot'
 import { db } from '@hull/db/client'
 import { withCurrentActor } from '@hull/users/actor'
 import { listUsers } from '@hull/users/service'
 
 import { ensureChatOrchestrator } from './orchestrator-live'
+
+// Boot all reactors eagerly when this module loads (crash-only recovery, #lo0x).
+// This runs once per server process, early (the index route imports this), so
+// after every reload reconcile runs immediately and the deaf window is ~0.
+bootAllReactors()
 import {
   addMember,
   addMessage,
