@@ -31,7 +31,7 @@
 import { ensureChatOrchestrator } from '@hull/chat/orchestrator-live'
 import { ensureOrchestrator } from '@hull/issues/orchestrator-live'
 import { ensureNotificationsReactor } from '@hull/notifications/live'
-import { ensureLiveFilesService } from '@hull/files/live'
+import { liveFilesService } from '@hull/files/live'
 
 /* v8 ignore start -- live wiring exercised by the running app */
 
@@ -71,7 +71,7 @@ function getBootRegistry(): BootRegistry {
  * After a server reload, reconcile runs immediately for all orchestrators, so
  * the "deaf window" (time between reload and re-arming) is ~0.
  */
-export async function bootAllReactors(): Promise<void> {
+export function bootAllReactors(): void {
   const registry = getBootRegistry()
   if (registry.booted) return
   registry.booted = true
@@ -88,8 +88,8 @@ export async function bootAllReactors(): Promise<void> {
   // Notifications reactor: fan out ship-log events to user inboxes
   ensureNotificationsReactor()
 
-  // Files service: sweep staging branch to main on idle (async to lazy-load git)
-  await ensureLiveFilesService()
+  // Files service: sweep staging branch to main on idle
+  liveFilesService()
 }
 
 /**

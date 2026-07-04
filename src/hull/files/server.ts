@@ -2,16 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { currentActor } from '@hull/users/actor'
 
-import { validateFilePath, type FilesService } from './service'
-
-// Lazy helper to get the live files service (keeps node builtins out of client bundle)
-function getFilesService(): FilesService {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { liveFilesService } = require('./live') as {
-    liveFilesService: () => FilesService
-  }
-  return liveFilesService()
-}
+import { validateFilePath } from './service'
 
 // The web doors onto the files service. Reads and writes go through the live
 // service, which routes them to the staging branch when one exists — so every
@@ -33,21 +24,26 @@ function parseSave(input: unknown): { path: string; content: string } {
 }
 
 /** Every shared file's path, sorted. */
-export const listFiles = createServerFn({ method: 'GET' }).handler(() =>
-  getFilesService().list(),
-)
+export const listFiles = createServerFn({ method: 'GET' }).handler(async () => {
+  const { liveFilesService } = await import('./live')
+  return liveFilesService().list()
+})
 
 /** One file's content, or null when it doesn't exist. */
 export const readFile = createServerFn({ method: 'GET' })
   .validator(parsePath)
-  .handler(({ data: path }) => getFilesService().read(path))
+  .handler(async ({ data: path }) => {
+    const { liveFilesService } = await import('./live')
+    return liveFilesService().read(path)
+  })
 
 /** Create or update a file as the current actor. */
 export const saveFile = createServerFn({ method: 'POST' })
   .validator(parseSave)
   .handler(async ({ data }) => {
     const actor = await currentActor()
-    await getFilesService().write({
+    const { liveFilesService } = await import('./live')
+    await liveFilesService().write({
       path: data.path,
       content: data.content,
       actor: { id: actor.id, handle: actor.handle },
@@ -62,7 +58,8 @@ export const deleteFile = createServerFn({ method: 'POST' })
   }))
   .handler(async ({ data }) => {
     const actor = await currentActor()
-    await getFilesService().remove({
+    const { liveFilesService } = await import('./live')
+    await liveFilesService().remove({
       path: data.path,
       actor: { id: actor.id, handle: actor.handle },
     })

@@ -23,13 +23,8 @@ export function resolveSessionFactory(): SessionFactory {
  * through the files service (so it sees the staged state like everyone else).
  */
 export function liveAgentMemoryLoader(db: Database): AgentMemoryLoader {
-  return (agentUserId) => {
-    // Lazy import files service to keep node builtins out of client bundle
-    interface LiveFilesModule {
-      liveFilesService: () => import('@hull/files/service').FilesService
-    }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { liveFilesService } = require('@hull/files/live') as LiveFilesModule
+  return async (agentUserId) => {
+    const { liveFilesService } = await import('@hull/files/live')
     return loadAgentMemory(db, liveFilesService(), agentUserId)
   }
 }

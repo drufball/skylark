@@ -1,6 +1,7 @@
 import { db } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
 
+import { createFilesRepo } from './git'
 import { createFilesService, type FilesService } from './service'
 
 /* v8 ignore start -- live wiring: the real repo config, the process singleton,
@@ -27,21 +28,6 @@ let singleton: FilesService | undefined
  */
 export function liveFilesService(): FilesService {
   if (!singleton) {
-    throw new Error(
-      'liveFilesService: not initialized. Call ensureLiveFilesService() first (boot.ts does this).',
-    )
-  }
-  return singleton
-}
-
-/**
- * Initialize the live files service asynchronously. Called by boot.ts.
- * Subsequent sync calls to liveFilesService() will return the initialized instance.
- */
-export async function ensureLiveFilesService(): Promise<FilesService> {
-  if (!singleton) {
-    // Lazy import git module to keep node builtins out of client bundle
-    const { createFilesRepo } = await import('./git')
     const repo = createFilesRepo({
       repoRoot: process.cwd(),
       filesDir: FILES_DIR,
