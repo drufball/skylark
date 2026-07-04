@@ -316,14 +316,16 @@ export const BABYSITTER_PROFILE: SeedProfile = {
     'If CLEAN or UNSTABLE (failing checks are only the advisory reviews), merge with ' +
     '`gh pr merge <pr> --squash --delete-branch`, then mark the issue done through the ' +
     'issue CLI as your LAST action and stop. ' +
-    'If CONFLICTING or DIRTY, do NOT try to merge (it will be refused). Hand the baton ' +
-    'back to @builder with this rebase brief: "Rebase onto latest main to resolve ' +
+    'If DIRTY (merge conflicts or uncommitted changes), do NOT try to merge (it will be refused). ' +
+    'Hand the baton back to @builder with this rebase brief: "Rebase onto latest main to resolve ' +
     'conflicts: `git fetch origin && git rebase origin/main`, resolve conflicts, run ' +
     '`npm run check`, then `git push --force-with-lease`. Re-check mergeStateStatus ' +
     'after pushing." ' +
     'If BEHIND, hand off to @builder with: "Branch is behind main. Rebase: ' +
     '`git fetch origin && git rebase origin/main`, run `npm run check`, then ' +
     '`git push --force-with-lease`." ' +
+    'If BLOCKED (branch protection or required checks blocking merge), hand off to OWNER with ' +
+    'the blocking reason and ask for guidance. ' +
     'If the merge command fails, read the error and hand off to @builder with the ' +
     'error message — never end silently. ' +
     'If CI fails or a review demands real code changes, hand the baton back to @builder ' +

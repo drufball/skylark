@@ -333,14 +333,16 @@ describe('agent profiles + extensions service', () => {
     expect(prompt).toContain('gh pr merge')
     expect(prompt).toContain('--squash --delete-branch')
 
-    // Must handle CONFLICTING/DIRTY → hand off to builder with rebase brief
-    expect(prompt).toContain('CONFLICTING')
+    // Must handle DIRTY → hand off to builder with rebase brief (conflicts/dirty working tree)
     expect(prompt).toContain('DIRTY')
     expect(prompt).toContain('git fetch origin && git rebase origin/main')
     expect(prompt).toContain('git push --force-with-lease')
 
     // Must handle BEHIND → rebase+push then re-check
     expect(prompt).toContain('BEHIND')
+
+    // Must handle BLOCKED → branch protection or required checks blocking merge
+    expect(prompt).toContain('BLOCKED')
 
     // Must handle merge command failures → hand off with error, never end silently
     expect(prompt).toContain('merge command fails')
