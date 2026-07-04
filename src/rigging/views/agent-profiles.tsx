@@ -5,6 +5,7 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
+import { inputClass as sharedInputClass } from '@rigging/components/ui/input'
 
 // The profiles half of the Agents surface: list the profiles that tell the
 // runtime *how* to boot an agent, and create/edit one. Presentational and
@@ -204,8 +205,7 @@ function ProfileForm({
     })
   }
 
-  const inputClass =
-    'w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring'
+  const inputClass = sharedInputClass()
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-5 p-6">

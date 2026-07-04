@@ -1,17 +1,12 @@
-import {
-  createFileRoute,
-  Link,
-  useNavigate,
-  useRouter,
-} from '@tanstack/react-router'
-import { useCallback, useState } from 'react'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 
 import { commentOnIssue, getThread, setIssueStatus } from '@hull/issues/server'
 import { issueTopic } from '@hull/issues/topic'
 import { setWatch, watchState } from '@hull/notifications/server'
 import { Dock } from '@rigging/views/dock'
 import { IssueThreadView } from '@rigging/views/issue-thread'
-import { useShipLog } from '@rigging/lib/use-ship-log'
+import { useServerAction } from '@rigging/lib/use-server-action'
+import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 
 // The thread route: a thin mount binding /issues/$id to the thread view. Live
 // updates subscribe to the issue's own topic, so comments, status changes, and
@@ -31,42 +26,22 @@ function ThreadRoute() {
   const { thread, watching } = Route.useLoaderData()
   const { id } = Route.useParams()
   const navigate = useNavigate()
-  const router = useRouter()
-  const [busy, setBusy] = useState(false)
+  const { busy, run } = useServerAction()
 
-  const onEvent = useCallback(() => {
-    void router.invalidate()
-  }, [router])
-  useShipLog([issueTopic(id)], onEvent)
+  useShipLogInvalidate([issueTopic(id)])
 
   async function comment(body: string) {
-    setBusy(true)
-    try {
-      await commentOnIssue({ data: { issueId: id, body } })
-      await router.invalidate()
-    } finally {
-      setBusy(false)
-    }
+    await run(() => commentOnIssue({ data: { issueId: id, body } }))
   }
 
   async function setStatus(status: string) {
-    setBusy(true)
-    try {
-      await setIssueStatus({ data: { issueId: id, status } })
-      await router.invalidate()
-    } finally {
-      setBusy(false)
-    }
+    await run(() => setIssueStatus({ data: { issueId: id, status } }))
   }
 
   async function toggleWatch() {
-    setBusy(true)
-    try {
-      await setWatch({ data: { topic: issueTopic(id), watching: !watching } })
-      await router.invalidate()
-    } finally {
-      setBusy(false)
-    }
+    await run(() =>
+      setWatch({ data: { topic: issueTopic(id), watching: !watching } }),
+    )
   }
 
   if (!thread) {

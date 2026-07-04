@@ -1,4 +1,3 @@
-import { useCallback, useState } from 'react'
 import {
   createFileRoute,
   Link,
@@ -10,7 +9,8 @@ import { deleteFile, listFiles, readFile, saveFile } from '@hull/files/server'
 import { FILE_TOPIC_PATTERN } from '@hull/files/topic'
 import { Dock } from '@rigging/views/dock'
 import { FilesView } from '@rigging/views/files'
-import { useShipLog } from '@rigging/lib/use-ship-log'
+import { useServerAction } from '@rigging/lib/use-server-action'
+import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 
 // The files route: a thin mount binding /files to the shared-documents view and
 // the files service. `?path=` selects the open file (deep-linkable). Live
@@ -44,12 +44,9 @@ function FilesRoute() {
   const { path: selected = null } = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
-  const [busy, setBusy] = useState(false)
+  const { busy, run } = useServerAction()
 
-  const onEvent = useCallback(() => {
-    void router.invalidate()
-  }, [router])
-  useShipLog([FILE_TOPIC_PATTERN], onEvent)
+  useShipLogInvalidate([FILE_TOPIC_PATTERN])
 
   function open(path: string | null) {
     void navigate({ search: { path: path ?? undefined } })
@@ -61,25 +58,17 @@ function FilesRoute() {
   }
 
   async function create(path: string) {
-    setBusy(true)
-    try {
+    await run(async () => {
       await saveFile({ data: { path, content: '' } })
-      await router.invalidate()
       open(path)
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   async function remove(path: string) {
-    setBusy(true)
-    try {
+    await run(async () => {
       await deleteFile({ data: { path } })
-      await router.invalidate()
       open(null)
-    } finally {
-      setBusy(false)
-    }
+    })
   }
 
   return (
