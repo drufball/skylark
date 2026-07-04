@@ -8,7 +8,11 @@ import { completeSimple } from '@earendil-works/pi-ai'
 
 import { systemDb } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
-import { findHostedModel } from '@hull/agent/models'
+import {
+  defaultModelRef,
+  gatewayApiKey,
+  resolveModel,
+} from '@hull/agent/models'
 import { createServerRuntime } from '@hull/agent/server-runtime'
 import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
 import { seedAndWireProfiles } from '@hull/agent/profiles'
@@ -130,27 +134,28 @@ export async function generateSlug(issue: IssueRow): Promise<string> {
   // "no model call, anywhere", not just "no coding-agent session".
   const model = process.env[FAKE_RUNTIME_ENV]
     ? undefined
-    : findHostedModel('anthropic', [
-        'claude-haiku-4-5',
-        'claude-3-5-haiku-latest',
-      ])
+    : resolveModel(defaultModelRef())
   return slugFromCompletion(
     issue.title,
     model &&
       (async () =>
         (
-          await completeSimple(model, {
-            systemPrompt:
-              'You produce a short git branch slug (2-4 words, lowercase, hyphenated, ' +
-              'no punctuation) for a software issue. Reply with ONLY the slug.',
-            messages: [
-              {
-                role: 'user',
-                content: `Title: ${issue.title}\n${issue.body}`.slice(0, 500),
-                timestamp: Date.now(),
-              },
-            ],
-          })
+          await completeSimple(
+            model,
+            {
+              systemPrompt:
+                'You produce a short git branch slug (2-4 words, lowercase, hyphenated, ' +
+                'no punctuation) for a software issue. Reply with ONLY the slug.',
+              messages: [
+                {
+                  role: 'user',
+                  content: `Title: ${issue.title}\n${issue.body}`.slice(0, 500),
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+            { apiKey: gatewayApiKey() },
+          )
         ).content),
   )
 }

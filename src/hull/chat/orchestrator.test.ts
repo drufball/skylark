@@ -17,13 +17,13 @@ import {
 import { addMessage, createChat, listMembers, listMessages } from './service'
 import { CHAT_MESSAGE_POSTED, chatTopic } from './topic'
 
-// Pin CHAT_MODEL to a sentinel that can't equal DEFAULT_MODEL: in a keyless
-// test environment the two constants coincide, so asserting the real value
-// couldn't catch a regression back to DEFAULT_MODEL. The sentinel can.
-const TEST_CHAT_MODEL = 'test/chat-strong-model'
+// Pin DEFAULT_MODEL to a sentinel so the assertion below checks the ambient
+// ship default is what actually lands on the session row — hermetic under
+// any SKYLARK_DEFAULT_MODEL in the machine's environment.
+const TEST_DEFAULT_MODEL = 'test/ship-default-model'
 vi.mock('@hull/agent/runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@hull/agent/runtime')>()),
-  CHAT_MODEL: 'test/chat-strong-model',
+  DEFAULT_MODEL: 'test/ship-default-model',
 }))
 
 /** The id of the chat.message_posted event addMessage emitted for a chat. */
@@ -152,13 +152,12 @@ describe('chat orchestrator', () => {
     ])
 
     // A backing session was created and recorded on the membership — and it
-    // boots on CHAT_MODEL (pinned to a sentinel above), not the ship default
-    // the builders use.
+    // boots on the ship default (pinned to a sentinel above).
     const members = await listMembers(db, chatId)
     const sessionId = members.find((m) => m.userId === tilde)?.sessionId
     expect(sessionId).not.toBeNull()
     const session = await getSession(db, defined(sessionId ?? undefined))
-    expect(session?.model).toBe(TEST_CHAT_MODEL)
+    expect(session?.model).toBe(TEST_DEFAULT_MODEL)
   })
 
   it('emits transient progress events that are NOT persisted', async () => {

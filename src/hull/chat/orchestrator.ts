@@ -10,7 +10,7 @@ import {
 import { errorMessage } from '@hull/lib/errors'
 import { actorCmd } from '@hull/lib/actor-cmd'
 import { createSession } from '@hull/agent/service'
-import { CHAT_MODEL, type RunsTurns } from '@hull/agent/runtime'
+import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { toChatItems } from '@hull/agent/transcript'
 import { chatProgressLine } from '@hull/agent/progress'
 
@@ -116,9 +116,8 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     const id = uuidv7()
     await createSession(db, {
       id,
-      // Chat is the planning surface — it gets the strong model (a profile's
-      // model override still wins at boot). Builders keep DEFAULT_MODEL.
-      model: CHAT_MODEL,
+      // The ship default (a profile's model override still wins at boot).
+      model: DEFAULT_MODEL,
       profileId: agent.profileId,
       agentUserId: agent.userId,
     })

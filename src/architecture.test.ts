@@ -59,8 +59,11 @@ function sourceFiles(): string[] {
 function importSpecifiers(source: string): string[] {
   const specs: string[] = []
   const patterns = [
-    // import/export from, but NOT "import type" or "export type"
-    /(?:^|\n)\s*(?:import|export)(?!\s+type\s)[^'"\n]*?from\s*['"]([^'"]+)['"]/g,
+    // import/export from, but NOT "import type" or "export type". `[^'"]`
+    // (not `[^'"\n]`) so prettier-wrapped multi-line imports count too — with
+    // the newline exclusion the graph silently dropped every wrapped import,
+    // which is most of them.
+    /(?:^|\n)\s*(?:import|export)(?!\s+type\s)[^'"]*?from\s*['"]([^'"]+)['"]/g,
     // Side-effect import
     /(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g,
     // NOTE: Deliberately omitting dynamic import() - see comment above
@@ -207,10 +210,13 @@ describe('architecture: boot is server-entry-only', () => {
 /**
  * Walk the import graph from a starting file, collecting all transitively
  * reached files. Returns the set of all files in the transitive closure.
+ * Nodes in `boundaries` are visited but not expanded — their own imports are
+ * outside the closure.
  */
 function transitiveImports(
   start: string,
   graph: Map<string, string[]>,
+  boundaries = new Set<string>(),
 ): Set<string> {
   const visited = new Set<string>()
   const stack = [start]
@@ -218,11 +224,31 @@ function transitiveImports(
     const node = stack.pop()
     if (!node || visited.has(node)) continue
     visited.add(node)
+    if (node !== start && boundaries.has(node)) continue
     for (const next of graph.get(node) ?? []) {
       if (!visited.has(next)) stack.push(next)
     }
   }
   return visited
+}
+
+/**
+ * createServerFn door modules. The TanStack Start compiler splits these for
+ * the client bundle — each server fn becomes an RPC stub and the handler's
+ * imports are dead-code-eliminated — so a door's server-side imports (the db
+ * client, node builtins) never reach the browser. The node-builtin closure
+ * tests treat doors as boundaries: importing a door from client code is the
+ * sanctioned path, so the walk stops there. (A door must still export ONLY
+ * server fns and types to client code — a plain value export would survive
+ * the split and drag its imports along; this approximation doesn't catch
+ * that.)
+ */
+function doorModules(files: string[]): Set<string> {
+  return new Set(
+    files.filter((file) =>
+      readFileSync(join(SRC, file), 'utf8').includes('createServerFn('),
+    ),
+  )
 }
 
 /**
@@ -258,14 +284,17 @@ describe('architecture: client code must not import node builtins', () => {
    */
   it('routes must not transitively import node:* builtins', () => {
     const graph = buildGraph()
+    const files = sourceFiles()
+    const doors = doorModules(files)
     const violations: string[] = []
 
-    for (const file of sourceFiles()) {
+    for (const file of files) {
       if (!file.startsWith('routes/')) continue
       if (file.includes('.test.')) continue
 
-      const closure = transitiveImports(file, graph)
+      const closure = transitiveImports(file, graph, doors)
       for (const reached of closure) {
+        if (doors.has(reached)) continue
         const builtins = importsNodeBuiltin(reached)
         if (builtins.length > 0) {
           violations.push(
@@ -282,14 +311,17 @@ describe('architecture: client code must not import node builtins', () => {
 
   it('rigging/views must not transitively import node:* builtins', () => {
     const graph = buildGraph()
+    const files = sourceFiles()
+    const doors = doorModules(files)
     const violations: string[] = []
 
-    for (const file of sourceFiles()) {
+    for (const file of files) {
       if (!file.startsWith('rigging/views/')) continue
       if (file.includes('.test.')) continue
 
-      const closure = transitiveImports(file, graph)
+      const closure = transitiveImports(file, graph, doors)
       for (const reached of closure) {
+        if (doors.has(reached)) continue
         const builtins = importsNodeBuiltin(reached)
         if (builtins.length > 0) {
           violations.push(

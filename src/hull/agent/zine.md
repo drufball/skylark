@@ -181,20 +181,16 @@ idle session, because the truth is in the database, not the registry.
   persistence contract is a foundation you shouldn't have to re-derive per ship.
   The _experience_ of talking to it (the chat UI) is rigging; the durable core
   is hull.
-- **Model resolution is provider-aware; the default is local-first.** A stored
-  model is a `provider/modelId` string resolved by [`models.ts`](models.ts): a
-  bare id is Anthropic (back-compat with pre-prefix rows), `ollama/…` builds a
-  local OpenAI-compatible model pointed at the local Ollama server. The default
-  (`DEFAULT_MODEL`) comes from `defaultModelRef()` reading
-  `SKYLARK_DEFAULT_MODEL` — set by the hoist bring-up to the Ollama model that
-  fits the machine, or by a crew member to a hosted model (e.g.
-  `anthropic/claude-sonnet-4-5`) — and falls back to a small local model so a
-  fresh clone runs with no API key. Pinned per session and overridable per
-  profile. Chat sessions are the exception: they boot with `CHAT_MODEL`
-  (`chatModelRef` in [`models.ts`](models.ts)) — `SKYLARK_CHAT_MODEL`, else the
-  preferred hosted model when its provider key is configured, else the local
-  default — because chat is the planning surface and gets the strong model while
-  builders stay local.
+- **Every model call goes through the LLM gateway.** A stored model is a gateway
+  model name resolved by [`models.ts`](models.ts) into an OpenAI-compatible pi
+  `Model` pointed at the LiteLLM proxy (`docker compose up litellm`;
+  `SKYLARK_GATEWAY_URL` overrides the endpoint). Which provider serves a name —
+  Anthropic, OpenAI, Together, a local server — is `litellm.config.yaml`'s
+  business, so swapping providers never touches app code, and provider keys are
+  read by the gateway container alone. The default (`DEFAULT_MODEL`) comes from
+  `defaultModelRef()` reading `SKYLARK_DEFAULT_MODEL`, falling back to the
+  strong hosted default (`claude-sonnet-5`). One default everywhere — chat,
+  builders, the slug call; pinned per session and overridable per profile.
 - **A profile decides how an agent boots; the runtime is one engine.** Tools,
   prompt, context, skills, extensions, model — all data on a profile row, not
   hardcoded. One runtime drives a read-only chat pilot and a full builder alike.
@@ -221,6 +217,11 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **LLM gateway** — model resolution moves behind the LiteLLM gateway: one
+  OpenAI-compatible endpoint, model names mapped to providers in
+  `litellm.config.yaml`. The Ollama/local-model path and the
+  `CHAT_MODEL`/`SKYLARK_CHAT_MODEL` split retire; the ship default is
+  `claude-sonnet-5`.
 - **#49** — The web doors are entitlement-gated by session visibility (RLS reads
   under `withCurrentActor`; `send`/`cancel` via `canSeeTopic`).
 - **#27** — Progress primitives extracted into `progress.ts`, shared by chat,

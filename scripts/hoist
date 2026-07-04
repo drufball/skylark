@@ -9,30 +9,26 @@ cd "$(dirname "$0")/.."
 
 [ -d node_modules ] || ./scripts/setup
 
-# Bring up Postgres and WAIT for it to be healthy — db:up runs
-# `docker compose up -d --wait db`, which blocks on the pg_isready
-# healthcheck, so migrate/seed below can't race a still-booting server
-# (#u4ct). (Assumes Docker is running — making hoist start Docker itself is
-# a later issue.) If it can't, sail anyway: the app degrades to
-# "database: down" rather than refusing to start.
-if npm run db:up; then
+# Bring up Postgres and the LLM gateway, WAITING for health — `up --wait`
+# blocks on each service's healthcheck, so migrate/seed below can't race a
+# still-booting server (#u4ct). (Assumes Docker is running — making hoist
+# start Docker itself is a later issue.) If it can't, sail anyway: the app
+# degrades to "database: down" / "gateway: unreachable" rather than refusing
+# to start.
+if docker compose up -d --wait; then
   # Migrate and seed the crew so a fresh ship boots with a resolvable actor —
   # currentActor() needs at least the operator aboard. Both are idempotent, and
   # best-effort: a hiccup here never blocks `npm run dev`.
   npm run db:migrate || echo "⚠ couldn't apply migrations — continuing anyway"
   npm run users seed || echo "⚠ couldn't seed the crew — continuing anyway"
 else
-  echo "⚠ couldn't start Postgres — is Docker running? continuing anyway"
+  echo "⚠ couldn't start Postgres + gateway — is Docker running? continuing anyway"
 fi
 
-# Bring up a local model so the ship is useful with no API key (local-first).
-# Best-effort, like Postgres: a failure here never blocks `npm run dev`.
-./scripts/ensure-ollama || echo "⚠ couldn't ready a local model — continuing anyway"
-
-# Export the default model ensure-ollama just selected so the dev server inherits
-# it at spawn. DEFAULT_MODEL is read once when the agent module is imported, so
-# the value must be in the environment before then; exporting here guarantees
-# that regardless of when the framework loads .env. (CLIs get it from .env via
+# Export the default model override so the dev server inherits it at spawn.
+# DEFAULT_MODEL is read once when the agent module is imported, so the value
+# must be in the environment before then; exporting here guarantees that
+# regardless of when the framework loads .env. (CLIs get it from .env via
 # --env-file; this line is the dev-server path, since a child script can't set
 # its parent's env.)
 if [ -f .env ] && grep -q '^SKYLARK_DEFAULT_MODEL=' .env; then

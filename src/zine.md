@@ -83,9 +83,9 @@ in-memory PGlite — real Postgres, no external database.
 - **Tests depend on no external services.** Database tests use PGlite, and the
   type path stays codegen-free — fewer moving parts between a change and seeing
   it work.
-- **Only Postgres is containerized.** The app, Ollama, and pi.dev run natively,
-  so local models stay reachable; Postgres runs in Docker for a pinned,
-  disposable database.
+- **The app runs natively; its dependencies run in Docker.** Postgres for a
+  pinned, disposable database, and the LiteLLM gateway so every model call goes
+  through one OpenAI-compatible endpoint whose providers are config, not code.
 - **One npm package, no workspaces.**
 
 ## Changelog

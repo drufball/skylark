@@ -13,13 +13,12 @@ import {
   listAgentExtensions,
   listAgentProfiles,
   listAgentSessions,
+  listGatewayModels,
   saveAgentProfile,
   sendAgentMessage,
 } from '@hull/agent/server'
 import { agentMemoryIndexPath } from '@hull/agent/memory-paths'
 import { sessionTopic } from '@hull/agent/topic'
-import { listLocalModels } from '@hull/local-model/server'
-import { modelPickerOptions } from '@hull/local-model/ollama-client'
 import { listPlaybooksView, savePlaybook } from '@hull/issues/server'
 import { createAgentUser, listCrew, updateAgentUser } from '@hull/users/server'
 import { AgentChatView, type SessionSummary } from '@rigging/views/agent-chat'
@@ -64,17 +63,21 @@ export const Route = createFileRoute('/agents')({
   }),
   loaderDeps: ({ search }) => ({ session: search.session }),
   loader: async ({ deps }) => {
-    const [sessions, profiles, extensions, local, def, crew, playbooks] =
+    const [sessions, profiles, extensions, gateway, def, crew, playbooks] =
       await Promise.all([
         listAgentSessions(),
         listAgentProfiles(),
         listAgentExtensions(),
-        listLocalModels(),
+        listGatewayModels(),
         getDefaultModel(),
         listCrew(),
         listPlaybooksView(),
       ])
-    const modelOptions = modelPickerOptions(def.ref, local.installed)
+    // The default first, then whatever else the gateway serves.
+    const modelOptions = [
+      def.ref,
+      ...gateway.models.filter((m) => m !== def.ref),
+    ]
     const chat = deps.session
       ? await getAgentChat({ data: deps.session })
       : null
