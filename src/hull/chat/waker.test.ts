@@ -190,36 +190,76 @@ describe('createAgentWaker', () => {
       spy.mockRestore()
     }
   })
-})
 
-it('prevents overlapping wakes when notifications arrive during fire execution', async () => {
-  // Simulate a long-running wake that takes time to complete
-  deps.wake = (chatId, agentUserId, briefing) => {
-    return new Promise((resolve) => {
-      // Simulate long sleep
-      setTimeout(() => resolve(), 5000)
+  it('never overlaps wakes: a notification during a slow delivery waits, then gets its own wake', async () => {
+    // The #75fq race: fire() clears the timer at its start, so under the old
+    // code a notification landing DURING a slow deps.wake armed a second
+    // timer and a second wake overlapped the first. Now it must wait for
+    // delivery to finish — and then still be delivered, never dropped.
+    const first = notification()
+    deps.unread = [first]
+    // A slow wake: resolves 5s after being called (fake-timer time).
+    deps.wake = (chatId, agentUserId, briefing) => {
+      deps.wakes.push({ chatId, agentUserId, briefing })
+      return new Promise((resolve) => setTimeout(resolve, 5_000))
+    }
+    const waker = createAgentWaker(deps)
+    waker.onNotified(first)
+
+    // Enter fire: the timer fires at 10s, the wake is now in flight.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(deps.wakes).toHaveLength(1)
+
+    // A second notification lands mid-delivery. Old code: second timer.
+    const second = notification({ type: 'issue.commented' })
+    deps.unread.push(second)
+    waker.onNotified(second)
+
+    // Let the first delivery finish. Nothing may overlap it.
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(deps.wakes).toHaveLength(1)
+
+    // Delivery finishing re-armed one fresh window for the mid-flight
+    // arrival: one more debounce later it gets its own wake.
+    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.waitFor(() => {
+      expect(deps.wakes).toHaveLength(2)
     })
-  }
-  deps.listUnread = () =>
-    Promise.resolve([
-      notification({ type: 'issue.status_changed' }),
-      notification({ type: 'issue.commented' }),
-    ])
+    expect(deps.wakes[1].briefing).toContain('describe(issue.commented)')
+    // …and once ITS slow delivery finishes, the batch is consumed.
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(deps.unread).toHaveLength(0)
+  })
 
-  const waker = createAgentWaker(deps)
-  // Send first notification - this starts the timer
-  waker.onNotified(notification())
+  it('a failed wake cannot wedge the agent: the in-flight guard always clears', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      deps.wake = () => Promise.reject(new Error('session exploded'))
+      const waker = createAgentWaker(deps)
+      const first = notification()
+      deps.unread = [first]
+      waker.onNotified(first)
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.waitFor(() => {
+        expect(spy).toHaveBeenCalled()
+      })
 
-  // Advance time to fire the first wake (but it's still running)
-  await vi.advanceTimersByTimeAsync(9999)
-
-  // Send a second notification during processing - it should not create
-  // an overlapping timer but instead be queued for the next round
-  waker.onNotified(notification())
-
-  // Advance more time to let first wake complete
-  await vi.advanceTimersByTimeAsync(5001)
-
-  // Should only have one wake, not two
-  expect(deps.wakes).toHaveLength(1)
+      // The guard must not outlive the failed fire: a later notification
+      // arms a fresh timer and delivers the backlog.
+      deps.wake = (chatId, agentUserId, briefing) => {
+        deps.wakes.push({ chatId, agentUserId, briefing })
+        return Promise.resolve()
+      }
+      const second = notification()
+      deps.unread.push(second)
+      waker.onNotified(second)
+      await vi.advanceTimersByTimeAsync(10_000)
+      await vi.waitFor(() => {
+        expect(deps.wakes).toHaveLength(1)
+      })
+      expect(deps.wakes[0].briefing).toContain('2 updates')
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })
