@@ -717,4 +717,69 @@ describe('notifications service', () => {
       spy.mockRestore()
     }
   })
+
+  it('reconcile delivers unread notifications to hooks (reload recovery for the waker)', async () => {
+    // Scenario: reactor was alive and created notification rows, but the
+    // in-process hook delivery was lost (Vite reload killed the waker's
+    // debounce timer). On boot, reconcile should re-deliver unread rows
+    // through the same onNotified hook so the waker gets another chance.
+    const issue = await createIssue(db, { title: 'x', authorId: bob })
+    await watchTopic(db, alice, issueTopic(issue.id))
+
+    // First reactor: live delivery creates the notification row and calls hook
+    const firstDelivered: string[] = []
+    const reactor1 = createNotificationsReactor({
+      db,
+      onNotified: (n) => firstDelivered.push(n.userId),
+    })
+    await addComment(db, { issueId: issue.id, authorId: bob, body: 'hi' })
+    const events = await listEventsSince(db, {
+      topicPatterns: [issueTopic(issue.id)],
+      audience: 'public',
+    })
+    const comment = events.find((e) => e.type === 'issue.commented')
+    await reactor1.handleBusNote({ id: defined(comment).id, type: 'x' })
+    expect(firstDelivered).toEqual([alice])
+    expect(await unreadCount(db, alice)).toBe(1)
+
+    // Simulate reload: second reactor with fresh hook, reconcile re-delivers
+    const secondDelivered: string[] = []
+    const reactor2 = createNotificationsReactor({
+      db,
+      onNotified: (n) => secondDelivered.push(n.userId),
+    })
+    await reactor2.reconcile()
+
+    // The unread notification should be re-delivered to the new hook
+    expect(secondDelivered).toEqual([alice])
+    expect(await unreadCount(db, alice)).toBe(1) // still unread until consumed
+  })
+
+  it('reconcile ignores unread notifications beyond the 24-hour horizon', async () => {
+    // Old unread notifications (beyond 24 hours) are either already consumed
+    // or stale enough to skip — reconcile shouldn't re-deliver them.
+    const { notifications } = await import('./schema')
+    await db.insert(notifications).values({
+      id: uuidv7(),
+      userId: alice,
+      eventId: 'old-event',
+      type: 'issue.commented',
+      topic: 'issue:old',
+      payload: {},
+      actorId: bob,
+      readAt: null, // unread
+      createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000), // 48 hours ago
+    })
+
+    const delivered: string[] = []
+    const reactor = createNotificationsReactor({
+      db,
+      onNotified: (n) => delivered.push(n.userId),
+    })
+    await reactor.reconcile()
+
+    // The old notification should NOT be re-delivered
+    expect(delivered).toEqual([])
+    expect(await unreadCount(db, alice)).toBe(1) // still exists, just not re-delivered
+  })
 })

@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNull } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import {
@@ -222,6 +222,25 @@ export async function listUnread(
     .orderBy(notifications.id)
 }
 
+/**
+ * All unread notifications across all users, created within a time window.
+ * Used by reconcile to re-deliver notifications that might have been created
+ * during a reload (when hooks weren't registered).
+ */
+export async function listRecentUnread(
+  db: Database,
+  horizonMs: number,
+): Promise<NotificationRow[]> {
+  const cutoff = new Date(Date.now() - horizonMs)
+  return db
+    .select()
+    .from(notifications)
+    .where(
+      and(isNull(notifications.readAt), gt(notifications.createdAt, cutoff)),
+    )
+    .orderBy(notifications.id)
+}
+
 export async function unreadCount(
   db: Database,
   userId: string,
@@ -358,15 +377,23 @@ export function createNotificationsReactor(deps: {
   }
 
   /**
-   * Startup recovery for WATCHES only: replay the durable issue events and
-   * re-apply the acting-auto-watches, so an issue filed while no reactor was
-   * subscribed (a fresh process, a CLI hit before any door) still ends up
-   * watched by its actors — a watch is durable intent and must not be lost.
-   * Notification fan-out is deliberately NOT replayed: old news would flood
-   * inboxes for watches added later, and anything a restart missed is still
-   * visible on the issue itself.
+   * Startup recovery: replay the durable issue events and re-apply the
+   * acting-auto-watches, so an issue filed while no reactor was subscribed
+   * (a fresh process, a CLI hit before any door) still ends up watched by its
+   * actors — a watch is durable intent and must not be lost.
+   *
+   * Also re-delivers recent unread notifications through the onNotified hook:
+   * if the reactor created a notification row during a Vite reload window
+   * (before the hook was registered or while the waker's timer was lost),
+   * reconcile gives the hook another chance. This is the #l0di fix: the waker
+   * rides onNotified, and without re-delivery, notifications created during
+   * reload sit unread forever with no wake.
+   *
+   * The 24-hour horizon balances reload recovery vs. old news: a notification
+   * older than that is either already consumed or stale enough to skip.
    */
   async function reconcile(): Promise<void> {
+    // Replay watches from the durable log
     let sinceId: string | undefined
     for (;;) {
       const page = await listEventsSince(db, {
@@ -393,6 +420,20 @@ export function createNotificationsReactor(deps: {
         }
       }
       if (page.length < REPLAY_PAGE_SIZE) break
+    }
+
+    // Re-deliver recent unread notifications through the hook (reload recovery)
+    const HORIZON_MS = 24 * 60 * 60 * 1000 // 24 hours
+    const unread = await listRecentUnread(db, HORIZON_MS)
+    for (const notification of unread) {
+      try {
+        deps.onNotified?.(notification)
+      } catch (err) {
+        // Delivery is best-effort; the row is already durable.
+        console.error(
+          `reconcile notification delivery failed: ${errorMessage(err)}`,
+        )
+      }
     }
   }
 
