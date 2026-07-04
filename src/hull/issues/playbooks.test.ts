@@ -9,6 +9,7 @@ import { createUser, getUserByHandle, seedCrew } from '@hull/users/service'
 import {
   BUILD_PLAYBOOK_NAME,
   getPlaybookByName,
+  instructionsFor,
   listPlaybooks,
   playbookFor,
   requirePlaybook,
@@ -48,7 +49,38 @@ describe('validatePlaybookInput', () => {
       description: '',
       memberIds: ['u1'],
       entrypointId: 'u1',
+      memberInstructions: {},
     })
+  })
+
+  it('keeps a well-shaped memberInstructions map, dropping blank entries', () => {
+    expect(
+      validatePlaybookInput({
+        name: 'review',
+        memberIds: ['u1', 'u2'],
+        entrypointId: 'u1',
+        memberInstructions: { u1: 'lead the review', u2: '   ' },
+      }).memberInstructions,
+    ).toEqual({ u1: 'lead the review' })
+  })
+
+  it('rejects a memberInstructions that is not a map of strings', () => {
+    expect(() =>
+      validatePlaybookInput({
+        name: 'x',
+        memberIds: ['u1'],
+        entrypointId: 'u1',
+        memberInstructions: ['not', 'a', 'map'],
+      }),
+    ).toThrow(/memberInstructions must be a map/)
+    expect(() =>
+      validatePlaybookInput({
+        name: 'x',
+        memberIds: ['u1'],
+        entrypointId: 'u1',
+        memberInstructions: { u1: 42 },
+      }),
+    ).toThrow(/memberInstructions values must be strings/)
   })
 
   it('keeps a string description and drops a non-string one', () => {
@@ -216,6 +248,44 @@ describe('upsertPlaybook', () => {
       }),
     ).rejects.toThrow(/agent/i)
   })
+
+  it('persists a per-member role brief, keyed by user id', async () => {
+    const p = await upsertPlaybook(db, {
+      name: 'triage',
+      memberIds: [builderId, tildeId],
+      entrypointId: tildeId,
+      memberInstructions: {
+        [tildeId]: 'Read the report, file follow-up issues, never fix code.',
+      },
+    })
+    expect(p.memberInstructions).toEqual({
+      [tildeId]: 'Read the report, file follow-up issues, never fix code.',
+    })
+    expect(instructionsFor(p, tildeId)).toBe(
+      'Read the report, file follow-up issues, never fix code.',
+    )
+    expect(instructionsFor(p, builderId)).toBeUndefined()
+  })
+
+  it('refuses an instruction keyed to an id outside the roster', async () => {
+    await expect(
+      upsertPlaybook(db, {
+        name: 'stray',
+        memberIds: [builderId],
+        entrypointId: builderId,
+        memberInstructions: { [tildeId]: 'not on this roster' },
+      }),
+    ).rejects.toThrow(/not on the roster/i)
+  })
+
+  it('defaults memberInstructions to empty when omitted', async () => {
+    const p = await upsertPlaybook(db, {
+      name: 'plain',
+      memberIds: [builderId],
+      entrypointId: builderId,
+    })
+    expect(p.memberInstructions).toEqual({})
+  })
 })
 
 describe('seedPlaybooks', () => {
@@ -247,6 +317,7 @@ describe('seedPlaybooks', () => {
       description: 'our build, our rules',
       memberIds: [builderId, tildeId],
       entrypointId: builderId,
+      memberInstructions: { [tildeId]: 'watch for regressions' },
     })
 
     await seedPlaybooks(db) // an ordinary boot
@@ -258,6 +329,7 @@ describe('seedPlaybooks', () => {
     expect(build.memberIds).toContain(tildeId)
     expect(build.description).toBe('our build, our rules')
     expect(build.entrypointId).toBe(builderId)
+    expect(instructionsFor(build, tildeId)).toBe('watch for regressions')
   })
 
   it('boot seeding never clobbers the captain’s edits — ensure, don’t converge', async () => {

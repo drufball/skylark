@@ -47,6 +47,18 @@ export const playbooks = pgTable('playbooks', {
   memberIds: jsonb('member_ids').$type<string[]>().notNull().default([]),
   /** The member whose session a → building seeds (→ users.id). */
   entrypointId: text('entrypoint_id').notNull(),
+  /**
+   * Optional per-member brief for this playbook, keyed by user id: what THIS
+   * agent's role is on THIS strategy, reusable across every issue that picks
+   * it. Folded into the entrypoint's seed prompt and a baton-pass prompt when
+   * present; a member with none gets the plain contract. Distinct from the
+   * agent's own systemPrompt (identity, ship-wide) — this is role-in-strategy,
+   * task-agnostic.
+   */
+  memberInstructions: jsonb('member_instructions')
+    .$type<Record<string, string>>()
+    .notNull()
+    .default({}),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),

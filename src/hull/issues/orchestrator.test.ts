@@ -28,7 +28,7 @@ import {
 } from './orchestrator'
 import { buildPrompt, generalPrompt } from './prompts'
 import type { IssueStatus } from './schema'
-import { getPlaybookByName, seedPlaybooks } from './playbooks'
+import { getPlaybookByName, seedPlaybooks, upsertPlaybook } from './playbooks'
 import {
   addComment,
   createIssue,
@@ -1556,6 +1556,59 @@ describe('orchestrator playbooks', () => {
     expect(runtime.turns[0].text).toContain(`SKYLARK_ACTOR=${hand.id}`)
     // No build script: the general playbook has no build-feature contract.
     expect(runtime.turns[0].text).not.toContain('build-feature')
+  })
+
+  it('folds a member’s role-in-strategy brief into a baton pass on that playbook', async () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const { hand } = await seeded()
+    const tilde = defined(await getUserByHandle(db, 'tilde'))
+    const triage = await upsertPlaybook(db, {
+      name: 'triage',
+      memberIds: [hand.id, tilde.id],
+      entrypointId: hand.id,
+      memberInstructions: {
+        [tilde.id]:
+          'You review for architecture soundness only — leave everything else to others.',
+      },
+    })
+    const issue = await createIssue(db, {
+      title: 'Review the new gateway',
+      authorId,
+      nano: 'pb04',
+      playbookId: triage.id,
+    })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await orch.onStatusChanged(issue.id, 'building')
+
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: hand.id,
+      target: 'tilde',
+      message: 'Please take a look',
+    })
+    const events = await listEventsSince(db, {
+      topicPatterns: [`issue:${issue.id}`],
+      audience: 'public',
+    })
+    const event = defined(events.find((e) => e.type === ISSUE_HANDOFF))
+    await orch.handleBusNote({
+      id: event.id,
+      type: event.type,
+      topic: `issue:${issue.id}`,
+    })
+
+    // Turn 1 seeded the entrypoint (hand); turn 2 is the baton to tilde,
+    // carrying tilde's role-in-strategy brief from the playbook.
+    expect(runtime.turns).toHaveLength(2)
+    expect(runtime.turns[1].text).toContain('Your role on this playbook:')
+    expect(runtime.turns[1].text).toContain(
+      'You review for architecture soundness only',
+    )
   })
 
   it('a default (no-playbook) issue still runs the build contract via the builder', async () => {

@@ -25,6 +25,7 @@ function playbook(over: Partial<PlaybookSummary> = {}): PlaybookSummary {
     memberHandles: ['builder'],
     entrypointId: 'u-builder',
     entrypointHandle: 'builder',
+    memberInstructions: {},
     ...over,
   }
 }
@@ -69,7 +70,43 @@ describe('Playbooks', () => {
       description: '',
       memberIds: ['u-hand', 'u-tilde'],
       entrypointId: 'u-hand',
+      memberInstructions: {},
     })
+  })
+
+  it('sets a per-member role brief, trimmed, only for members on the roster', () => {
+    const { onSave } = renderView()
+    fireEvent.click(screen.getByText('New playbook'))
+    fireEvent.change(screen.getByLabelText('Playbook name'), {
+      target: { value: 'review' },
+    })
+    fireEvent.click(screen.getByLabelText('@hand'))
+    fireEvent.change(screen.getByLabelText('Role for @hand on this playbook'), {
+      target: { value: '  Review for security holes only.  ' },
+    })
+    fireEvent.change(screen.getByLabelText('Entrypoint agent'), {
+      target: { value: 'u-hand' },
+    })
+    fireEvent.click(screen.getByText('Save playbook'))
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberInstructions: { 'u-hand': 'Review for security holes only.' },
+      }),
+    )
+  })
+
+  it('loads existing role briefs when editing a playbook', () => {
+    renderView({
+      playbooks: [
+        playbook({ memberInstructions: { 'u-builder': 'lead the build' } }),
+      ],
+    })
+    fireEvent.click(screen.getByText('build'))
+    expect(
+      screen.getByLabelText<HTMLTextAreaElement>(
+        'Role for @builder on this playbook',
+      ).value,
+    ).toBe('lead the build')
   })
 
   it('cannot save without an entrypoint from the roster', () => {

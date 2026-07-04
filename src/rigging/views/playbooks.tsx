@@ -19,6 +19,8 @@ export interface PlaybookSummary {
   memberHandles: string[]
   entrypointId: string
   entrypointHandle: string
+  /** Per-member role-in-strategy brief, keyed by user id. */
+  memberInstructions: Record<string, string>
 }
 
 /** An agent crew member the roster picker offers. */
@@ -32,6 +34,7 @@ export interface PlaybookFormValue {
   description: string
   memberIds: string[]
   entrypointId: string
+  memberInstructions: Record<string, string>
 }
 
 export interface PlaybooksProps {
@@ -161,6 +164,9 @@ function PlaybookForm({
   const [description, setDescription] = useState(initial?.description ?? '')
   const [memberIds, setMemberIds] = useState<string[]>(initial?.memberIds ?? [])
   const [entrypointId, setEntrypointId] = useState(initial?.entrypointId ?? '')
+  const [memberInstructions, setMemberInstructions] = useState<
+    Record<string, string>
+  >(initial?.memberInstructions ?? {})
 
   const valid =
     name.trim().length > 0 &&
@@ -225,6 +231,35 @@ function PlaybookForm({
           ))}
         </div>
       </fieldset>
+      {memberIds.length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Role briefs (optional)
+          </legend>
+          {agents
+            .filter((a) => memberIds.includes(a.id))
+            .map((a) => (
+              <label key={a.id} className="flex flex-col gap-1 text-sm">
+                <span className="text-xs text-muted-foreground">
+                  Role for @{a.handle} on this playbook
+                </span>
+                <Textarea
+                  value={memberInstructions[a.id] ?? ''}
+                  onChange={(e) => {
+                    setMemberInstructions((prev) => ({
+                      ...prev,
+                      [a.id]: e.target.value,
+                    }))
+                  }}
+                  placeholder="What this agent specifically does here, reused every time this playbook runs — leave blank for the plain contract"
+                  rows={2}
+                  className="resize-none"
+                  aria-label={`Role for @${a.handle} on this playbook`}
+                />
+              </label>
+            ))}
+        </fieldset>
+      )}
       <label className="flex items-center gap-2 text-sm">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Starts with
@@ -254,11 +289,17 @@ function PlaybookForm({
         <Button
           disabled={saving || !valid}
           onClick={() => {
+            const instructions: Record<string, string> = {}
+            for (const id of memberIds) {
+              const text = (memberInstructions[id] ?? '').trim()
+              if (text) instructions[id] = text
+            }
             onSave({
               name: name.trim(),
               description: description.trim(),
               memberIds,
               entrypointId,
+              memberInstructions: instructions,
             })
           }}
         >

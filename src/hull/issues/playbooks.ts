@@ -28,15 +28,22 @@ export interface PlaybookInput {
   memberIds: string[]
   /** The member whose session a → building seeds. Must be in memberIds. */
   entrypointId: string
+  /**
+   * Optional per-member brief, keyed by user id — every key must be in
+   * memberIds (checked in validateRoster). Omitted/empty means every member
+   * gets the plain contract.
+   */
+  memberInstructions?: Record<string, string>
 }
 
 /**
  * Shape-check an untrusted playbook input (the web door's editor payload)
  * into a PlaybookInput: a non-blank name (trimmed), memberIds a list of
- * strings, entrypointId a string; a non-string description becomes ''.
- * Semantic validation (real agents, entrypoint on the roster) stays in
- * validateRoster, run by upsertPlaybook. Throws messages meant for whoever
- * typed the form.
+ * strings, entrypointId a string, memberInstructions a string-keyed record of
+ * strings; a non-string description becomes ''. Semantic validation (real
+ * agents, entrypoint on the roster, instructions keyed to actual members)
+ * stays in validateRoster, run by upsertPlaybook. Throws messages meant for
+ * whoever typed the form.
  */
 export function validatePlaybookInput(input: unknown): PlaybookInput {
   const data = input as {
@@ -44,6 +51,7 @@ export function validatePlaybookInput(input: unknown): PlaybookInput {
     description?: unknown
     memberIds?: unknown
     entrypointId?: unknown
+    memberInstructions?: unknown
   }
   if (typeof data.name !== 'string' || !data.name.trim())
     throw new Error('A playbook needs a name.')
@@ -54,11 +62,26 @@ export function validatePlaybookInput(input: unknown): PlaybookInput {
     throw new Error('memberIds must be a list of user ids.')
   if (typeof data.entrypointId !== 'string')
     throw new Error('entrypointId must be a user id.')
+  const memberInstructions: Record<string, string> = {}
+  if (data.memberInstructions !== undefined) {
+    if (
+      typeof data.memberInstructions !== 'object' ||
+      data.memberInstructions === null ||
+      Array.isArray(data.memberInstructions)
+    )
+      throw new Error('memberInstructions must be a map of user id to text.')
+    for (const [id, text] of Object.entries(data.memberInstructions)) {
+      if (typeof text !== 'string')
+        throw new Error('memberInstructions values must be strings.')
+      if (text.trim()) memberInstructions[id] = text
+    }
+  }
   return {
     name: data.name.trim(),
     description: typeof data.description === 'string' ? data.description : '',
     memberIds: data.memberIds as string[],
     entrypointId: data.entrypointId,
+    memberInstructions,
   }
 }
 
@@ -108,6 +131,13 @@ async function validateRoster(db: Database, input: PlaybookInput) {
   if (!input.memberIds.includes(input.entrypointId)) {
     throw new Error('The entrypoint must be one of the playbook members.')
   }
+  for (const id of Object.keys(input.memberInstructions ?? {})) {
+    if (!input.memberIds.includes(id)) {
+      throw new Error(
+        `memberInstructions names ${id}, who is not on the roster.`,
+      )
+    }
+  }
 }
 
 /**
@@ -126,6 +156,7 @@ export async function upsertPlaybook(
     description: input.description ?? '',
     memberIds: input.memberIds,
     entrypointId: input.entrypointId,
+    memberInstructions: input.memberInstructions ?? {},
   }
   if (existing) {
     const [row] = await db
@@ -164,6 +195,18 @@ export async function getPlaybookByName(
 /** Every playbook, oldest first (UUIDv7 ids are time-ordered). */
 export async function listPlaybooks(db: Database): Promise<PlaybookRow[]> {
   return db.select().from(playbooks).orderBy(playbooks.id)
+}
+
+/**
+ * This member's role-in-strategy brief for the playbook, or undefined when
+ * none was set — the caller folds it into the seed/handoff prompt when
+ * present, and skips the paragraph otherwise.
+ */
+export function instructionsFor(
+  playbook: PlaybookRow,
+  userId: string,
+): string | undefined {
+  return playbook.memberInstructions[userId]
 }
 
 /**
@@ -244,6 +287,7 @@ export async function seedPlaybooks(
           description: existing.description,
           memberIds: [...existing.memberIds, ...missing],
           entrypointId: existing.entrypointId,
+          memberInstructions: existing.memberInstructions,
         })
       }
       continue
