@@ -192,34 +192,34 @@ describe('createAgentWaker', () => {
   })
 })
 
-  it('prevents overlapping wakes when notifications arrive during fire execution', async () => {
-    // Simulate a long-running wake that takes time to complete
-    deps.wake = (chatId, agentUserId, briefing) => {
-      return new Promise(resolve => {
-        // Simulate long sleep
-        setTimeout(() => resolve(), 5000)
-      })
-    }
-    deps.listUnread = () => Promise.resolve([
+it('prevents overlapping wakes when notifications arrive during fire execution', async () => {
+  // Simulate a long-running wake that takes time to complete
+  deps.wake = (chatId, agentUserId, briefing) => {
+    return new Promise((resolve) => {
+      // Simulate long sleep
+      setTimeout(() => resolve(), 5000)
+    })
+  }
+  deps.listUnread = () =>
+    Promise.resolve([
       notification({ type: 'issue.status_changed' }),
       notification({ type: 'issue.commented' }),
     ])
-    
-    const waker = createAgentWaker(deps)
-    // Send first notification - this starts the timer
-    waker.onNotified(notification())
-    
-    // Advance time to fire the first wake (but it's still running)
-    await vi.advanceTimersByTimeAsync(9999) 
-    
-    // Send a second notification during processing - it should not create 
-    // an overlapping timer but instead be queued for the next round
-    waker.onNotified(notification())
-    
-    // Advance more time to let first wake complete
-    await vi.advanceTimersByTimeAsync(5001)
-    
-    // Should only have one wake, not two
-    expect(deps.wakes).toHaveLength(1)
-  })
+
+  const waker = createAgentWaker(deps)
+  // Send first notification - this starts the timer
+  waker.onNotified(notification())
+
+  // Advance time to fire the first wake (but it's still running)
+  await vi.advanceTimersByTimeAsync(9999)
+
+  // Send a second notification during processing - it should not create
+  // an overlapping timer but instead be queued for the next round
+  waker.onNotified(notification())
+
+  // Advance more time to let first wake complete
+  await vi.advanceTimersByTimeAsync(5001)
+
+  // Should only have one wake, not two
+  expect(deps.wakes).toHaveLength(1)
 })
