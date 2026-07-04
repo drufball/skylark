@@ -92,11 +92,10 @@ describe('describeNotification', () => {
     // watchers too, so "handed this to YOU" would lie to everyone but the owner.
     expect(
       describeNotification({
-        type: 'issue.handoff',
+        type: 'issue.owner_ping',
         topic: 'issue:aa11',
         payload: {
           toHandle: 'drufball',
-          toOwner: true,
           message: 'checks green — merge?',
         },
         actorHandle: 'builder',
@@ -108,11 +107,10 @@ describe('describeNotification', () => {
 
   it('keeps a handoff line to one bounded line, however long the message', () => {
     const line = describeNotification({
-      type: 'issue.handoff',
+      type: 'issue.owner_ping',
       topic: 'issue:aa11',
       payload: {
         toHandle: 'drufball',
-        toOwner: true,
         message: 'first line of a long brief\nsecond line never shows',
       },
       actorHandle: 'builder',

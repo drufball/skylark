@@ -33,6 +33,12 @@ import { resolveIssueRef } from './service'
 /** Event type for a baton pass, on topic `issue:<id>`, audience public. */
 export const ISSUE_HANDOFF = 'issue.handoff'
 
+/**
+ * Event type for an owner ping — inbox notification + agent wake, no worktree
+ * turn. The issue's owner sees it; the orchestrator ignores it.
+ */
+export const ISSUE_OWNER_PING = 'issue.owner_ping'
+
 /** The special target that pings the issue's owner instead of an agent. */
 const OWNER_TARGET = 'OWNER'
 
@@ -43,8 +49,16 @@ export interface IssueHandoffPayload {
   toUserId: string
   /** The target's handle, carried so inbox copy needs no lookup. */
   toHandle: string
-  /** True for an OWNER ping (inbox/wake), false for a baton pass (a turn). */
-  toOwner: boolean
+  message: string
+}
+
+/** What an `issue.owner_ping` event carries on the ship's log. */
+export interface IssueOwnerPingPayload {
+  issueId: string
+  fromUserId: string
+  toUserId: string
+  /** The target's handle, carried so inbox copy needs no lookup. */
+  toHandle: string
   message: string
 }
 
@@ -178,21 +192,38 @@ export async function requestHandoff(
     toHandle = target.handle
   }
 
-  const payload: IssueHandoffPayload = {
-    issueId: issue.id,
-    fromUserId: input.actorId,
-    toUserId,
-    toHandle,
-    toOwner,
-    message,
+  if (toOwner) {
+    const payload: IssueOwnerPingPayload = {
+      issueId: issue.id,
+      fromUserId: input.actorId,
+      toUserId,
+      toHandle,
+      message,
+    }
+    await emitEvent(db, {
+      type: ISSUE_OWNER_PING,
+      source: 'issues',
+      topic: issueTopic(issue.id),
+      audience: PUBLIC_AUDIENCE,
+      actorId: input.actorId,
+      payload,
+    })
+  } else {
+    const payload: IssueHandoffPayload = {
+      issueId: issue.id,
+      fromUserId: input.actorId,
+      toUserId,
+      toHandle,
+      message,
+    }
+    await emitEvent(db, {
+      type: ISSUE_HANDOFF,
+      source: 'issues',
+      topic: issueTopic(issue.id),
+      audience: PUBLIC_AUDIENCE,
+      actorId: input.actorId,
+      payload,
+    })
   }
-  await emitEvent(db, {
-    type: ISSUE_HANDOFF,
-    source: 'issues',
-    topic: issueTopic(issue.id),
-    audience: PUBLIC_AUDIENCE,
-    actorId: input.actorId,
-    payload,
-  })
   return { issue, toHandle, toOwner }
 }
