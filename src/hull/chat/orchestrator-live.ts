@@ -28,6 +28,8 @@ import { createAgentWaker } from './waker'
 const WAKE_DEBOUNCE_MS = 10_000
 
 let started: ChatOrchestrator | undefined
+let unsubscribeBus: (() => void) | undefined
+let unsubscribeHook: (() => void) | undefined
 
 /**
  * Boot the chat orchestrator into the server process (idempotent): wire it to
@@ -40,9 +42,16 @@ let started: ChatOrchestrator | undefined
  * an agent's inbox entries back to the chat the work was filed from
  * (issues.originChatId) and wakes the agent there with the unread batch —
  * which is why this also ensures the reactor runs in this process.
+ *
+ * HMR-safe: cleans up the old subscription on Vite reload so one reactor
+ * doesn't stack to N on N reloads (the #xwh2 bug).
  */
 export function ensureChatOrchestrator(): ChatOrchestrator {
   if (started) return started
+  // On HMR reload, module state resets but subscriptions in other modules
+  // persist (InProcessBus, deliveryHooks). Clean up the old ones first.
+  unsubscribeBus?.()
+  unsubscribeHook?.()
   // systemDb (superuser): the orchestrator is fixed plumbing — it scans all
   // chats to recover work (reconcile) and posts the agent's reply, which under
   // app_user with no actor would fail closed. It reacts to events, it doesn't
@@ -51,7 +60,7 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
   const runtime = createServerRuntime(systemDb)
   const orchestrator = createChatOrchestrator({ db: systemDb, runtime })
   started = orchestrator
-  subscribeToShipLog(orchestrator, 'chat orchestrator')
+  unsubscribeBus = subscribeToShipLog(orchestrator, 'chat orchestrator')
 
   const waker = createAgentWaker({
     isAgent: async (userId) =>
@@ -74,11 +83,24 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
       orchestrator.wake(chatId, agentUserId, briefing),
     debounceMs: WAKE_DEBOUNCE_MS,
   })
-  onNotificationDelivered((notification) => {
+  unsubscribeHook = onNotificationDelivered((notification) => {
     waker.onNotified(notification)
   })
   ensureNotificationsReactor()
 
   return orchestrator
+}
+
+// HMR cleanup: unsubscribe from both the bus AND the delivery hooks on reload
+// so the old reactor + waker don't stack with the new ones. Vite calls
+// dispose() before reloading the module.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    unsubscribeBus?.()
+    unsubscribeHook?.()
+    unsubscribeBus = undefined
+    unsubscribeHook = undefined
+    started = undefined
+  })
 }
 /* v8 ignore stop */
