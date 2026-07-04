@@ -72,50 +72,50 @@ export function createAgentWaker(deps: AgentWakerDeps): {
   async function fire(userId: string): Promise<void> {
     pending.delete(userId)
     inFlight.add(userId)
-    if (!(await deps.isAgent(userId))) {
-      inFlight.delete(userId)
-      return
-    }
-
-    const unread = await deps.listUnread(userId)
-    if (unread.length === 0) {
-      inFlight.delete(userId)
-      return
-    }
-
-    // Group the batch by the chat its work belongs to.
-    const routable = new Map<string, WakeableNotification[]>()
-    const orphans: WakeableNotification[] = []
-    for (const notification of unread) {
-      const chatId = await deps.chatForTopic(notification.topic)
-      if (!chatId) {
-        orphans.push(notification)
-        continue
+    try {
+      if (!(await deps.isAgent(userId))) {
+        return
       }
-      const batch = routable.get(chatId) ?? []
-      batch.push(notification)
-      routable.set(chatId, batch)
-    }
 
-    // No route home → no wake to deliver; consume so they don't pile up (an
-    // agent's inbox has no other reader).
-    await deps.markRead(
-      userId,
-      orphans.map((n) => n.id),
-    )
+      const unread = await deps.listUnread(userId)
+      if (unread.length === 0) {
+        return
+      }
 
-    // Deliver per chat, consuming each batch only once its wake succeeded — a
-    // failed wake leaves its rows unread for the next notification to retry.
-    for (const [chatId, batch] of routable) {
-      const lines = await Promise.all(batch.map((n) => deps.describe(n)))
-      await deps.wake(chatId, userId, wakeBriefing(lines))
+      // Group the batch by the chat its work belongs to.
+      const routable = new Map<string, WakeableNotification[]>()
+      const orphans: WakeableNotification[] = []
+      for (const notification of unread) {
+        const chatId = await deps.chatForTopic(notification.topic)
+        if (!chatId) {
+          orphans.push(notification)
+          continue
+        }
+        const batch = routable.get(chatId) ?? []
+        batch.push(notification)
+        routable.set(chatId, batch)
+      }
+
+      // No route home → no wake to deliver; consume so they don't pile up (an
+      // agent's inbox has no other reader).
       await deps.markRead(
         userId,
-        batch.map((n) => n.id),
+        orphans.map((n) => n.id),
       )
-    }
 
-    inFlight.delete(userId)
+      // Deliver per chat, consuming each batch only once its wake succeeded — a
+      // failed wake leaves its rows unread for the next notification to retry.
+      for (const [chatId, batch] of routable) {
+        const lines = await Promise.all(batch.map((n) => deps.describe(n)))
+        await deps.wake(chatId, userId, wakeBriefing(lines))
+        await deps.markRead(
+          userId,
+          batch.map((n) => n.id),
+        )
+      }
+    } finally {
+      inFlight.delete(userId)
+    }
   }
 
   return {
