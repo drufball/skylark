@@ -57,8 +57,8 @@ export function parseShowArgs(args: string[]): {
   if (at !== -1) {
     const value = rest.at(at + 1)
     const parsed = value ? Number.parseInt(value, 10) : NaN
-    if (!value || Number.isNaN(parsed))
-      throw new Error('--limit requires a number')
+    if (!value || Number.isNaN(parsed) || parsed <= 0)
+      throw new Error('--limit requires a positive number')
     limit = parsed
     rest.splice(at, 2)
   }
