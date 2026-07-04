@@ -1,110 +1,187 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 /**
  * Test that globalThis registries store the LIVE INSTANCE, not just an armed
  * flag, so ensure* calls after SSR reload return the SAME functioning instance
  * instead of a stub/rejection.
  *
- * Background: when registry.armed is true but module-level state was reset by
- * an SSR reload, the current implementation has three inconsistent behaviors:
- * - chat: returns a do-nothing stub
- * - issues: returns a rejected promise
- * - notifications: bare return (void)
- *
- * The problem: if a future caller actually uses the returned orchestrator
- * post-reload, they get silently black-holed messages/wakes. "Arm-once" must
- * mean "one armed instance shared across module executions", not "first
- * execution wins, everyone else gets a dummy".
+ * These tests faithfully simulate the actual reactor pattern: module-level
+ * state + globalThis registry, and verify the check order matters for
+ * correctness (registry first, then module state).
  */
 describe('reactor registry stores live instance', () => {
-  // Simulate a reactor with its globalThis registry
+  /**
+   * Simulate a reactor module's state and its ensure function. This pattern
+   * matches the real reactors more closely than inline reimplementations:
+   * - Module-level state that resets on SSR reload
+   * - globalThis registry that survives reload
+   * - The actual check order matters for correctness
+   */
+  function createReactorModule<T>() {
+    let moduleState: T | undefined
+    const registryKey = `__TEST_REACTOR_${Math.random().toString()}__`
+
+    interface Registry {
+      armed: boolean
+      instance?: T
+    }
+
+    function getRegistry(): Registry {
+      const g = globalThis as unknown as Record<string, Registry>
+      g[registryKey] ??= { armed: false }
+      return g[registryKey]
+    }
+
+    function cleanup() {
+      const g = globalThis as unknown as Record<string, Registry>
+      g[registryKey] = undefined as unknown as Registry
+      moduleState = undefined
+    }
+
+    return {
+      getRegistry,
+      cleanup,
+      getModuleState: () => moduleState,
+      setModuleState: (val: T | undefined) => {
+        moduleState = val
+      },
+    }
+  }
+
   interface TestReactor {
     calls: string[]
     doWork: (id: string) => void
   }
 
-  interface GlobalWithTestReactor {
-    __TEST_REACTOR__?: {
-      armed: boolean
-      instance?: TestReactor
-    }
-  }
+  it('DEMONSTRATES THE PROBLEM: wrong check order caches failed promises', () => {
+    const module = createReactorModule<Promise<TestReactor>>()
 
-  function getRegistry(): { armed: boolean; instance?: TestReactor } {
-    const g = globalThis as GlobalWithTestReactor
-    g.__TEST_REACTOR__ ??= { armed: false }
-    return g.__TEST_REACTOR__
-  }
+    // BAD: checks module state BEFORE registry (old issues orchestrator bug)
+    function ensureReactorBadOrder(): Promise<TestReactor> {
+      const registry = module.getRegistry()
+      const moduleState = module.getModuleState()
 
-  beforeEach(() => {
-    // Clear the registry between tests
-    const g = globalThis as GlobalWithTestReactor
-    delete g.__TEST_REACTOR__
-  })
-
-  it('DEMONSTRATES THE PROBLEM: armed-but-lost returns a stub', () => {
-    let moduleState: TestReactor | undefined
-
-    // First implementation: returns a stub when armed but module state lost
-    function ensureReactorStub(): TestReactor {
-      const registry = getRegistry()
+      // WRONG: check module state first
       if (moduleState) return moduleState
 
-      if (registry.armed) {
-        // Module state lost but registry says armed → return stub
-        return {
-          calls: [],
-          // eslint-disable-next-line @typescript-eslint/no-empty-function
-          doWork: () => {}, // no-op
-        }
-      }
-
-      registry.armed = true
-      const reactor: TestReactor = {
-        calls: [],
-        doWork: (id) => {
-          reactor.calls.push(id)
-        },
-      }
-      moduleState = reactor
-      return reactor
-    }
-
-    // First call: creates and arms the reactor
-    const first = ensureReactorStub()
-    first.doWork('a')
-    expect(first.calls).toEqual(['a'])
-
-    // Simulate SSR reload: module state resets but registry persists
-    moduleState = undefined
-
-    // Second call: returns a stub because armed-but-lost
-    const second = ensureReactorStub()
-    second.doWork('b')
-
-    // PROBLEM: the stub silently drops work
-    expect(second.calls).toEqual([])
-    // The live instance and stub are different objects
-    expect(second).not.toBe(first)
-  })
-
-  it('WITH FIX: armed-but-lost returns the same live instance', () => {
-    let moduleState: TestReactor | undefined
-
-    // Fixed implementation: stores instance in registry, returns it on reload
-    function ensureReactorFixed(): TestReactor {
-      const registry = getRegistry()
-
-      // If we have module state, return it
-      if (moduleState) return moduleState
-
-      // If armed but module state lost, return the stored instance
       if (registry.armed && registry.instance) {
-        moduleState = registry.instance
+        module.setModuleState(registry.instance)
         return registry.instance
       }
 
-      // First time: create, store in both places
+      registry.armed = true
+      const promise = Promise.resolve({
+        calls: [],
+        doWork: (id: string) => {
+          // Test stub - work tracked in calls array in real implementation
+          void id
+        },
+      })
+      registry.instance = promise
+      module.setModuleState(promise)
+      return promise
+    }
+
+    // First call succeeds
+    const first = ensureReactorBadOrder()
+
+    // Simulate SSR reload: module state resets
+    module.setModuleState(undefined)
+
+    // Second call restores from registry
+    const second = ensureReactorBadOrder()
+    expect(second).toBe(first) // same promise restored
+
+    // Now simulate boot failure AFTER restoration: in real code, if the
+    // promise was rejected and we restored it, module state caches it but
+    // the catch handler that clears state isn't attached to the restored
+    // promise. So the rejected promise stays in moduleState forever.
+    // Here we manually simulate what would happen:
+    const rejectedPromise = Promise.reject(new Error('boot failed'))
+    void rejectedPromise.catch(() => {
+      // Swallow error to prevent unhandled rejection in test
+    })
+    module.setModuleState(rejectedPromise)
+
+    // PROBLEM: module state is checked first, so returns the cached rejection
+    const third = ensureReactorBadOrder()
+    expect(third).toBe(rejectedPromise)
+
+    module.cleanup()
+  })
+
+  it('WITH FIX: registry-first check order prevents caching failures', () => {
+    const module = createReactorModule<Promise<TestReactor>>()
+
+    // GOOD: checks registry BEFORE module state (fixed issues orchestrator)
+    function ensureReactorCorrectOrder(): Promise<TestReactor> {
+      const registry = module.getRegistry()
+
+      // CORRECT: check registry first
+      if (registry.armed && registry.instance) {
+        module.setModuleState(registry.instance)
+        return registry.instance
+      }
+
+      const moduleState = module.getModuleState()
+      if (moduleState) return moduleState
+
+      registry.armed = true
+      const promise = Promise.resolve({
+        calls: [],
+        doWork: (id: string) => {
+          // Test stub - work tracked in calls array in real implementation
+          void id
+        },
+      })
+      registry.instance = promise
+      module.setModuleState(promise)
+      return promise
+    }
+
+    // First call succeeds
+    const first = ensureReactorCorrectOrder()
+
+    // Simulate SSR reload
+    module.setModuleState(undefined)
+
+    // Second call restores from registry
+    const second = ensureReactorCorrectOrder()
+    expect(second).toBe(first)
+
+    // Simulate boot failure AFTER restoration
+    const rejectedPromise = Promise.reject(new Error('boot failed'))
+    void rejectedPromise.catch(() => {
+      // Swallow error to prevent unhandled rejection in test
+    })
+    module.setModuleState(rejectedPromise)
+
+    // Simulate another reload
+    module.setModuleState(undefined)
+
+    // FIXED: registry is checked first, so we get the good promise from
+    // registry, not the rejected one that was briefly in module state
+    const third = ensureReactorCorrectOrder()
+    expect(third).toBe(first)
+
+    module.cleanup()
+  })
+
+  it('synchronous reactor (chat) survives reload with same instance', () => {
+    const module = createReactorModule<TestReactor>()
+
+    function ensureSyncReactor(): TestReactor {
+      const registry = module.getRegistry()
+
+      // Check registry first (consistent with async pattern)
+      if (registry.armed && registry.instance) {
+        module.setModuleState(registry.instance)
+        return registry.instance
+      }
+
+      const moduleState = module.getModuleState()
+      if (moduleState) return moduleState
+
       registry.armed = true
       const reactor: TestReactor = {
         calls: [],
@@ -113,55 +190,44 @@ describe('reactor registry stores live instance', () => {
         },
       }
       registry.instance = reactor
-      moduleState = reactor
+      module.setModuleState(reactor)
       return reactor
     }
 
-    // First call: creates and arms the reactor
-    const first = ensureReactorFixed()
+    // First call creates the reactor
+    const first = ensureSyncReactor()
     first.doWork('a')
     expect(first.calls).toEqual(['a'])
 
-    // Simulate SSR reload: module state resets but registry persists
-    moduleState = undefined
+    // Simulate SSR reload
+    module.setModuleState(undefined)
 
-    // Second call: returns the SAME live instance from the registry
-    const second = ensureReactorFixed()
+    // Second call returns the SAME instance from registry
+    const second = ensureSyncReactor()
     second.doWork('b')
 
-    // FIXED: work continues on the same instance
+    // VERIFIED: work continues on the same instance
     expect(second.calls).toEqual(['a', 'b'])
-    // The instances are the SAME object
     expect(second).toBe(first)
+
+    module.cleanup()
   })
 
-  it('WITH FIX: issues orchestrator promise survives reload', async () => {
-    let moduleState: Promise<TestReactor> | undefined
+  it('async reactor (issues) survives reload with same promise', async () => {
+    const module = createReactorModule<Promise<TestReactor>>()
 
-    interface RegistryWithPromise {
-      armed: boolean
-      instance?: Promise<TestReactor>
-    }
+    function ensureAsyncReactor(): Promise<TestReactor> {
+      const registry = module.getRegistry()
 
-    function getPromiseRegistry(): RegistryWithPromise {
-      const g = globalThis as { __TEST_ASYNC_REACTOR__?: RegistryWithPromise }
-      g.__TEST_ASYNC_REACTOR__ ??= { armed: false }
-      return g.__TEST_ASYNC_REACTOR__
-    }
-
-    async function ensureAsyncReactor(): Promise<TestReactor> {
-      const registry = getPromiseRegistry()
-
-      // If we have module state, return it
-      if (moduleState) return moduleState
-
-      // If armed but module state lost, return the stored promise
+      // Check registry FIRST (the fix for the caching bug)
       if (registry.armed && registry.instance) {
-        moduleState = registry.instance
+        module.setModuleState(registry.instance)
         return registry.instance
       }
 
-      // First boot: create the promise, store it
+      const moduleState = module.getModuleState()
+      if (moduleState) return moduleState
+
       registry.armed = true
       const reactor: TestReactor = {
         calls: [],
@@ -171,23 +237,28 @@ describe('reactor registry stores live instance', () => {
       }
       const promise = Promise.resolve(reactor)
       registry.instance = promise
-      moduleState = promise
+      module.setModuleState(promise)
       return promise
     }
 
     // First call
-    const first = await ensureAsyncReactor()
+    const firstPromise = ensureAsyncReactor()
+    const first = await firstPromise
     first.doWork('a')
+    expect(first.calls).toEqual(['a'])
 
     // Simulate reload
-    moduleState = undefined
+    module.setModuleState(undefined)
 
-    // Second call returns the same promise, not a rejection
-    const second = await ensureAsyncReactor()
+    // Second call returns the same promise, resolves to same reactor
+    const secondPromise = ensureAsyncReactor()
+    expect(secondPromise).toBe(firstPromise)
+
+    const second = await secondPromise
     expect(second).toBe(first)
+    second.doWork('b')
+    expect(second.calls).toEqual(['a', 'b'])
 
-    // Clean up this test's registry
-    delete (globalThis as { __TEST_ASYNC_REACTOR__?: RegistryWithPromise })
-      .__TEST_ASYNC_REACTOR__
+    module.cleanup()
   })
 })

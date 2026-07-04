@@ -203,7 +203,9 @@ function getRegistry(): {
  */
 export function ensureOrchestrator(): Promise<Orchestrator> {
   const registry = getRegistry()
-  if (started) return started
+  // Check registry FIRST: if we restore from registry and that promise later
+  // rejects, the module-level 'started' would cache the rejection forever
+  // because the catch handler isn't attached to restored promises.
   if (registry.armed && registry.instance) {
     // Reactor armed in a previous module execution but module state lost:
     // restore the live promise from the registry so callers get the SAME
@@ -211,6 +213,7 @@ export function ensureOrchestrator(): Promise<Orchestrator> {
     started = registry.instance
     return registry.instance
   }
+  if (started) return started
   registry.armed = true
   started = boot().catch((err: unknown) => {
     registry.armed = false // allow retry on failure
