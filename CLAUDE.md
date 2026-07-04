@@ -61,9 +61,12 @@ a gateway model name (unset → `claude-sonnet-5`).
 
 ## Skills
 
-- **ship-feature** — the build loop: red-green TDD → `npm run check` → commit →
-  push → shepherd the PR through CI and reviews → merge. **Follow it whenever
-  you build or change a feature.**
+- **build-feature** — the build loop: red-green TDD → `npm run check` → commit →
+  push → open a PR. **Follow it whenever you build or change a feature.** Ends
+  by handing off to **babysit-pr** (or running it directly if there's no one to
+  hand off to) — a feature isn't shipped until its PR is merged.
+- **babysit-pr** — shepherd an open PR through CI and reviews to a merge: watch
+  checks, weigh the agentic reviews, resolve conflicts, merge.
 - **create-service** — adding a service: folder shape, which deck, wiring,
   tests.
 - **author-zine** — writing or updating a zine: sections + principles.

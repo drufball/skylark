@@ -325,7 +325,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * Who starts this issue: the playbook's entrypoint agent, or — on a ship
    * with nothing seeded, or a roster whose agent has left the crew — the
    * legacy builder identity. `build` is whether the entrypoint runs the
-   * ship-feature contract or the plain general brief.
+   * build-feature contract or the plain general brief.
    */
   async function entryFor(
     issue: IssueRow,
@@ -432,7 +432,7 @@ export function createOrchestrator(deps: OrchestratorDeps) {
       case 'building': {
         // → building, whether a fresh open→building or a resume from open. Both
         // ensure the playbook entrypoint's hand exists (idempotent), then
-        // seed/resume the turn with the latest thread — the ship-feature
+        // seed/resume the turn with the latest thread — the build-feature
         // contract for the build playbook, the plain brief for anything else.
         const { sessionId, entryUserId, build } = await ensureEntrypoint(issue)
         const fresh = await getIssue(db, issueId)

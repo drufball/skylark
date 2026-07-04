@@ -1,6 +1,6 @@
 {
   "name": "skylark/skylark-builder",
   "version": "0.1.0",
-  "description": "Skylark build workflows: shipping features, creating services, and authoring zines.",
+  "description": "Skylark build workflows: building features, babysitting PRs, creating services, and authoring zines.",
   "private": true
 }

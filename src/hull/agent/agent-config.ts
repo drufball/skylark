@@ -166,12 +166,12 @@ export const CHAT_CONFIG: SeedConfig = {
  */
 export const BUILDER_CONFIG: SeedConfig = {
   systemPrompt:
-    'You build a Skylark ship. Follow the ship-feature skill through OPENING ' +
+    'You build a Skylark ship. Follow the build-feature skill through OPENING ' +
     'the PR: red-green TDD, npm run check clean, branch, push, open a PR. ' +
     'Shepherding CI and merging is NOT your job — once the PR is open, hand ' +
     'the baton to @babysitter through the issue CLI as your last action and ' +
-    'stop. When the babysitter hands a fix brief back to you, fix, push, and ' +
-    'hand the baton back. ' +
+    'stop; do not run the babysit-pr skill yourself. When the babysitter ' +
+    'hands a fix brief back to you, fix, push, and hand the baton back. ' +
     'To wait on any long local task, call the `background` tool with the ' +
     'command and END YOUR TURN — never block, poll, or `--watch` in the ' +
     'foreground; you are resumed automatically with the result.',
@@ -185,7 +185,7 @@ export const BUILDER_CONFIG: SeedConfig = {
  * The general deckhand — the `general` playbook's entrypoint. Full coding
  * tools and ship context, but no build contract and no gates: the issue's own
  * words are the instructions. Distinct from the chat pilot (read-only) and
- * the builder (the ship-feature loop).
+ * the builder (the build-feature loop).
  */
 export const GENERAL_CONFIG: SeedConfig = {
   systemPrompt:
@@ -207,39 +207,22 @@ export const GENERAL_CONFIG: SeedConfig = {
  */
 export const BABYSITTER_CONFIG: SeedConfig = {
   systemPrompt:
-    'You babysit pull requests for a Skylark ship. You receive an issue whose ' +
-    'PR is already open; you are in the issue worktree, on its branch — ' +
-    '`gh pr view` and `gh pr checks` show your PR. ' +
+    'You babysit pull requests for a Skylark ship. Follow the babysit-pr ' +
+    'skill to shepherd an open PR to a merge. You receive an issue whose PR ' +
+    'is already open; you are in the issue worktree, on its branch. ' +
     'To wait on CI or reviews, call the `background` tool with the watch ' +
-    'command (e.g. `gh pr checks --watch --interval 30`) and END YOUR TURN — ' +
-    'you are resumed with the result; never poll in the foreground. ' +
-    "Read the review comments when checks settle — the ship's automated " +
-    "reviews are advisory, not gates: weigh them, don't obey them. " +
-    'When everything is green and the reviews are handled, check the PR is ' +
-    "actually mergeable BEFORE you merge — don't just trust that checks passed. " +
-    'Check the merge state: `gh pr view <pr> --json mergeStateStatus -q .mergeStateStatus`. ' +
-    'If CLEAN or UNSTABLE (failing checks are only the advisory reviews), merge with ' +
-    '`gh pr merge <pr> --squash --delete-branch`, then mark the issue done through the ' +
-    'issue CLI as your LAST action and stop. ' +
-    'If DIRTY (merge conflicts or uncommitted changes), do NOT try to merge (it will be refused). ' +
-    'Hand the baton back to @builder with this rebase brief: "Rebase onto latest main to resolve ' +
-    'conflicts: `git fetch origin && git rebase origin/main`, resolve conflicts, run ' +
-    '`npm run check`, then `git push --force-with-lease`. Re-check mergeStateStatus ' +
-    'after pushing." ' +
-    'If BEHIND, hand off to @builder with: "Branch is behind main. Rebase: ' +
-    '`git fetch origin && git rebase origin/main`, run `npm run check`, then ' +
-    '`git push --force-with-lease`." ' +
-    'If BLOCKED (branch protection or required checks blocking merge), hand off to OWNER with ' +
-    'the blocking reason and ask for guidance. ' +
-    'If the merge command fails, read the error and hand off to @builder with the ' +
-    'error message — never end silently. ' +
-    'If CI fails or a review demands real code changes, hand the baton back to @builder ' +
+    'command and END YOUR TURN — you are resumed with the result; never ' +
+    'poll in the foreground. ' +
+    'Once merged, mark the issue done through the issue CLI as your LAST ' +
+    'action and stop. ' +
+    'If a fix needs real code changes, hand the baton back to @builder ' +
     'with a precise brief of what to fix — you never write code yourself. ' +
-    'After a second builder round-trip on the same PR, or any judgment call above your ' +
-    'pay grade, hand off to OWNER instead.',
+    'If merging is blocked for a reason outside that loop (branch protection, ' +
+    'a required review), or after a second builder round-trip on the same PR, ' +
+    'hand off to OWNER instead.',
   tools: ['read', 'bash'],
   readContextFiles: false,
-  useRepoSkills: false,
+  useRepoSkills: true,
   model: null,
 }
 

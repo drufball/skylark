@@ -1554,8 +1554,8 @@ describe('orchestrator playbooks', () => {
     expect(runtime.turns).toHaveLength(1)
     expect(runtime.turns[0].text).toContain('Summarize this week')
     expect(runtime.turns[0].text).toContain(`SKYLARK_ACTOR=${hand.id}`)
-    // No build script: the general playbook has no ship-feature contract.
-    expect(runtime.turns[0].text).not.toContain('ship-feature')
+    // No build script: the general playbook has no build-feature contract.
+    expect(runtime.turns[0].text).not.toContain('build-feature')
   })
 
   it('a default (no-playbook) issue still runs the build contract via the builder', async () => {
@@ -1573,7 +1573,7 @@ describe('orchestrator playbooks', () => {
     const link = defined(await getIssueSession(db, issue.id, builderId))
     const session = defined(await getSession(db, link.sessionId))
     expect(session.agentUserId).toBe(builderId)
-    expect(runtime.turns[0].text).toContain('ship-feature')
+    expect(runtime.turns[0].text).toContain('build-feature')
   })
 
   it('drops a forged baton to an agent outside the playbook roster, with a comment', async () => {
@@ -1639,7 +1639,7 @@ describe('generalPrompt', () => {
     expect(prompt).toContain('- @dru: keep it cheap')
     expect(prompt).toContain('SKYLARK_ACTOR=hand-1 npm run issue -- done gp01')
     expect(prompt).toContain('handoff gp01 OWNER')
-    expect(prompt).not.toContain('ship-feature')
+    expect(prompt).not.toContain('build-feature')
     expect(prompt).not.toContain('PR')
   })
 })

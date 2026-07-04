@@ -237,6 +237,15 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **Builder and babysitter prompts point at their skills, not each other's
+  content.** `BUILDER_CONFIG` follows `build-feature` through opening the PR,
+  then hands off to `@babysitter` instead of running `babysit-pr` itself.
+  `BABYSITTER_CONFIG` drops the inline merge-state playbook (`mergeStateStatus`,
+  CLEAN/DIRTY/BEHIND/BLOCKED, the rebase-and-force-push recipe) in favor of
+  "follow the `babysit-pr` skill" plus the Skylark-specific handoff bits the
+  skill doesn't know about (`@builder`, `OWNER`, the issue CLI). The
+  babysitter's `useRepoSkills` flips to `true` — it couldn't have loaded the
+  skill it was told to follow otherwise.
 - **Profiles retire; config moves onto the agent.** `agent_profiles` and
   `users.profileId` are gone — every agent-config field (system prompt, tools,
   context/skills flags, extensionIds, model) lives directly on that agent's

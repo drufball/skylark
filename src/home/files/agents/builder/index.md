@@ -26,7 +26,7 @@
 - **Home layer** (`src/home/`): Routes, pages, glue code
 - Utilities go in `lib/` directories within each layer
 
-### Build Loop (ship-feature skill)
+### Build Loop (build-feature skill)
 1. Red-green TDD: test first, then implementation
 2. `npm run check` clean
 3. Commit (commit-gate auto-runs check)
