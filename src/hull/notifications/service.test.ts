@@ -717,4 +717,78 @@ describe('notifications service', () => {
       spy.mockRestore()
     }
   })
+
+  it('reconcile delivers unread notifications to hooks (reload recovery for the waker)', async () => {
+    // Scenario: reactor was alive and created notification rows, but the
+    // in-process hook delivery was lost (Vite reload killed the waker's
+    // debounce timer). On boot, reconcile should re-deliver unread rows
+    // through the same onNotified hook so the waker gets another chance.
+    const issue = await createIssue(db, { title: 'x', authorId: bob })
+    await watchTopic(db, alice, issueTopic(issue.id))
+
+    // First reactor: live delivery creates the notification row and calls hook
+    const firstDelivered: string[] = []
+    const reactor1 = createNotificationsReactor({
+      db,
+      onNotified: (n) => firstDelivered.push(n.userId),
+    })
+    await addComment(db, { issueId: issue.id, authorId: bob, body: 'hi' })
+    const events = await listEventsSince(db, {
+      topicPatterns: [issueTopic(issue.id)],
+      audience: 'public',
+    })
+    const comment = events.find((e) => e.type === 'issue.commented')
+    await reactor1.handleBusNote({ id: defined(comment).id, type: 'x' })
+    expect(firstDelivered).toEqual([alice])
+    expect(await unreadCount(db, alice)).toBe(1)
+
+    // Simulate reload: second reactor with fresh hook, reconcile re-delivers
+    const secondDelivered: string[] = []
+    const reactor2 = createNotificationsReactor({
+      db,
+      onNotified: (n) => secondDelivered.push(n.userId),
+    })
+    await reactor2.reconcile()
+
+    // The unread notification should be re-delivered to the new hook
+    expect(secondDelivered).toEqual([alice])
+    expect(await unreadCount(db, alice)).toBe(1) // still unread until consumed
+  })
+
+  it('reconcile survives hook delivery failures during unread re-delivery', async () => {
+    // Create two unread notifications
+    const issue = await createIssue(db, { title: 'x', authorId: bob })
+    await watchTopic(db, alice, issueTopic(issue.id))
+    await watchTopic(db, bob, issueTopic(issue.id))
+    const reactor1 = createNotificationsReactor({ db })
+    await addComment(db, { issueId: issue.id, authorId: bob, body: 'first' })
+    const events1 = await listEventsSince(db, {
+      topicPatterns: [issueTopic(issue.id)],
+      audience: 'public',
+    })
+    const comment1 = events1.find((e) => e.type === 'issue.commented')
+    await reactor1.handleBusNote({ id: defined(comment1).id, type: 'x' })
+
+    // Second reactor: hook throws on alice, reconcile should still deliver bob's
+    const delivered: string[] = []
+    const reactor2 = createNotificationsReactor({
+      db,
+      onNotified: (n) => {
+        delivered.push(n.userId)
+        if (n.userId === alice) throw new Error('hook failed')
+      },
+    })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await reactor2.reconcile()
+
+      // Both should be attempted, despite alice's failure
+      expect(delivered).toEqual([alice])
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('reconcile notification delivery failed'),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })

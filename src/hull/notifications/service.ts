@@ -222,6 +222,21 @@ export async function listUnread(
     .orderBy(notifications.id)
 }
 
+/**
+ * All unread notifications across all users.
+ * Used by reconcile to re-deliver notifications that might have been created
+ * during a reload (when hooks weren't registered). No age filter: if a
+ * notification is unread, it was never delivered to the waker, so it should
+ * be re-delivered regardless of age.
+ */
+export async function listAllUnread(db: Database): Promise<NotificationRow[]> {
+  return db
+    .select()
+    .from(notifications)
+    .where(isNull(notifications.readAt))
+    .orderBy(notifications.id)
+}
+
 export async function unreadCount(
   db: Database,
   userId: string,
@@ -358,15 +373,25 @@ export function createNotificationsReactor(deps: {
   }
 
   /**
-   * Startup recovery for WATCHES only: replay the durable issue events and
-   * re-apply the acting-auto-watches, so an issue filed while no reactor was
-   * subscribed (a fresh process, a CLI hit before any door) still ends up
-   * watched by its actors — a watch is durable intent and must not be lost.
-   * Notification fan-out is deliberately NOT replayed: old news would flood
-   * inboxes for watches added later, and anything a restart missed is still
-   * visible on the issue itself.
+   * Startup recovery: replay the durable issue events and re-apply the
+   * acting-auto-watches, so an issue filed while no reactor was subscribed
+   * (a fresh process, a CLI hit before any door) still ends up watched by its
+   * actors — a watch is durable intent and must not be lost.
+   *
+   * Also re-delivers ALL unread notifications through the onNotified hook:
+   * if the reactor created a notification row during a Vite reload window
+   * (before the hook was registered or while the waker's timer was lost),
+   * reconcile gives the hook another chance. This is the #l0di fix: the waker
+   * rides onNotified, and without re-delivery, notifications created during
+   * reload sit unread forever with no wake.
+   *
+   * No age filter: if a notification is unread, it was never delivered to the
+   * waker, so it should be re-delivered regardless of age. Stranding old
+   * unread notifications would be the same wake-loss bug this PR fixes, just
+   * time-shifted.
    */
   async function reconcile(): Promise<void> {
+    // Replay watches from the durable log
     let sinceId: string | undefined
     for (;;) {
       const page = await listEventsSince(db, {
@@ -393,6 +418,19 @@ export function createNotificationsReactor(deps: {
         }
       }
       if (page.length < REPLAY_PAGE_SIZE) break
+    }
+
+    // Re-deliver ALL unread notifications through the hook (reload recovery)
+    const unread = await listAllUnread(db)
+    for (const notification of unread) {
+      try {
+        deps.onNotified?.(notification)
+      } catch (err) {
+        // Delivery is best-effort; the row is already durable.
+        console.error(
+          `reconcile notification delivery failed: ${errorMessage(err)}`,
+        )
+      }
     }
   }
 
