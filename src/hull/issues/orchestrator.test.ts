@@ -47,7 +47,7 @@ import {
   recordIssueSession,
   transitionIssue,
 } from './service'
-import { ISSUE_HANDOFF, requestHandoff } from './handoff'
+import { ISSUE_HANDOFF, ISSUE_OWNER_PING, requestHandoff } from './handoff'
 
 // --- Fakes for the injected boundaries -------------------------------------
 
@@ -1068,10 +1068,15 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
       topicPatterns: [`issue:${issue.id}`],
       audience: 'public',
     })
-    const event = defined(events.find((e) => e.type === ISSUE_HANDOFF))
+    // For OWNER target, requestHandoff emits ISSUE_OWNER_PING; for agents, ISSUE_HANDOFF
+    const event = defined(
+      events.find(
+        (e) => e.type === ISSUE_HANDOFF || e.type === ISSUE_OWNER_PING,
+      ),
+    )
     await orch.handleBusNote({
       id: event.id,
-      type: ISSUE_HANDOFF,
+      type: event.type,
       topic: issueTopic(issue.id),
     })
   }
@@ -1342,26 +1347,29 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
     expect(await getIssueSession(db, issue.id, user.id)).toBeUndefined()
   })
 
-  it('leaves a toOwner baton to the notification path even when the owner is an agent', async () => {
-    // The target here is a real crew AGENT, so the later "sessions never act
-    // as humans" check would NOT drop it — only the toOwner guard stands
-    // between this event and a worktree turn.
+  it('leaves owner pings (issue.owner_ping) to the notification path even when the owner is an agent', async () => {
+    // The target here is a real crew AGENT, so without the event type split,
+    // the orchestrator might accidentally drive a worktree turn for an owner ping.
     const { deps, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
     const { issue, user, good } = await builtWithTarget(orch, 'hs03')
     const { emitEvent } = await import('@hull/events/bus')
+    // Emit an owner ping (the new separate event type)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { toOwner, ...ownerPingPayload } = good // remove toOwner field
     const row = await emitEvent(db, {
-      type: ISSUE_HANDOFF,
+      type: ISSUE_OWNER_PING,
       source: 'issues',
       topic: issueTopic(issue.id),
       audience: 'public',
-      payload: { ...good, toOwner: true }, // ONLY toOwner differs
+      payload: ownerPingPayload,
     })
     await orch.handleBusNote({
       id: row.id,
-      type: ISSUE_HANDOFF,
+      type: ISSUE_OWNER_PING,
       topic: issueTopic(issue.id),
     })
+    // Only the initial build turn; the owner ping does not drive a turn
     expect(runtime.turns).toHaveLength(1)
     expect(await getIssueSession(db, issue.id, user.id)).toBeUndefined()
   })

@@ -646,15 +646,13 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         })
       )
         return
-      // Owner pings ride the notifications reactor (inbox + agent wake), not a
-      // worktree turn — the owner reviews from wherever they are.
-      if (p.toOwner !== false) return
+      // issue.handoff drives worktree turns; owner pings are now the separate
+      // issue.owner_ping type, handled by the notifications reactor.
       const payload: IssueHandoffPayload = {
         issueId: p.issueId,
         fromUserId: p.fromUserId,
         toUserId: p.toUserId,
         toHandle: typeof p.toHandle === 'string' ? p.toHandle : '?',
-        toOwner: false,
         message: p.message,
       }
       await serialize(payload.issueId, () => applyHandoff(payload))

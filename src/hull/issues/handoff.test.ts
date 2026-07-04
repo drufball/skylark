@@ -11,8 +11,10 @@ import type { UserRow } from '@hull/users/schema'
 
 import {
   ISSUE_HANDOFF,
+  ISSUE_OWNER_PING,
   requestHandoff,
   type IssueHandoffPayload,
+  type IssueOwnerPingPayload,
 } from './handoff'
 import {
   createIssue,
@@ -96,6 +98,15 @@ async function handoffEvents(issueId: string) {
   return events.filter((e) => e.type === ISSUE_HANDOFF)
 }
 
+/** The owner ping events announced on an issue's topic. */
+async function ownerPingEvents(issueId: string) {
+  const events = await listEventsSince(db, {
+    topicPatterns: [`issue:${issueId}`],
+    audience: 'public',
+  })
+  return events.filter((e) => e.type === ISSUE_OWNER_PING)
+}
+
 describe('requestHandoff — agent to agent', () => {
   it('emits issue.handoff naming both ends, with the message', async () => {
     const issue = await buildingIssue()
@@ -115,7 +126,6 @@ describe('requestHandoff — agent to agent', () => {
       fromUserId: builder.id,
       toUserId: babysitter.id,
       toHandle: 'babysitter',
-      toOwner: false,
       message: 'PR #12 is open, take it home',
     } satisfies IssueHandoffPayload)
   })
@@ -329,12 +339,14 @@ describe('requestHandoff — OWNER', () => {
     expect(result.toOwner).toBe(true)
     expect(result.toHandle).toBe('babysitter')
 
-    const [event] = await handoffEvents(issue.id)
+    const [event] = await ownerPingEvents(issue.id)
     expect(event.payload).toMatchObject({
+      issueId: issue.id,
+      fromUserId: builder.id,
       toUserId: babysitter.id,
-      toOwner: true,
+      toHandle: 'babysitter',
       message: 'checks are green — merge?',
-    })
+    } satisfies IssueOwnerPingPayload)
   })
 
   it('works on an issue that is not building — an owner ping needs no worktree', async () => {
@@ -363,6 +375,7 @@ describe('requestHandoff — OWNER', () => {
       }),
     ).rejects.toThrow(/yourself|goes nowhere/i)
     expect(await handoffEvents(issue.id)).toHaveLength(0)
+    expect(await ownerPingEvents(issue.id)).toHaveLength(0)
   })
 
   it('accepts lowercase "owner" too', async () => {

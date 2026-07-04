@@ -19,7 +19,7 @@ import {
   ISSUE_OPENED,
   ISSUE_STATUS_CHANGED,
 } from '@hull/issues/service'
-import { ISSUE_HANDOFF } from '@hull/issues/handoff'
+import { ISSUE_HANDOFF, ISSUE_OWNER_PING } from '@hull/issues/handoff'
 import {
   ISSUE_TOPIC_PATTERN,
   ISSUE_TOPIC_PREFIX,
@@ -92,19 +92,24 @@ export function describeNotification(input: {
         ? `@${actorHandle} moved it: ${payload.from} → ${payload.to}`
         : `@${actorHandle} changed the status`
     case ISSUE_HANDOFF: {
-      // One bounded line: the brief's first line, capped — an inbox row is a
-      // headline, not the brief itself. Always third-person: an owner ping
-      // fans out to bystander watchers too, and this function has no recipient
-      // context, so "handed this to YOU" would lie to everyone but the owner.
+      // Baton pass between agents.
       const brief =
         typeof payload.message === 'string'
           ? truncate(firstLine(payload.message), 160)
           : ''
       const toHandle =
         typeof payload.toHandle === 'string' ? payload.toHandle : '?'
-      if (payload.toOwner === true)
-        return `@${actorHandle} needs @${toHandle} (the owner) to look: ${brief}`
       return `@${actorHandle} passed the baton to @${toHandle}: ${brief}`
+    }
+    case ISSUE_OWNER_PING: {
+      // Owner ping for review/decision.
+      const brief =
+        typeof payload.message === 'string'
+          ? truncate(firstLine(payload.message), 160)
+          : ''
+      const toHandle =
+        typeof payload.toHandle === 'string' ? payload.toHandle : '?'
+      return `@${actorHandle} needs @${toHandle} (the owner) to look: ${brief}`
     }
     default:
       return `${type} on ${topic}`
@@ -337,18 +342,35 @@ export function createNotificationsReactor(deps: {
     // forged row naming a foreign issueId doesn't get to pick recipients.
     const recipients = new Set(await listWatchers(db, event.topic))
     if (event.type === ISSUE_HANDOFF) {
+      // Baton pass: remove the target from watchers (they're being driven a turn)
       const p = event.payload as {
         issueId?: unknown
         toUserId?: unknown
-        toOwner?: unknown
+        toOwner?: unknown // compatibility: old events may have this
       }
       if (
         typeof p.toUserId === 'string' &&
         typeof p.issueId === 'string' &&
         event.topic === issueTopic(p.issueId)
       ) {
+        // Compatibility: old issue.handoff events with toOwner=true should be
+        // treated as owner pings (add to recipients), not baton passes
         if (p.toOwner === true) recipients.add(p.toUserId)
         else recipients.delete(p.toUserId)
+      }
+    }
+    if (event.type === ISSUE_OWNER_PING) {
+      // Owner ping: add the target to watchers (inbox + agent wake)
+      const p = event.payload as {
+        issueId?: unknown
+        toUserId?: unknown
+      }
+      if (
+        typeof p.toUserId === 'string' &&
+        typeof p.issueId === 'string' &&
+        event.topic === issueTopic(p.issueId)
+      ) {
+        recipients.add(p.toUserId)
       }
     }
 

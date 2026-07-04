@@ -92,11 +92,10 @@ describe('describeNotification', () => {
     // watchers too, so "handed this to YOU" would lie to everyone but the owner.
     expect(
       describeNotification({
-        type: 'issue.handoff',
+        type: 'issue.owner_ping',
         topic: 'issue:aa11',
         payload: {
           toHandle: 'drufball',
-          toOwner: true,
           message: 'checks green — merge?',
         },
         actorHandle: 'builder',
@@ -108,11 +107,10 @@ describe('describeNotification', () => {
 
   it('keeps a handoff line to one bounded line, however long the message', () => {
     const line = describeNotification({
-      type: 'issue.handoff',
+      type: 'issue.owner_ping',
       topic: 'issue:aa11',
       payload: {
         toHandle: 'drufball',
-        toOwner: true,
         message: 'first line of a long brief\nsecond line never shows',
       },
       actorHandle: 'builder',
@@ -423,12 +421,12 @@ describe('notifications service', () => {
     expect(await unreadCount(db, alice)).toBe(0)
   })
 
-  it('an owner handoff reaches the owner even if they never watched the issue', async () => {
+  it('an owner ping reaches the owner even if they never watched the issue', async () => {
     const reactor = createNotificationsReactor({ db })
     const { emitEvent } = await import('@hull/events/bus')
     // Alice owns the issue but has never acted on or watched it.
     const event = await emitEvent(db, {
-      type: 'issue.handoff',
+      type: 'issue.owner_ping',
       source: 'issues',
       topic: 'issue:i1',
       audience: 'public',
@@ -438,14 +436,13 @@ describe('notifications service', () => {
         fromUserId: bob,
         toUserId: alice,
         toHandle: 'alice',
-        toOwner: true,
         message: 'checks green — merge?',
       },
     })
     await reactor.handleBusNote({ id: event.id, type: event.type })
     const inbox = await listNotifications(db, alice)
     expect(inbox).toHaveLength(1)
-    expect(inbox[0].type).toBe('issue.handoff')
+    expect(inbox[0].type).toBe('issue.owner_ping')
   })
 
   it('a baton handoff never doubles into the target inbox — the orchestrator drives them', async () => {
@@ -472,7 +469,6 @@ describe('notifications service', () => {
         fromUserId: mover,
         toUserId: bob,
         toHandle: 'bob',
-        toOwner: false,
         message: 'go',
       },
     })
@@ -481,6 +477,33 @@ describe('notifications service', () => {
     // fired turn plus an inbox wake would double-drive it.
     expect(await unreadCount(db, alice)).toBe(1)
     expect(await unreadCount(db, bob)).toBe(0)
+  })
+
+  it('compatibility: old issue.handoff with toOwner=true is treated as owner ping', async () => {
+    const reactor = createNotificationsReactor({ db })
+    const { emitEvent } = await import('@hull/events/bus')
+    // Compatibility for old durable events: issue.handoff with toOwner: true
+    // should still reach the owner via the notifications path.
+    const event = await emitEvent(db, {
+      type: 'issue.handoff',
+      source: 'issues',
+      topic: 'issue:i3',
+      audience: 'public',
+      actorId: bob,
+      payload: {
+        issueId: 'i3',
+        fromUserId: bob,
+        toUserId: alice,
+        toHandle: 'alice',
+        toOwner: true,
+        message: 'old event format',
+      },
+    })
+    await reactor.handleBusNote({ id: event.id, type: event.type })
+    const inbox = await listNotifications(db, alice)
+    expect(inbox).toHaveLength(1)
+    // Still reports as the old event type
+    expect(inbox[0].type).toBe('issue.handoff')
   })
 
   it('opening an issue for another owner watches that owner from the start', async () => {
