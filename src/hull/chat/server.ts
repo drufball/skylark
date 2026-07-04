@@ -5,8 +5,6 @@ import { db } from '@hull/db/client'
 import { withCurrentActor } from '@hull/users/actor'
 import { listUsers } from '@hull/users/service'
 
-import { ensureChatOrchestrator } from './orchestrator-live'
-
 import {
   addMember,
   addMessage,
@@ -28,9 +26,14 @@ import {
 // inline), and both the message and the agent's live progress reach the browser
 // over the ship's log (SSE), scoped to the chat.
 
-// ensureChatOrchestrator boots + subscribes the chat orchestrator in this
+// bootOrchestrator boots + subscribes the chat orchestrator in this
 // process (idempotent, synchronous) — the doors below call it so opening the
 // app recovers any agent reply a restart interrupted, without blocking.
+// Uses dynamic import to keep node builtins out of client bundle.
+async function bootOrchestrator(): Promise<void> {
+  const { ensureChatOrchestrator } = await import('./orchestrator-live')
+  ensureChatOrchestrator()
+}
 
 /** Everyone aboard — the picker for who's in a chat (the crew list is public). */
 export const listChatCrew = createServerFn({ method: 'GET' }).handler(() =>
@@ -38,8 +41,8 @@ export const listChatCrew = createServerFn({ method: 'GET' }).handler(() =>
 )
 
 /** The current actor's chats, newest first — the sidebar. */
-export const listChats = createServerFn({ method: 'GET' }).handler(() => {
-  ensureChatOrchestrator()
+export const listChats = createServerFn({ method: 'GET' }).handler(async () => {
+  await bootOrchestrator()
   return withCurrentActor(async (tx, me) => {
     const chats = await listChatSummaries(tx, me.id)
     return { me: { id: me.id, handle: me.handle }, chats }
@@ -95,10 +98,10 @@ export const createChatFn = createServerFn({ method: 'POST' })
 /** Post a message as the current actor, then let agents respond in the background. */
 export const postChatMessage = createServerFn({ method: 'POST' })
   .validator((input: { chatId: string; body: string }) => input)
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
     // Subscribe the orchestrator BEFORE the post, so the message's ship-log
     // event is heard and drives the reply — off the bus, not inline here.
-    ensureChatOrchestrator()
+    await bootOrchestrator()
     return withCurrentActor(async (tx, me) => {
       // A non-member can't see the chat → clean refusal (the chat_messages
       // WITH CHECK policy would reject the insert regardless).

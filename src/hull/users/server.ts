@@ -8,7 +8,6 @@ import {
   getProfileById,
   getProfileByName,
 } from '@hull/agent/profiles'
-import { liveFilesService } from '@hull/files/live'
 
 import { currentActor } from './actor'
 import {
@@ -87,6 +86,7 @@ export const createAgentUser = createServerFn({ method: 'POST' })
       profileId,
     })
     try {
+      const { liveFilesService } = await import('@hull/files/live')
       await liveFilesService().write({
         path: agentMemoryIndexPath(user.handle),
         content: starterMemoryIndex(user.handle),

@@ -47,13 +47,23 @@ function sourceFiles(): string[] {
     .filter((p) => p !== 'routeTree.gen.ts')
 }
 
-/** Static import/export specifiers in a file (string literals only). */
+/**
+ * Static VALUE import/export specifiers in a file (string literals only).
+ * Excludes `import type` and `import()` dynamic imports.
+ *
+ * Dynamic imports are excluded because they don't pull code into the initial
+ * bundle - they're loaded on demand. If a dynamic import is inside a
+ * createServerFn handler, it stays server-side (the handler never executes
+ * on the client).
+ */
 function importSpecifiers(source: string): string[] {
   const specs: string[] = []
   const patterns = [
-    /(?:^|\n)\s*(?:import|export)[^'"\n]*?from\s*['"]([^'"]+)['"]/g,
+    // import/export from, but NOT "import type" or "export type"
+    /(?:^|\n)\s*(?:import|export)(?!\s+type\s)[^'"\n]*?from\s*['"]([^'"]+)['"]/g,
+    // Side-effect import
     /(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g,
-    /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    // NOTE: Deliberately omitting dynamic import() - see comment above
   ]
   for (const re of patterns) {
     for (const m of source.matchAll(re)) specs.push(m[1])
@@ -190,6 +200,107 @@ describe('architecture: boot is server-entry-only', () => {
         )
       }
     }
+    expect(violations).toEqual([])
+  })
+})
+
+/**
+ * Walk the import graph from a starting file, collecting all transitively
+ * reached files. Returns the set of all files in the transitive closure.
+ */
+function transitiveImports(
+  start: string,
+  graph: Map<string, string[]>,
+): Set<string> {
+  const visited = new Set<string>()
+  const stack = [start]
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (!node || visited.has(node)) continue
+    visited.add(node)
+    for (const next of graph.get(node) ?? []) {
+      if (!visited.has(next)) stack.push(next)
+    }
+  }
+  return visited
+}
+
+/**
+ * Check if a file directly imports a Node builtin (node:* specifier).
+ */
+function importsNodeBuiltin(file: string): string[] {
+  const source = readFileSync(join(SRC, file), 'utf8')
+  const builtins: string[] = []
+  for (const spec of importSpecifiers(source)) {
+    if (spec.startsWith('node:')) {
+      builtins.push(spec)
+    }
+  }
+  return builtins
+}
+
+describe('architecture: client code must not import node builtins', () => {
+  /**
+   * Routes and rigging/views are isomorphic — they run on both server and
+   * client, so they're bundled into the client bundle. If they transitively
+   * import a Node builtin (node:fs, node:child_process, etc.), the build
+   * externalizes it and the browser throws "Module externalized for browser
+   * compatibility" or "X is not defined" (Buffer, process, etc.), crashing
+   * hydration.
+   *
+   * Server-only code must reach client code ONLY through createServerFn doors
+   * (which become RPC stubs client-side) or via `import type` (erased at
+   * runtime). This test enforces "loader → server fn → pure service" by
+   * construction.
+   *
+   * Context: PR #54 (node:os via a value import), PR #92 (node:child_process
+   * via @/boot), both caught by hand or smoke tests — silent at build time.
+   */
+  it('routes must not transitively import node:* builtins', () => {
+    const graph = buildGraph()
+    const violations: string[] = []
+
+    for (const file of sourceFiles()) {
+      if (!file.startsWith('routes/')) continue
+      if (file.includes('.test.')) continue
+
+      const closure = transitiveImports(file, graph)
+      for (const reached of closure) {
+        const builtins = importsNodeBuiltin(reached)
+        if (builtins.length > 0) {
+          violations.push(
+            `${file} transitively imports node builtins via ${reached}: ${builtins.join(', ')} — ` +
+              `routes are isomorphic (client + server); server-only code must stay behind createServerFn doors or import type.`,
+          )
+          break // one violation per route is enough
+        }
+      }
+    }
+
+    expect(violations).toEqual([])
+  })
+
+  it('rigging/views must not transitively import node:* builtins', () => {
+    const graph = buildGraph()
+    const violations: string[] = []
+
+    for (const file of sourceFiles()) {
+      if (!file.startsWith('rigging/views/')) continue
+      if (file.includes('.test.')) continue
+
+      const closure = transitiveImports(file, graph)
+      for (const reached of closure) {
+        const builtins = importsNodeBuiltin(reached)
+        if (builtins.length > 0) {
+          violations.push(
+            `${file} transitively imports node builtins via ${reached}: ${builtins.join(', ')} — ` +
+              `rigging/views are client components; server-only code must stay behind createServerFn doors or import type.`,
+          )
+          break // one violation per view is enough
+        }
+      }
+    }
+
     expect(violations).toEqual([])
   })
 })

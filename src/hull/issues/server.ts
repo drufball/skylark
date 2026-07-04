@@ -4,8 +4,6 @@ import { db } from '@hull/db/client'
 import { listEventsSince, PUBLIC_AUDIENCE } from '@hull/events/service'
 import { currentActor } from '@hull/users/actor'
 import { handleOf } from '@hull/users/service'
-
-import { ensureOrchestrator } from './orchestrator-live'
 import {
   BUILD_PLAYBOOK_NAME,
   listPlaybooks,
@@ -47,7 +45,9 @@ import {
 export type { BoardIssue, IssueThread, ThreadEntry } from './service'
 
 /** Ensure the orchestrator is booted + subscribed in this server process. */
-function bootOrchestrator(): void {
+async function bootOrchestrator(): Promise<void> {
+  // Lazy import orchestrator to keep node builtins out of client bundle
+  const { ensureOrchestrator } = await import('./orchestrator-live')
   void ensureOrchestrator().catch((err: unknown) => {
     console.error(`orchestrator boot failed: ${String(err)}`)
   })
@@ -55,7 +55,7 @@ function bootOrchestrator(): void {
 
 /** All issues as board cards, newest first. The board groups by status itself. */
 export const listBoard = createServerFn({ method: 'GET' }).handler(async () => {
-  bootOrchestrator()
+  await bootOrchestrator()
   const issues = await listIssues(db)
   return Promise.all(
     issues.map(async (issue) =>
@@ -77,7 +77,7 @@ export const listBoard = createServerFn({ method: 'GET' }).handler(async () => {
 export const getThread = createServerFn({ method: 'GET' })
   .validator((issueId: string) => issueId)
   .handler(async ({ data: issueId }): Promise<IssueThread | null> => {
-    bootOrchestrator()
+    await bootOrchestrator()
     const issue = await getIssue(db, issueId)
     if (!issue) return null
 
@@ -150,7 +150,8 @@ export interface PlaybookView {
 /** Every playbook, with member/entrypoint handles resolved for display. */
 export const listPlaybooksView = createServerFn({ method: 'GET' }).handler(
   async (): Promise<PlaybookView[]> => {
-    bootOrchestrator()
+    // Boot orchestrator (fire-and-forget since it also reconciles builds)
+    void bootOrchestrator()
     // The boot above is fire-and-forget (it also reconciles builds — too slow
     // to hold a page load), so on a fresh ship it can race this read and the
     // first render would show no playbooks. Ensuring directly is cheap
@@ -212,7 +213,7 @@ export const commentOnIssue = createServerFn({ method: 'POST' })
 export const setIssueStatus = createServerFn({ method: 'POST' })
   .validator(validateTransitionInput)
   .handler(async ({ data }) => {
-    bootOrchestrator()
+    await bootOrchestrator()
     const actor = await currentActor()
     const moved = await transitionIssue(db, {
       issueId: data.issueId,

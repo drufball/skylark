@@ -1,5 +1,3 @@
-import { randomInt } from 'node:crypto'
-
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { and, asc, desc, eq } from 'drizzle-orm'
 
@@ -79,12 +77,13 @@ const NANO_LENGTH = 4
 /**
  * A fresh 4-char url/git-safe short id. 36^4 ≈ 1.7M of space — plenty for a
  * crew's board, and uniqueness is still enforced at insert time (`createIssue`
- * retries on the unique constraint). `randomInt` is unbiased over the alphabet.
+ * retries on the unique constraint). Math.random() is sufficient (uniqueness
+ * is enforced by the DB unique constraint anyway).
  */
 export function generateNano(): string {
   let out = ''
   for (let i = 0; i < NANO_LENGTH; i++) {
-    out += NANO_ALPHABET[randomInt(NANO_ALPHABET.length)]
+    out += NANO_ALPHABET[Math.floor(Math.random() * NANO_ALPHABET.length)]
   }
   return out
 }

@@ -1,6 +1,5 @@
 import type { Database } from '@hull/db/client'
 import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
-import { liveFilesService } from '@hull/files/live'
 
 import { createFakeSession } from './fake-session'
 import { loadAgentMemory, type AgentMemoryLoader } from './memory'
@@ -24,7 +23,10 @@ export function resolveSessionFactory(): SessionFactory {
  * through the files service (so it sees the staged state like everyone else).
  */
 export function liveAgentMemoryLoader(db: Database): AgentMemoryLoader {
-  return (agentUserId) => loadAgentMemory(db, liveFilesService(), agentUserId)
+  return async (agentUserId) => {
+    const { liveFilesService } = await import('@hull/files/live')
+    return loadAgentMemory(db, liveFilesService(), agentUserId)
+  }
 }
 
 /**

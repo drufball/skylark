@@ -2,7 +2,6 @@ import { createServerFn } from '@tanstack/react-start'
 
 import { currentActor } from '@hull/users/actor'
 
-import { liveFilesService } from './live'
 import { validateFilePath } from './service'
 
 // The web doors onto the files service. Reads and writes go through the live
@@ -25,20 +24,25 @@ function parseSave(input: unknown): { path: string; content: string } {
 }
 
 /** Every shared file's path, sorted. */
-export const listFiles = createServerFn({ method: 'GET' }).handler(() =>
-  liveFilesService().list(),
-)
+export const listFiles = createServerFn({ method: 'GET' }).handler(async () => {
+  const { liveFilesService } = await import('./live')
+  return liveFilesService().list()
+})
 
 /** One file's content, or null when it doesn't exist. */
 export const readFile = createServerFn({ method: 'GET' })
   .validator(parsePath)
-  .handler(({ data: path }) => liveFilesService().read(path))
+  .handler(async ({ data: path }) => {
+    const { liveFilesService } = await import('./live')
+    return liveFilesService().read(path)
+  })
 
 /** Create or update a file as the current actor. */
 export const saveFile = createServerFn({ method: 'POST' })
   .validator(parseSave)
   .handler(async ({ data }) => {
     const actor = await currentActor()
+    const { liveFilesService } = await import('./live')
     await liveFilesService().write({
       path: data.path,
       content: data.content,
@@ -54,6 +58,7 @@ export const deleteFile = createServerFn({ method: 'POST' })
   }))
   .handler(async ({ data }) => {
     const actor = await currentActor()
+    const { liveFilesService } = await import('./live')
     await liveFilesService().remove({
       path: data.path,
       actor: { id: actor.id, handle: actor.handle },

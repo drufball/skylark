@@ -3,6 +3,8 @@ import { emitEvent } from '@hull/events/bus'
 import { PUBLIC_AUDIENCE } from '@hull/events/service'
 
 import type { FilesRepo } from './git'
+
+export type { FilesRepo }
 import { fileTopic } from './topic'
 
 /**
