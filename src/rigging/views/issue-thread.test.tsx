@@ -115,7 +115,7 @@ describe('IssueThreadView', () => {
     fireEvent.change(screen.getByPlaceholderText(/Comment/), {
       target: { value: 'a note' },
     })
-    fireEvent.click(screen.getByLabelText('Add comment'))
+    fireEvent.click(screen.getByLabelText('Send message'))
     expect(onComment).toHaveBeenCalledWith('a note')
   })
 
@@ -140,7 +140,7 @@ describe('IssueThreadView', () => {
     fireEvent.change(screen.getByPlaceholderText(/Comment/), {
       target: { value: 'note' },
     })
-    fireEvent.click(screen.getByLabelText('Add comment'))
+    fireEvent.click(screen.getByLabelText('Send message'))
     expect(onComment).not.toHaveBeenCalled()
   })
 

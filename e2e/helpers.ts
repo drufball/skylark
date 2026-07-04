@@ -36,5 +36,5 @@ export async function commentOnIssue(
   }).toPass({ timeout: 15_000 })
 
   await page.getByPlaceholder(/Comment/).fill(body)
-  await page.getByRole('button', { name: 'Add comment' }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
 }

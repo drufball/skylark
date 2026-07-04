@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Bot, Plus, Send, User, Users, X } from 'lucide-react'
+import { Bot, Plus, User, Users, X } from 'lucide-react'
 
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
-import { Textarea } from '@rigging/components/ui/textarea'
+import { Composer } from '@rigging/components/composer'
+import { inputClass, selectClass } from '@rigging/components/ui/input'
 
 // The front door: chat between the crew — humans and agents. Participant-focused
 // (you keep messaging the same people with new tasks), so the sidebar names a
@@ -191,7 +192,7 @@ function ActiveChat({
           {addable.length > 0 && (
             <select
               aria-label="Add member"
-              className="rounded-md border bg-background px-1.5 py-0.5 text-xs"
+              className={selectClass('text-xs')}
               value=""
               onChange={(e) => {
                 if (e.target.value) onAddMember(e.target.value)
@@ -208,7 +209,11 @@ function ActiveChat({
         </div>
       </header>
       <Messages messages={messages} working={working} />
-      <Composer busy={busy} onSend={onSend} />
+      <Composer
+        busy={busy}
+        onSend={onSend}
+        placeholder="Message…  (@mention an agent in a group; Enter to send)"
+      />
     </>
   )
 }
@@ -279,7 +284,7 @@ function NewChat({
     <div className="mx-auto flex max-w-md flex-col gap-4 p-8">
       <h1 className="text-lg font-medium">New chat</h1>
       <input
-        className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        className={inputClass()}
         placeholder="Title (optional)"
         value={title}
         onChange={(e) => {
@@ -322,48 +327,6 @@ function NewChat({
           }}
         >
           Start chat
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function Composer({
-  busy,
-  onSend,
-}: {
-  busy: boolean
-  onSend: (text: string) => void
-}) {
-  const [text, setText] = useState('')
-
-  function submit() {
-    const trimmed = text.trim()
-    if (!trimmed || busy) return
-    onSend(trimmed)
-    setText('')
-  }
-
-  return (
-    <div className="border-t p-4">
-      <div className="mx-auto flex max-w-3xl items-end gap-2">
-        <Textarea
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value)
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              submit()
-            }
-          }}
-          placeholder="Message…  (@mention an agent in a group; Enter to send)"
-          rows={1}
-          className="max-h-40 min-h-[2.5rem] resize-none"
-        />
-        <Button onClick={submit} disabled={busy} aria-label="Send message">
-          <Send className="size-4" />
         </Button>
       </div>
     </div>

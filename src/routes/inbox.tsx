@@ -1,16 +1,11 @@
-import { useCallback, useState } from 'react'
-import {
-  createFileRoute,
-  Link,
-  useNavigate,
-  useRouter,
-} from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 
 import { markInboxRead, myInbox } from '@hull/notifications/server'
 import { notifyTopic } from '@hull/notifications/topic'
 import { Dock } from '@rigging/views/dock'
 import { InboxView } from '@rigging/views/inbox'
-import { useShipLog } from '@rigging/lib/use-ship-log'
+import { useServerAction } from '@rigging/lib/use-server-action'
+import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 
 // The inbox route: a thin mount binding /inbox to the notifications service.
 // Live updates ride the ship's log — every notification is announced on the
@@ -25,22 +20,12 @@ export const Route = createFileRoute('/inbox')({
 function InboxRoute() {
   const { me, items, unread } = Route.useLoaderData()
   const navigate = useNavigate()
-  const router = useRouter()
-  const [busy, setBusy] = useState(false)
+  const { busy, run } = useServerAction()
 
-  const onEvent = useCallback(() => {
-    void router.invalidate()
-  }, [router])
-  useShipLog([notifyTopic(me.id)], onEvent)
+  useShipLogInvalidate([notifyTopic(me.id)])
 
   async function markAllRead() {
-    setBusy(true)
-    try {
-      await markInboxRead()
-      await router.invalidate()
-    } finally {
-      setBusy(false)
-    }
+    await run(() => markInboxRead())
   }
 
   return (

@@ -67,7 +67,7 @@ describe('orchestrator-live registry self-healing', () => {
       startedE1 = promise.catch((err: unknown) => {
         registry.armed = false
         startedE1 = undefined // Clears E1's started but NOT E2's
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete registry.instance
         throw err
       })
@@ -92,7 +92,7 @@ describe('orchestrator-live registry self-healing', () => {
       startedE2 = promise.catch((err: unknown) => {
         registry.armed = false
         startedE2 = undefined
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete registry.instance
         throw err
       })
@@ -150,7 +150,7 @@ describe('orchestrator-live registry self-healing', () => {
       startedE1 = promise.catch((err: unknown) => {
         registry.armed = false
         startedE1 = undefined
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete registry.instance
         throw err
       })
@@ -175,7 +175,7 @@ describe('orchestrator-live registry self-healing', () => {
       startedE2 = promise.catch((err: unknown) => {
         registry.armed = false
         startedE2 = undefined
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete registry.instance
         throw err
       })
@@ -227,7 +227,7 @@ describe('orchestrator-live registry self-healing', () => {
       startedE1 = promise.catch((err: unknown) => {
         registry.armed = false
         startedE1 = undefined
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete registry.instance
         throw err
       })
@@ -250,7 +250,7 @@ describe('orchestrator-live registry self-healing', () => {
       startedE2 = promise.catch((err: unknown) => {
         registry.armed = false
         startedE2 = undefined
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete registry.instance
         throw err
       })
@@ -302,7 +302,7 @@ describe('orchestrator-live registry self-healing', () => {
       started = promise.catch((err: unknown) => {
         registry.armed = false
         started = undefined
-        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
         delete registry.instance
         throw err
       })

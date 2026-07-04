@@ -4,7 +4,7 @@ import {
   useNavigate,
   useRouter,
 } from '@tanstack/react-router'
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 
 import {
   cancelAgentChat,
@@ -33,7 +33,8 @@ import {
 } from '@rigging/views/agent-profiles'
 import { Dock } from '@rigging/views/dock'
 import { cn } from '@rigging/lib/utils'
-import { useShipLog } from '@rigging/lib/use-ship-log'
+import { useServerAction } from '@rigging/lib/use-server-action'
+import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 
 // The Agents surface: the dedicated agent-management view. Four sub-tabs —
 // the session **monitor** (the old front-door chat ux, which was only ever a
@@ -104,7 +105,7 @@ function AgentsRoute() {
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
 
-  const [busy, setBusy] = useState(false)
+  const { busy, run } = useServerAction()
   const [saving, setSaving] = useState(false)
   const [pending, setPending] = useState<{
     text: string
@@ -116,21 +117,12 @@ function AgentsRoute() {
   // Watch the active session over the ship's log; re-run the loader on any
   // event. No active session → empty topics → no connection.
   const topics = activeId ? [sessionTopic(activeId)] : []
-  const onShipLogEvent = useCallback(() => {
-    void router.invalidate()
-  }, [router])
-  useShipLog(topics, onShipLogEvent)
+  useShipLogInvalidate(topics)
 
   async function send(text: string) {
     if (!activeId) return // the monitor doesn't start sessions, only unsticks
-    setBusy(true)
-    try {
-      setPending({ text, baseCount: chat?.items.length ?? 0 })
-      await sendAgentMessage({ data: { sessionId: activeId, text } })
-      await router.invalidate()
-    } finally {
-      setBusy(false)
-    }
+    setPending({ text, baseCount: chat?.items.length ?? 0 })
+    await run(() => sendAgentMessage({ data: { sessionId: activeId, text } }))
   }
 
   async function cancel() {

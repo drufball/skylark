@@ -27,6 +27,7 @@ import {
   type CrewMember,
 } from '@rigging/views/chat'
 import { Dock } from '@rigging/views/dock'
+import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLog, type ShipLogEvent } from '@rigging/lib/use-ship-log'
 
 // The ship's front door: chat with the crew. Participant-focused — it opens your
@@ -76,8 +77,8 @@ function ChatRoute() {
   const { me, chats, crew, thread, activeId } = Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
+  const { busy, run } = useServerAction()
 
-  const [busy, setBusy] = useState(false)
   // The progress bubble remembers WHICH chat it belongs to: it's cleared by a
   // posted message, not by switching chats, so without the chatId a bubble
   // from chat A would keep rendering inside chat B after a switch.
@@ -104,28 +105,19 @@ function ChatRoute() {
         void router.invalidate()
       }
     },
-    [router, members],
+    [members, router],
   )
   useShipLog(topics, onEvent)
 
   async function send(text: string) {
     if (!activeId) return
-    setBusy(true)
-    try {
-      await postChatMessage({ data: { chatId: activeId, body: text } })
-      await router.invalidate()
-    } finally {
-      setBusy(false)
-    }
+    await run(() => postChatMessage({ data: { chatId: activeId, body: text } }))
   }
 
   async function create(memberIds: string[], title: string) {
-    setBusy(true)
-    try {
-      const { id } = await createChatFn({ data: { memberIds, title } })
-      await navigate({ search: { chat: id } })
-    } finally {
-      setBusy(false)
+    const result = await run(() => createChatFn({ data: { memberIds, title } }))
+    if (result) {
+      await navigate({ search: { chat: result.id } })
     }
   }
 

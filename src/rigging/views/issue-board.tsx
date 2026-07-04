@@ -1,19 +1,16 @@
 import { useState } from 'react'
-import {
-  CheckCircle2,
-  CircleDot,
-  Hammer,
-  MessageSquare,
-  Plus,
-  XCircle,
-} from 'lucide-react'
+import { MessageSquare, Plus } from 'lucide-react'
 
 import type { BoardIssue } from '@hull/issues/server'
-import type { IssueStatus } from '@hull/issues/schema'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
+import { selectClass } from '@rigging/components/ui/input'
+import {
+  ISSUE_STATUS_META,
+  ISSUE_STATUS_ORDER,
+} from '@rigging/lib/issue-status-meta'
 
 // The board: issues grouped by status, forum-like — open discussions up top,
 // then building, then the closed-out ones. Presentational and routing-agnostic;
@@ -35,28 +32,6 @@ export interface IssueBoardViewProps {
   busy: boolean
   onOpen: (title: string, body: string, playbookId: string | undefined) => void
   onSelect: (id: string) => void
-}
-
-/** The display order of the status groups — discussions first, archive last. */
-const GROUPS: { status: IssueStatus; label: string }[] = [
-  { status: 'open', label: 'Open' },
-  { status: 'building', label: 'Building' },
-  { status: 'done', label: 'Done' },
-  { status: 'closed', label: 'Closed' },
-]
-
-const STATUS_ICON: Record<IssueStatus, typeof CircleDot> = {
-  open: CircleDot,
-  building: Hammer,
-  done: CheckCircle2,
-  closed: XCircle,
-}
-
-const STATUS_TINT: Record<IssueStatus, string> = {
-  open: 'text-sky-500',
-  building: 'text-amber-500',
-  done: 'text-emerald-500',
-  closed: 'text-muted-foreground',
 }
 
 export function IssueBoardView({
@@ -82,7 +57,8 @@ export function IssueBoardView({
               No issues yet. Open the first one above.
             </p>
           ) : (
-            GROUPS.map(({ status, label }) => {
+            ISSUE_STATUS_ORDER.map((status) => {
+              const { label } = ISSUE_STATUS_META[status]
               const group = issues.filter((i) => i.status === status)
               if (group.length === 0) return null
               return (
@@ -116,7 +92,7 @@ function IssueCard({
   issue: BoardIssue
   onSelect: (id: string) => void
 }) {
-  const Icon = STATUS_ICON[issue.status]
+  const { icon: Icon, tint } = ISSUE_STATUS_META[issue.status]
   return (
     <button
       type="button"
@@ -129,7 +105,7 @@ function IssueCard({
       )}
     >
       <div className="flex items-center gap-2">
-        <Icon className={cn('size-4 shrink-0', STATUS_TINT[issue.status])} />
+        <Icon className={cn('size-4 shrink-0', tint)} />
         <span className="min-w-0 flex-1 truncate font-medium">
           {issue.title}
         </span>
@@ -228,7 +204,7 @@ function NewIssue({
               setPlaybookId(e.target.value)
             }}
             aria-label="Playbook"
-            className="rounded-md border bg-background px-2 py-1 text-sm"
+            className={selectClass()}
           >
             {/* The default explains itself like every other option — it's the
                 one whose behaviour a crewmate most needs to trust on faith. */}

@@ -1,16 +1,11 @@
-import {
-  createFileRoute,
-  Link,
-  useNavigate,
-  useRouter,
-} from '@tanstack/react-router'
-import { useCallback, useState } from 'react'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 
 import { listBoard, listPlaybooksView, openIssue } from '@hull/issues/server'
 import { ISSUE_TOPIC_PATTERN } from '@hull/issues/topic'
 import { Dock } from '@rigging/views/dock'
 import { IssueBoardView } from '@rigging/views/issue-board'
-import { useShipLog } from '@rigging/lib/use-ship-log'
+import { useServerAction } from '@rigging/lib/use-server-action'
+import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 
 // The board route: a thin mount binding /issues to the board view and the issues
 // service. Live updates ride the ship's log — the board subscribes to the
@@ -31,22 +26,16 @@ export const Route = createFileRoute('/issues/')({
 function BoardRoute() {
   const { issues, playbooks } = Route.useLoaderData()
   const navigate = useNavigate()
-  const router = useRouter()
-  const [busy, setBusy] = useState(false)
+  const { busy, run } = useServerAction()
 
-  const onEvent = useCallback(() => {
-    void router.invalidate()
-  }, [router])
-  // Subscribe to all issue events via pattern matching
-  useShipLog([ISSUE_TOPIC_PATTERN], onEvent)
+  useShipLogInvalidate([ISSUE_TOPIC_PATTERN])
 
   async function open(title: string, body: string, playbookId?: string) {
-    setBusy(true)
-    try {
-      const { id } = await openIssue({ data: { title, body, playbookId } })
-      await navigate({ to: '/issues/$id', params: { id } })
-    } finally {
-      setBusy(false)
+    const result = await run(() =>
+      openIssue({ data: { title, body, playbookId } }),
+    )
+    if (result) {
+      await navigate({ to: '/issues/$id', params: { id: result.id } })
     }
   }
 

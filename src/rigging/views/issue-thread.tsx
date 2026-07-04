@@ -1,20 +1,12 @@
-import { useState } from 'react'
-import {
-  ArrowLeft,
-  Bell,
-  BellOff,
-  GitBranch,
-  Hammer,
-  Loader2,
-  Send,
-} from 'lucide-react'
+import { ArrowLeft, Bell, BellOff, GitBranch, Hammer } from 'lucide-react'
 
 import type { IssueThread, ThreadEntry } from '@hull/issues/server'
 import type { IssueStatus } from '@hull/issues/schema'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
-import { Textarea } from '@rigging/components/ui/textarea'
+import { Composer } from '@rigging/components/composer'
+import { ISSUE_STATUS_META } from '@rigging/lib/issue-status-meta'
 
 // The issue thread: body, the merged comment + status-change timeline, a
 // composer, and the status controls. Presentational and routing-agnostic; the
@@ -29,13 +21,6 @@ export interface IssueThreadViewProps {
   onComment: (body: string) => void
   onSetStatus: (status: string) => void
   onToggleWatch: () => void
-}
-
-const STATUS_LABEL: Record<IssueStatus, string> = {
-  open: 'Open',
-  building: 'Building',
-  done: 'Done',
-  closed: 'Closed',
 }
 
 export function IssueThreadView({
@@ -116,12 +101,19 @@ export function IssueThreadView({
         </div>
       </ScrollArea>
 
-      {!terminal && <Composer busy={busy} onComment={onComment} />}
+      {!terminal && (
+        <Composer
+          busy={busy}
+          onSend={onComment}
+          placeholder="Comment…  (Enter to send, Shift+Enter for a newline)"
+        />
+      )}
     </main>
   )
 }
 
 function StatusBadge({ status }: { status: IssueStatus }) {
+  const meta = ISSUE_STATUS_META[status]
   const tint: Record<IssueStatus, string> = {
     open: 'bg-sky-500/15 text-sky-600',
     building: 'bg-amber-500/15 text-amber-600',
@@ -130,7 +122,7 @@ function StatusBadge({ status }: { status: IssueStatus }) {
   }
   return (
     <span className={cn('rounded-full px-2 py-0.5 font-medium', tint[status])}>
-      {STATUS_LABEL[status]}
+      {meta.label}
     </span>
   )
 }
@@ -208,53 +200,6 @@ function ThreadEntryView({ entry }: { entry: ThreadEntry }) {
         @{entry.authorHandle}
       </span>
       <p className="whitespace-pre-wrap leading-relaxed">{entry.body}</p>
-    </div>
-  )
-}
-
-function Composer({
-  busy,
-  onComment,
-}: Pick<IssueThreadViewProps, 'busy' | 'onComment'>) {
-  const [text, setText] = useState('')
-
-  function submit() {
-    const trimmed = text.trim()
-    if (!trimmed || busy) return
-    onComment(trimmed)
-    setText('')
-  }
-
-  return (
-    <div className="border-t p-4">
-      <div className="mx-auto flex max-w-3xl items-end gap-2">
-        <Textarea
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value)
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              submit()
-            }
-          }}
-          placeholder="Comment…  (Enter to send, Shift+Enter for a newline)"
-          rows={1}
-          className="max-h-40 min-h-[2.5rem] resize-none"
-        />
-        <Button
-          onClick={submit}
-          disabled={busy || !text.trim()}
-          aria-label="Add comment"
-        >
-          {busy ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Send className="size-4" />
-          )}
-        </Button>
-      </div>
     </div>
   )
 }
