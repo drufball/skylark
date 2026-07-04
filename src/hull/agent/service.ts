@@ -31,11 +31,13 @@ export async function createSession(
     id: string
     model: string
     title?: string
-    /** Profile the session boots with; null/undefined = the runtime default. */
-    profileId?: string | null
     /** Working dir for the session's tools; null/undefined = repo root. */
     cwd?: string | null
-    /** The crew member this session acts as; null/undefined = unattributed. */
+    /**
+     * The crew member this session acts as; null/undefined = unattributed
+     * (the runtime default config). The agent's own config rides on this
+     * user row — there's no separate profile to point at.
+     */
     agentUserId?: string | null
   },
 ): Promise<AgentSessionRow> {
@@ -45,7 +47,6 @@ export async function createSession(
       id: input.id,
       model: input.model,
       title: input.title,
-      profileId: input.profileId,
       cwd: input.cwd,
       agentUserId: input.agentUserId,
     })

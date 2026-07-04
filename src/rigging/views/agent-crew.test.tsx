@@ -4,11 +4,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   AgentCrew,
+  formatToolList,
+  parseToolList,
   type AgentCrewProps,
   type CrewMemberSummary,
+  type ExtensionSummary,
 } from './agent-crew'
 
 afterEach(cleanup)
+
+describe('parseToolList', () => {
+  it('splits on commas and whitespace, trimming blanks', () => {
+    expect(parseToolList('read, bash')).toEqual(['read', 'bash'])
+    expect(parseToolList('read   bash\nedit')).toEqual(['read', 'bash', 'edit'])
+    expect(parseToolList(' read ,, bash , ')).toEqual(['read', 'bash'])
+  })
+
+  it('returns null for an empty field (= the default coding tools)', () => {
+    expect(parseToolList('')).toBeNull()
+    expect(parseToolList('   ')).toBeNull()
+    expect(parseToolList(' , , ')).toBeNull()
+  })
+})
+
+describe('formatToolList', () => {
+  it('round-trips an allowlist and renders null as blank', () => {
+    expect(formatToolList(['read', 'bash'])).toBe('read, bash')
+    expect(formatToolList(null)).toBe('')
+  })
+})
 
 const CREW: CrewMemberSummary[] = [
   {
@@ -16,38 +40,50 @@ const CREW: CrewMemberSummary[] = [
     handle: 'dru',
     displayName: 'Dru',
     type: 'human',
-    profileId: null,
+    systemPrompt: null,
+    tools: null,
+    readContextFiles: true,
+    useRepoSkills: true,
+    extensionIds: [],
+    model: null,
   },
   {
     id: 'a1',
     handle: 'tilde',
     displayName: 'Tilde',
     type: 'agent',
-    profileId: 'p-chat',
+    systemPrompt: 'pilot the ship',
+    tools: ['read', 'bash'],
+    readContextFiles: false,
+    useRepoSkills: false,
+    extensionIds: [],
+    model: null,
   },
 ]
 
-const PROFILES = [
-  { id: 'p-chat', name: 'chat' },
-  { id: 'p-builder', name: 'builder' },
+const EXTENSIONS: ExtensionSummary[] = [
+  { id: 'ext-1', name: 'build-gates', description: 'mirrors the git hooks' },
 ]
 
 function renderView(props: Partial<AgentCrewProps> = {}) {
   const onCreate = vi.fn()
   const onUpdate = vi.fn()
+  const onUpdateConfig = vi.fn()
   const onOpenMemory = vi.fn()
   const result = render(
     <AgentCrew
       crew={CREW}
-      profiles={PROFILES}
+      extensions={EXTENSIONS}
+      modelOptions={[]}
       saving={false}
       onCreate={onCreate}
       onUpdate={onUpdate}
+      onUpdateConfig={onUpdateConfig}
       onOpenMemory={onOpenMemory}
       {...props}
     />,
   )
-  return { ...result, onCreate, onUpdate, onOpenMemory }
+  return { ...result, onCreate, onUpdate, onUpdateConfig, onOpenMemory }
 }
 
 describe('AgentCrew', () => {
@@ -73,7 +109,6 @@ describe('AgentCrew', () => {
     expect(onCreate).toHaveBeenCalledWith({
       handle: 'scout',
       displayName: 'Scout',
-      profileId: null,
     })
   })
 
@@ -87,17 +122,6 @@ describe('AgentCrew', () => {
     expect(onUpdate).toHaveBeenCalledWith({
       userId: 'a1',
       displayName: 'Tilde the Shipwright',
-    })
-  })
-
-  it('re-points an agent at another profile', () => {
-    const { onUpdate } = renderView()
-    fireEvent.change(screen.getByDisplayValue('chat'), {
-      target: { value: 'p-builder' },
-    })
-    expect(onUpdate).toHaveBeenCalledWith({
-      userId: 'a1',
-      profileId: 'p-builder',
     })
   })
 
@@ -116,5 +140,53 @@ describe('AgentCrew', () => {
     const { onOpenMemory } = renderView()
     fireEvent.click(screen.getByText('Memory'))
     expect(onOpenMemory).toHaveBeenCalledWith('tilde')
+  })
+
+  it('config editor is collapsed by default and expands on demand', () => {
+    renderView()
+    expect(screen.queryByText('System prompt')).toBeNull()
+    fireEvent.click(screen.getByText('Edit config'))
+    expect(screen.getByText('System prompt')).toBeTruthy()
+    fireEvent.click(screen.getByText('Hide config'))
+    expect(screen.queryByText('System prompt')).toBeNull()
+  })
+
+  it('saves the full config together, with parsed tools and selected extensions', () => {
+    const { onUpdateConfig } = renderView()
+    fireEvent.click(screen.getByText('Edit config'))
+
+    fireEvent.change(screen.getByPlaceholderText('You pilot a Skylark ship…'), {
+      target: { value: 'be extra careful' },
+    })
+    fireEvent.click(screen.getByText('build-gates'))
+    fireEvent.click(screen.getByText('Save config'))
+
+    // The form sends raw text; the server normalizes (trims, folds blanks to
+    // null). So a blank model field crosses the wire as an empty string here.
+    expect(onUpdateConfig).toHaveBeenCalledWith({
+      userId: 'a1',
+      systemPrompt: 'be extra careful',
+      tools: ['read', 'bash'],
+      readContextFiles: false,
+      useRepoSkills: false,
+      extensionIds: ['ext-1'],
+      model: '',
+    })
+  })
+
+  it('toggles readContextFiles / useRepoSkills checkboxes', () => {
+    const { onUpdateConfig } = renderView()
+    fireEvent.click(screen.getByText('Edit config'))
+    const checkboxes = screen.getAllByRole('checkbox')
+    fireEvent.click(checkboxes[0]) // Read CLAUDE.md
+    fireEvent.click(checkboxes[1]) // Load repo skills
+    fireEvent.click(screen.getByText('Save config'))
+
+    expect(onUpdateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        readContextFiles: true,
+        useRepoSkills: true,
+      }),
+    )
   })
 })

@@ -22,9 +22,11 @@ cover chat (membership), agent sessions (by origin), and issue-session links.
 ## Components
 
 - **User** — someone aboard: a row in `users`. A UUIDv7 `id`, a unique `handle`
-  (e.g. `captain`), a `displayName`, a `type` (`human` | `agent`), and a
-  nullable `profileId` pointing at an agent profile (a plain column, no FK — see
-  Decisions).
+  (e.g. `captain`), a `displayName`, a `type` (`human` | `agent`), and — for
+  agents — the columns that tell the runtime how its sessions boot
+  (`systemPrompt`, `tools`, `readContextFiles`, `useRepoSkills`, `extensionIds`,
+  `model`; null/schema-default and irrelevant for humans — see
+  [`../agent/zine.md`](../agent/zine.md)).
 - **Service logic** (`service.ts`) — pure, database-agnostic: create a user,
   read by id or handle, list the crew, update/delete an agent, `seedCrew`, and
   `handleOf` — the one home for "an id becomes a display handle, or `?`".
@@ -64,8 +66,8 @@ the I/O is a couple of lines at the boundary.
 inserts only the missing ones, so it's safe on a fresh database or an
 established one, any number of times — and a hand-edited `displayName` or id
 survives a re-seed. It runs from two places: the orchestrator's boot
-(`ensureOrchestrator` converges crew + profiles + playbooks) and the explicit
-`npm run users seed`.
+(`ensureOrchestrator` converges crew + agent config + playbooks) and the
+explicit `npm run users seed`.
 
 ## Decisions
 
@@ -84,20 +86,24 @@ survives a re-seed. It runs from two places: the orchestrator's boot
   operator; the CLI reads an explicit `SKYLARK_ACTOR` over the operator. A
   cookie is a browser concept and is ignored in CLI context, so a stray cookie
   can never change who a CLI process acts as.
-- **`profileId` stays a plain nullable column — wired, but no FK.** It
-  references real agent profiles (agents default to the `chat` profile via
-  `assignDefaultAgentProfile`), but the column stays loose on purpose: the
-  profiles live in the agent service, and a FK would force `users/schema.ts` to
-  import the agent schema — which imports `users/schema.ts` for its own
-  `agentUserId` FK — a circular module import. So users only ever writes its own
-  column (the agent service's seed passes the id in); enforcement of the link
-  stays out of the schema by design, not by omission.
+- **Agent config lives on the row it configures, not behind a pointer.** A crew
+  this size doesn't need reusable templates, so there's no separate profile
+  table and no FK-avoidance dance: `users/schema.ts` carries its own config
+  columns directly, `hull/agent`'s `seedAgentConfig` writes them through the
+  users service's own functions, and `agent/schema.ts` still only imports
+  `users/schema.ts` one-way for `agentUserId`. This retired an older FK-free
+  `profileId` column that existed solely to avoid the two schemas importing each
+  other.
 - **A user is a human or an agent, in one table.** Agents act on the ship the
   same way people do — they emit events, they own work — so they're crew, not a
   separate kind of thing. `type` distinguishes them where it matters.
 
 ## Changelog
 
+- **Agent config folds onto `users`.** `profileId` is gone; every agent-config
+  field lives directly on the agent's own row (see
+  [`../agent/zine.md`](../agent/zine.md)). `setUserProfile`,
+  `clearDanglingProfiles`, and `assignDefaultAgentProfile` retire with it.
 - **#3** — Access enforcement lands as Postgres RLS: `withActor` + the
   `app_user` role, chat's membership policies (migration 0007), agent sessions
   and issue links following (0008, 0015).

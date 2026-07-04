@@ -85,9 +85,9 @@ class FakeSession implements PiSession {
 }
 
 /**
- * The fake session factory — ignores profile/cwd/model; every call is hermetic.
+ * The fake session factory — ignores config/cwd/model; every call is hermetic.
  * Typed as a zero-arg function (still assignable to SessionFactory) so tests can
- * construct a session without a ResolvedProfile.
+ * construct a session without an AgentConfig.
  */
 export const createFakeSession = (): Promise<PiSession> =>
   Promise.resolve(new FakeSession())

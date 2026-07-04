@@ -49,8 +49,8 @@ the rigging.
   update to a chat (or not) is the agent's own judgment, made from its bash tool
   via the chat CLI, not the waker's.
 - **Chat and inbox sessions boot on the ship default model** (`DEFAULT_MODEL` in
-  the agent service — one default everywhere, through the LLM gateway); a
-  profile's model override still wins at boot. The old
+  the agent service — one default everywhere, through the LLM gateway); an
+  agent's own model override still wins at boot. The old
   `CHAT_MODEL`/`SKYLARK_CHAT_MODEL` split retired with the gateway move.
 - **The live shell** (`orchestrator-live.ts`) — the impure wiring:
   `ensureChatOrchestrator` boots the orchestrator into the server process on

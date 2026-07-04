@@ -6,16 +6,13 @@ import { defined, freshDb } from '@hull/db/test-db'
 
 import { users } from './schema'
 import {
-  assignDefaultAgentProfile,
   createUser,
   getUserByHandle,
-  clearDanglingProfiles,
   getUserById,
   handleOf,
   listUsers,
   resolveActorHandle,
   seedCrew,
-  setUserProfile,
   SEED_AGENTS,
   UNKNOWN_HANDLE,
   deleteUser,
@@ -75,12 +72,16 @@ describe('users service', () => {
     expect(renamed).toMatchObject({
       handle: 'scout',
       displayName: 'Scout Prime',
-      profileId: null,
+      systemPrompt: null,
     })
-    const rewired = await updateAgentUser(db, 'u1', { profileId: 'p1' })
-    expect(rewired).toMatchObject({
+    const reconfigured = await updateAgentUser(db, 'u1', {
+      systemPrompt: 'scout ahead',
+      tools: ['read'],
+    })
+    expect(reconfigured).toMatchObject({
       displayName: 'Scout Prime',
-      profileId: 'p1',
+      systemPrompt: 'scout ahead',
+      tools: ['read'],
     })
   })
 
@@ -138,35 +139,6 @@ describe('users service', () => {
     expect((await listUsers(db)).map((u) => u.id)).toEqual(['a', 'b'])
   })
 
-  describe('clearDanglingProfiles', () => {
-    it('nulls unresolved references, keeps valid ones, clears all when no profile exists', async () => {
-      const agent = await createUser(db, {
-        id: 'a1',
-        handle: 'ghosted',
-        displayName: 'Ghosted',
-        type: 'agent',
-      })
-      const ok = await createUser(db, {
-        id: 'a2',
-        handle: 'fine',
-        displayName: 'Fine',
-        type: 'agent',
-      })
-      await setUserProfile(db, agent.id, 'ghost-profile')
-      await setUserProfile(db, ok.id, 'real-profile')
-
-      await clearDanglingProfiles(db, ['real-profile'])
-      expect(defined(await getUserById(db, agent.id)).profileId).toBeNull()
-      expect(defined(await getUserById(db, ok.id)).profileId).toBe(
-        'real-profile',
-      )
-
-      // No valid profiles at all -> every reference is dangling.
-      await clearDanglingProfiles(db, [])
-      expect(defined(await getUserById(db, ok.id)).profileId).toBeNull()
-    })
-  })
-
   describe('seedCrew', () => {
     it('seeds the operator and the agents', async () => {
       await seedCrew(db)
@@ -207,24 +179,15 @@ describe('users service', () => {
       expect(await getUserByHandle(db, 'captain')).toBeUndefined()
     })
 
-    it('assignDefaultAgentProfile sets agents (only) without a profile', async () => {
+    it('seeds every agent with the schema defaults — full tools, no prompt', async () => {
       await seedCrew(db)
-      await assignDefaultAgentProfile(db, 'chat-profile')
-
       const tilde = defined(await getUserByHandle(db, 'tilde'))
       const captain = defined(await getUserByHandle(db, 'captain'))
-      expect(tilde.profileId).toBe('chat-profile') // agent → assigned
-      expect(captain.profileId).toBeNull() // human → untouched
-    })
-
-    it("assignDefaultAgentProfile keeps an agent's existing profile", async () => {
-      await seedCrew(db)
-      const bix = defined(await getUserByHandle(db, 'bix'))
-      await setUserProfile(db, bix.id, 'special')
-      await assignDefaultAgentProfile(db, 'chat-profile')
-      expect(defined(await getUserByHandle(db, 'bix')).profileId).toBe(
-        'special',
-      )
+      // seedCrew only creates the rows; seedAgentConfig (hull/agent) is what
+      // writes each agent's actual config onto them.
+      expect(tilde.systemPrompt).toBeNull()
+      expect(tilde.tools).toBeNull()
+      expect(captain.systemPrompt).toBeNull()
     })
 
     it('does not clobber an edited displayName on re-seed', async () => {

@@ -116,3 +116,107 @@ describe('0013/0014 upgrade — the owner + issue_sessions backfill', () => {
     // (a mutation sweep saturating the cores pushed it past the default 5s).
   }, 30_000)
 })
+
+describe('0018/0019 upgrade — agent profiles fold onto their users row', () => {
+  it('carries a customized profile onto every user that pointed at it', async () => {
+    const client = new PGlite()
+    try {
+      // The ship as it was: a hand-rolled profile with real customization,
+      // and two crew members pointing at it — exactly what the live ship has.
+      await applyRange(client, { to: '0016' })
+      await client.exec(`
+        insert into users (id, handle, display_name, type, profile_id)
+          values ('u-builder', 'builder', 'Builder', 'agent', 'p-custom'),
+                 ('u-hand', 'hand', 'Hand', 'agent', 'p-custom'),
+                 ('u-dru', 'drufball', 'Dru', 'human', null);
+        insert into agent_profiles
+          (id, name, system_prompt, tools, read_context_files, use_repo_skills, extension_ids, model)
+          values ('p-custom', 'my-builder', 'build it my way', '["read","bash"]'::jsonb,
+                  true, true, '["ext-1"]'::jsonb, 'claude-opus-4-5');
+      `)
+
+      await applyRange(client, { from: '0017' })
+
+      const rows = await client.query<{
+        id: string
+        system_prompt: string | null
+        tools: string[] | null
+        read_context_files: boolean
+        use_repo_skills: boolean
+        extension_ids: string[]
+        model: string | null
+      }>(
+        `select id, system_prompt, tools, read_context_files, use_repo_skills, extension_ids, model
+           from users where id in ('u-builder', 'u-hand') order by id`,
+      )
+      for (const row of rows.rows) {
+        expect(row.system_prompt).toBe('build it my way')
+        expect(row.tools).toEqual(['read', 'bash'])
+        expect(row.read_context_files).toBe(true)
+        expect(row.use_repo_skills).toBe(true)
+        expect(row.extension_ids).toEqual(['ext-1'])
+        expect(row.model).toBe('claude-opus-4-5')
+      }
+
+      // A human with no profile is left with the schema defaults, untouched.
+      const dru = await client.query<{
+        system_prompt: string | null
+        read_context_files: boolean
+        extension_ids: string[]
+      }>(
+        `select system_prompt, read_context_files, extension_ids from users where id = 'u-dru'`,
+      )
+      expect(dru.rows[0].system_prompt).toBeNull()
+      expect(dru.rows[0].read_context_files).toBe(true)
+      expect(dru.rows[0].extension_ids).toEqual([])
+
+      // The profile table and the profile_id columns are gone.
+      const tables = await client.query<{ table_name: string }>(
+        `select table_name from information_schema.tables where table_name = 'agent_profiles'`,
+      )
+      expect(tables.rows).toEqual([])
+      const columns = await client.query<{ column_name: string }>(
+        `select column_name from information_schema.columns
+           where table_name = 'users' and column_name = 'profile_id'`,
+      )
+      expect(columns.rows).toEqual([])
+    } finally {
+      await client.close()
+    }
+  }, 30_000)
+
+  it('leaves a user with no profile at the schema defaults', async () => {
+    const client = new PGlite()
+    try {
+      await applyRange(client, { to: '0016' })
+      await client.exec(`
+        insert into users (id, handle, display_name, type)
+          values ('u-tilde', 'tilde', 'Tilde', 'agent');
+      `)
+
+      await applyRange(client, { from: '0017' })
+
+      const row = await client.query<{
+        system_prompt: string | null
+        tools: string[] | null
+        read_context_files: boolean
+        use_repo_skills: boolean
+        extension_ids: string[]
+        model: string | null
+      }>(
+        `select system_prompt, tools, read_context_files, use_repo_skills, extension_ids, model
+           from users where id = 'u-tilde'`,
+      )
+      expect(row.rows[0]).toEqual({
+        system_prompt: null,
+        tools: null,
+        read_context_files: true,
+        use_repo_skills: true,
+        extension_ids: [],
+        model: null,
+      })
+    } finally {
+      await client.close()
+    }
+  }, 30_000)
+})

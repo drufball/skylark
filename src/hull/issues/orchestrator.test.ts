@@ -5,13 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
 import { listEventsSince } from '@hull/events/service'
-import {
-  createUser,
-  getUserByHandle,
-  seedCrew,
-  setUserProfile,
-} from '@hull/users/service'
-import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
+import { createUser, getUserByHandle, seedCrew } from '@hull/users/service'
+import { seedAgentConfig } from '@hull/agent/agent-config'
 import { DEFAULT_MODEL, type TurnResult } from '@hull/agent/runtime'
 import {
   createSession,
@@ -138,7 +133,9 @@ let builderId: string
 
 beforeEach(async () => {
   ;({ db, close } = await freshDb())
-  await seedAndWireProfiles(db)
+  // seedAgentConfig creates the builder/hand/babysitter role users itself
+  // (if missing) and configures them — no separate createUser for 'builder'.
+  await seedAgentConfig(db)
   const author = await createUser(db, {
     id: uuidv7(),
     handle: 'drufball',
@@ -146,13 +143,7 @@ beforeEach(async () => {
     type: 'human',
   })
   authorId = author.id
-  const builder = await createUser(db, {
-    id: uuidv7(),
-    handle: 'builder',
-    displayName: 'Builder',
-    type: 'agent',
-  })
-  builderId = builder.id
+  builderId = defined(await getUserByHandle(db, 'builder')).id
 })
 
 afterEach(async () => {
@@ -381,12 +372,10 @@ describe('orchestrator → building (from open)', () => {
     expect(git.copied).toHaveLength(1)
 
     // The builder's hand on the issue is recorded in issue_sessions, and the
-    // session boots with the builder profile, the worktree cwd, and the builder
-    // agent identity.
+    // session boots as the worktree cwd + the builder agent identity (its
+    // config rides on that user row).
     const link = defined(await getIssueSession(db, issue.id, builderId))
     const session = defined(await getSession(db, link.sessionId))
-    const builderProfile = defined(await getProfileByName(db, 'builder'))
-    expect(session.profileId).toBe(builderProfile.id)
     expect(session.cwd).toBe('/wt/add-widget-aa11')
     expect(session.agentUserId).toBe(builderId)
     expect(session.model).toBe(DEFAULT_MODEL)
@@ -1038,17 +1027,10 @@ describe('orchestrator startup reconciliation', () => {
 })
 
 describe('orchestrator handoff (issue.handoff on the bus)', () => {
-  /** A crew agent with its own profile, ready to receive the baton. */
+  /** The babysitter crew user seedAgentConfig already created + configured. */
   async function babysitter() {
-    const user = await createUser(db, {
-      id: uuidv7(),
-      handle: 'babysitter',
-      displayName: 'Babysitter',
-      type: 'agent',
-    })
-    const chatProfile = defined(await getProfileByName(db, 'chat'))
-    await setUserProfile(db, user.id, chatProfile.id)
-    return { user, profileId: chatProfile.id }
+    const user = defined(await getUserByHandle(db, 'babysitter'))
+    return { user }
   }
 
   /** Build the issue, then hand it from the builder to `toHandle` on the bus. */
@@ -1084,7 +1066,7 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
   it('boots the target session in the issue worktree and fires the baton turn', async () => {
     const { deps, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
-    const { user, profileId } = await babysitter()
+    const { user } = await babysitter()
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'ho01' })
     await transitionIssue(db, {
       issueId: issue.id,
@@ -1095,12 +1077,12 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
 
     await handOff(orch, issue, 'babysitter', 'PR #12 is open — take it home')
 
-    // The baton-holder's session: recorded on issue_sessions, booted with the
-    // TARGET's own profile and identity, in the SAME worktree as the builder.
+    // The baton-holder's session: recorded on issue_sessions, booted as the
+    // TARGET's own identity (its config rides on the user row), in the SAME
+    // worktree as the builder.
     const link = defined(await getIssueSession(db, issue.id, user.id))
     const session = defined(await getSession(db, link.sessionId))
     expect(session.agentUserId).toBe(user.id)
-    expect(session.profileId).toBe(profileId)
     expect(session.cwd).toBe('/wt/add-widget-ho01')
 
     // Turn 1 was the build seed; turn 2 is the baton, carrying the message and
@@ -1536,10 +1518,10 @@ describe('orchestrator handoff (issue.handoff on the bus)', () => {
 })
 
 describe('orchestrator playbooks', () => {
-  /** Seed the full crew, profiles, and standard playbooks on top of beforeEach. */
+  /** Seed the full crew, agent config, and standard playbooks on top of beforeEach. */
   async function seeded() {
     await seedCrew(db)
-    await seedAndWireProfiles(db)
+    await seedAgentConfig(db)
     await seedPlaybooks(db)
     return {
       hand: defined(await getUserByHandle(db, 'hand')),
@@ -1547,7 +1529,7 @@ describe('orchestrator playbooks', () => {
     }
   }
 
-  it('a general-playbook issue boots the hand — its own profile, a script-free prompt', async () => {
+  it('a general-playbook issue boots the hand — its own identity, a script-free prompt', async () => {
     const { deps, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
     const { hand, general } = await seeded()
@@ -1567,7 +1549,6 @@ describe('orchestrator playbooks', () => {
     const link = defined(await getIssueSession(db, issue.id, hand.id))
     const session = defined(await getSession(db, link.sessionId))
     expect(session.agentUserId).toBe(hand.id)
-    expect(session.profileId).toBe(hand.profileId) // the general profile
     expect(session.cwd).toBe('/wt/add-widget-pb01')
 
     expect(runtime.turns).toHaveLength(1)
@@ -1591,8 +1572,7 @@ describe('orchestrator playbooks', () => {
 
     const link = defined(await getIssueSession(db, issue.id, builderId))
     const session = defined(await getSession(db, link.sessionId))
-    const builderProfile = defined(await getProfileByName(db, 'builder'))
-    expect(session.profileId).toBe(builderProfile.id)
+    expect(session.agentUserId).toBe(builderId)
     expect(runtime.turns[0].text).toContain('ship-feature')
   })
 

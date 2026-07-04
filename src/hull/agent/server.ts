@@ -15,15 +15,7 @@ import {
 import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
 import { sessionTopic } from './topic'
 import { createServerRuntime } from './server-runtime'
-import {
-  CHAT_PROFILE,
-  getProfileByName,
-  listExtensions,
-  listProfiles,
-  normalizeProfileInput,
-  type ProfileInput,
-  upsertProfile,
-} from './profiles'
+import { listExtensions } from './agent-config'
 import {
   createSession,
   getMessages,
@@ -112,13 +104,11 @@ export const getAgentChat = createServerFn({ method: 'GET' })
 /**
  * Create a session from a first message and start its turn. Returns the id.
  *
- * The front-door chat boots the **chat** profile: read-only tools (read+bash),
- * no CLAUDE.md, no skills, no extensions. This deliberately removes file-write
- * from the front-door agent — it operates the ship's services and reads its
- * code, but to build or change something it files an issue (the intended end
- * state, "file an issue to build"). The builder profile, which can write, is
- * driven by M3's building agents, not this door. Falls back to the runtime
- * default if the chat profile hasn't been seeded (`npm run agent seed`).
+ * Boots with no agentUserId, so the runtime's default config applies: full
+ * coding tools, CLAUDE.md + skills, no extensions (see
+ * `DEFAULT_AGENT_CONFIG` in runtime.ts). Unattributed and unwired — the
+ * chat-pilot behavior the old front door had (read-only, no context) now
+ * belongs to a named agent's own config, not this bare door.
  *
  * @public — forward-built door, not yet wired to a route. Kept intentionally;
  * knip's unused-export gate respects @public. To be wired by the user-management
@@ -128,12 +118,10 @@ export const startAgentChat = createServerFn({ method: 'POST' })
   .validator((input: { text: string; model?: string }) => input)
   .handler(async ({ data }) => {
     const id = uuidv7()
-    const chat = await getProfileByName(db, CHAT_PROFILE.name)
     await createSession(db, {
       id,
       model: data.model ?? DEFAULT_MODEL,
       title: titleFromMessage(data.text),
-      profileId: chat?.id ?? null,
     })
     fireTurn(id, data.text)
     return { id }
@@ -160,24 +148,10 @@ export const cancelAgentChat = createServerFn({ method: 'POST' })
 
 // --- Agent management (the Agents surface) ---------------------------------
 
-/** Every profile, oldest first — the profiles list. */
-export const listAgentProfiles = createServerFn({ method: 'GET' }).handler(() =>
-  listProfiles(db),
-)
-
-/** Every registered extension — the options a profile picks from. */
+/** Every registered extension — the options an agent's config picks from. */
 export const listAgentExtensions = createServerFn({ method: 'GET' }).handler(
   () => listExtensions(db),
 )
-
-/**
- * Create a profile or update the one with the same name (idempotent by name, so
- * editing the chat/builder profile keeps its id and every session pointing at
- * it). The validator narrows the untrusted client input to a `ProfileInput`.
- */
-export const saveAgentProfile = createServerFn({ method: 'POST' })
-  .validator((input: ProfileInput) => normalizeProfileInput(input))
-  .handler(({ data }) => upsertProfile(db, data))
 
 // --- Models (the gateway surface) -------------------------------------------
 

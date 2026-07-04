@@ -3,7 +3,7 @@ import { getUserById } from '@hull/users/service'
 import { actorCmd } from '@hull/lib/actor-cmd'
 
 import { agentMemoryDir, agentMemoryIndexPath } from './memory-paths'
-import type { ResolvedProfile } from './session-config'
+import type { AgentConfig } from './session-config'
 
 /**
  * Persistent memory for named agents. Every agent crew member owns a folder in
@@ -38,14 +38,14 @@ export type AgentMemoryLoader = (
 ) => Promise<AgentMemory | null>
 
 /**
- * Fold an agent's persistent memory into the profile it boots with: identity,
+ * Fold an agent's persistent memory into the config it boots with: identity,
  * where the memory lives, the index's contents, and how to update it. Appended
- * after the profile's own system prompt so the profile still leads.
+ * after the config's own system prompt so the config still leads.
  */
 export function withAgentMemory(
-  profile: ResolvedProfile,
+  config: AgentConfig,
   memory: AgentMemory,
-): ResolvedProfile {
+): AgentConfig {
   const dir = agentMemoryDir(memory.handle)
   const indexPath = agentMemoryIndexPath(memory.handle)
   const index =
@@ -77,9 +77,9 @@ Keep ${indexPath} current: it is loaded into your system prompt at the start
 of every session, so it should orient a fresh you.`
 
   return {
-    ...profile,
-    systemPrompt: profile.systemPrompt
-      ? `${profile.systemPrompt}\n\n${preamble}`
+    ...config,
+    systemPrompt: config.systemPrompt
+      ? `${config.systemPrompt}\n\n${preamble}`
       : preamble,
   }
 }

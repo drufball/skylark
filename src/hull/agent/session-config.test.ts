@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveSessionOptions, type ResolvedProfile } from './session-config'
+import { resolveSessionOptions, type AgentConfig } from './session-config'
 
-const chat: ResolvedProfile = {
+const chat: AgentConfig = {
   systemPrompt: 'pilot',
   tools: ['read', 'bash'],
   readContextFiles: false,
@@ -11,7 +11,7 @@ const chat: ResolvedProfile = {
   model: null,
 }
 
-const builder: ResolvedProfile = {
+const builder: AgentConfig = {
   systemPrompt: 'build',
   tools: null,
   readContextFiles: true,
@@ -32,13 +32,13 @@ describe('resolveSessionOptions', () => {
     expect(session.tools).toBeUndefined()
   })
 
-  it('passes the profile system prompt to the resource loader', () => {
+  it("passes the config's system prompt to the resource loader", () => {
     expect(resolveSessionOptions(chat, '/repo').loader.systemPrompt).toBe(
       'pilot',
     )
   })
 
-  it('sets noContextFiles when the profile does not read CLAUDE.md', () => {
+  it('sets noContextFiles when the config does not read CLAUDE.md', () => {
     expect(resolveSessionOptions(chat, '/repo').loader.noContextFiles).toBe(
       true,
     )
@@ -47,13 +47,13 @@ describe('resolveSessionOptions', () => {
     )
   })
 
-  it('sets noSkills (and no skill paths) when the profile does not use repo skills', () => {
+  it('sets noSkills (and no skill paths) when the config does not use repo skills', () => {
     const { loader } = resolveSessionOptions(chat, '/repo')
     expect(loader.noSkills).toBe(true)
     expect(loader.additionalSkillPaths).toEqual([])
   })
 
-  it('loads repo skill dirs when the profile uses them', () => {
+  it('loads repo skill dirs when the config uses them', () => {
     const skillDirs = (cwd: string) => [`${cwd}/.claude/skills`]
     const { loader } = resolveSessionOptions(builder, '/repo', { skillDirs })
     expect(loader.noSkills).toBe(false)
@@ -81,7 +81,7 @@ describe('resolveSessionOptions', () => {
     ])
   })
 
-  it('passes through a profile model override', () => {
+  it("passes through a config's model override", () => {
     const withModel = { ...chat, model: 'claude-opus-4-5' }
     expect(resolveSessionOptions(withModel, '/repo').model).toBe(
       'claude-opus-4-5',

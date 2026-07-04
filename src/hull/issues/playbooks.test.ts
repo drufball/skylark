@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { defined, freshDb } from '@hull/db/test-db'
-import { seedAndWireProfiles, getProfileByName } from '@hull/agent/profiles'
+import { seedAgentConfig } from '@hull/agent/agent-config'
 import { createUser, getUserByHandle, seedCrew } from '@hull/users/service'
 
 import {
@@ -26,7 +26,7 @@ let tildeId: string
 beforeEach(async () => {
   ;({ db, close } = await freshDb())
   await seedCrew(db)
-  await seedAndWireProfiles(db)
+  await seedAgentConfig(db)
   builderId = defined(await getUserByHandle(db, 'builder')).id
   tildeId = defined(await getUserByHandle(db, 'tilde')).id
 })
@@ -314,17 +314,16 @@ describe('seedPlaybooks', () => {
     }
   })
 
-  it('gives the hand agent the general profile, not the chat default', async () => {
+  it('gives the hand agent the general config, not the chat default', async () => {
     await seedPlaybooks(db)
     const hand = defined(await getUserByHandle(db, 'hand'))
-    const generalProfile = defined(await getProfileByName(db, 'general'))
-    expect(hand.profileId).toBe(generalProfile.id)
+    expect(hand.systemPrompt).toMatch(/general-purpose/i)
+    expect(hand.tools).toBeNull()
   })
 
-  it('gives the builder its builder profile — entrypoints boot from users.profileId now', async () => {
+  it("gives the builder its builder config — entrypoints boot from the user's own config now", async () => {
     const builder = defined(await getUserByHandle(db, 'builder'))
-    const builderProfile = defined(await getProfileByName(db, 'builder'))
-    expect(builder.profileId).toBe(builderProfile.id)
+    expect(builder.systemPrompt).toMatch(/ship-feature/i)
   })
 })
 

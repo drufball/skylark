@@ -9,9 +9,9 @@ import { defined, freshDb } from '@hull/db/test-db'
 import type { AppendEventInput } from '@hull/events/service'
 import { createUser } from '@hull/users/service'
 
-import { createProfile, registerExtension } from './profiles'
+import { registerExtension } from './agent-config'
 import { createAgentRuntime, type PiSession, type TurnResult } from './runtime'
-import type { ResolvedProfile } from './session-config'
+import type { AgentConfig } from './session-config'
 import {
   appendMessage,
   createSession,
@@ -150,8 +150,8 @@ describe('agent runtime', () => {
     topic?: string
     audience?: string
   }[]
-  /** What the factory was last called with — to assert profile resolution. */
-  let factoryArgs: { profile: ResolvedProfile; cwd: string; model: string }[]
+  /** What the factory was last called with — to assert config resolution. */
+  let factoryArgs: { config: AgentConfig; cwd: string; model: string }[]
 
   beforeEach(async () => {
     ;({ db, close } = await freshDb())
@@ -160,8 +160,8 @@ describe('agent runtime', () => {
     factoryArgs = []
     runtime = createAgentRuntime({
       db,
-      factory: (profile, cwd, model) => {
-        factoryArgs.push({ profile, cwd, model })
+      factory: (config, cwd, model) => {
+        factoryArgs.push({ config, cwd, model })
         return Promise.resolve(fake)
       },
       emit: (e) => {
@@ -176,15 +176,17 @@ describe('agent runtime', () => {
   })
   afterEach(() => close())
 
-  it("resolves a session's profile + cwd and hands them to the factory", async () => {
+  it("resolves a session's agent config + cwd and hands them to the factory", async () => {
     const ext = await registerExtension(db, {
       name: 'build-gates',
       description: 'gates',
       path: 'src/hull/agent/extensions/build-gates/index.ts',
     })
-    const profile = await createProfile(db, {
-      id: 'p1',
-      name: 'builder',
+    const agent = await createUser(db, {
+      id: uuidv7(),
+      handle: 'builder',
+      displayName: 'Builder',
+      type: 'agent',
       systemPrompt: 'build',
       tools: null,
       readContextFiles: true,
@@ -195,7 +197,7 @@ describe('agent runtime', () => {
     await createSession(db, {
       id: 's1',
       model: 'm',
-      profileId: profile.id,
+      agentUserId: agent.id,
       cwd: '/tmp/worktree-x',
     })
 
@@ -205,31 +207,31 @@ describe('agent runtime', () => {
     const [args] = factoryArgs
     expect(args.cwd).toBe('/tmp/worktree-x')
     expect(args.model).toBe('m')
-    expect(args.profile.systemPrompt).toBe('build')
-    expect(args.profile.tools).toBeNull()
-    expect(args.profile.model).toBe('claude-opus-4-5')
+    expect(args.config.systemPrompt).toBe('build')
+    expect(args.config.tools).toBeNull()
+    expect(args.config.model).toBe('claude-opus-4-5')
     // extensionIds were resolved to the registry path.
-    expect(args.profile.extensionPaths).toEqual([
+    expect(args.config.extensionPaths).toEqual([
       'src/hull/agent/extensions/build-gates/index.ts',
     ])
   })
 
-  it('falls back to the default profile (full tools) when a session has none', async () => {
-    await createSession(db, { id: 's1', model: 'm' }) // no profileId, no cwd
+  it('falls back to the default config (full tools) when a session has no agent', async () => {
+    await createSession(db, { id: 's1', model: 'm' }) // no agentUserId, no cwd
     await runtime.runTurn('s1', 'hi')
     const [args] = factoryArgs
-    expect(args.profile.tools).toBeNull() // default = full coding tools
-    expect(args.profile.readContextFiles).toBe(true)
-    expect(args.profile.useRepoSkills).toBe(true)
-    expect(args.profile.extensionPaths).toEqual([])
+    expect(args.config.tools).toBeNull() // default = full coding tools
+    expect(args.config.readContextFiles).toBe(true)
+    expect(args.config.useRepoSkills).toBe(true)
+    expect(args.config.extensionPaths).toEqual([])
     expect(args.cwd).toBe(process.cwd()) // null cwd → repo root
   })
 
-  it("folds a named agent's memory into the profile it boots with", async () => {
+  it("folds a named agent's memory into the config it boots with", async () => {
     const withMemory = createAgentRuntime({
       db,
-      factory: (profile, cwd, model) => {
-        factoryArgs.push({ profile, cwd, model })
+      factory: (config, cwd, model) => {
+        factoryArgs.push({ config, cwd, model })
         return Promise.resolve(fake)
       },
       emit: () => Promise.resolve(),
@@ -251,18 +253,18 @@ describe('agent runtime', () => {
     await withMemory.runTurn('s1', 'hi')
 
     const [args] = factoryArgs
-    expect(args.profile.systemPrompt).toContain('You are @tilde')
-    expect(args.profile.systemPrompt).toContain(
+    expect(args.config.systemPrompt).toContain('You are @tilde')
+    expect(args.config.systemPrompt).toContain(
       'remembered: the dock has five slots',
     )
     withMemory.disposeAll()
   })
 
-  it('boots on the profile alone when the session has no agent identity', async () => {
+  it('boots on the config alone when the session has no agent identity', async () => {
     const withMemory = createAgentRuntime({
       db,
-      factory: (profile, cwd, model) => {
-        factoryArgs.push({ profile, cwd, model })
+      factory: (config, cwd, model) => {
+        factoryArgs.push({ config, cwd, model })
         return Promise.resolve(fake)
       },
       emit: () => Promise.resolve(),
@@ -272,7 +274,7 @@ describe('agent runtime', () => {
     })
     await createSession(db, { id: 's1', model: 'm' })
     await withMemory.runTurn('s1', 'hi')
-    expect(factoryArgs[0].profile.systemPrompt).toBeNull()
+    expect(factoryArgs[0].config.systemPrompt).toBeNull()
     withMemory.disposeAll()
   })
 
