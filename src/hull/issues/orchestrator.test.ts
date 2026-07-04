@@ -22,9 +22,7 @@ import {
 
 import {
   branchNameFor,
-  buildPrompt,
   createOrchestrator,
-  generalPrompt,
   parseWorktreeInclude,
   SLUG_FALLBACK,
   slugFromCompletion,
@@ -33,6 +31,7 @@ import {
   type Orchestrator,
   type OrchestratorDeps,
 } from './orchestrator'
+import { buildPrompt, generalPrompt } from './prompts'
 import type { IssueStatus } from './schema'
 import { getPlaybookByName, seedPlaybooks } from './playbooks'
 import {
@@ -318,6 +317,7 @@ describe('buildPrompt', () => {
         { authorHandle: 'bix', body: 'mind the empty case' },
       ],
       'builder-1',
+      'babysitter',
     )
     expect(prompt).toContain('#pp01')
     expect(prompt).toContain('Title: Make it fast')
@@ -343,7 +343,7 @@ describe('buildPrompt', () => {
       authorId,
       nano: 'pp02',
     })
-    const prompt = buildPrompt(issue, [], 'builder-1')
+    const prompt = buildPrompt(issue, [], 'builder-1', 'babysitter')
     expect(prompt).not.toContain('Thread so far')
   })
 
@@ -353,7 +353,7 @@ describe('buildPrompt', () => {
       authorId,
       nano: 'pp03',
     })
-    const prompt = buildPrompt(issue, [], 'builder-1')
+    const prompt = buildPrompt(issue, [], 'builder-1', 'babysitter')
     expect(prompt).toContain('Title: Just a title')
     expect(prompt).not.toContain('null')
     expect(prompt).not.toContain('undefined')

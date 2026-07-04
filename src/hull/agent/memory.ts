@@ -1,5 +1,6 @@
 import type { Database } from '@hull/db/client'
 import { getUserById } from '@hull/users/service'
+import { actorCmd } from '@hull/lib/actor-cmd'
 
 import { agentMemoryDir, agentMemoryIndexPath } from './memory-paths'
 import type { ResolvedProfile } from './session-config'
@@ -52,6 +53,15 @@ export function withAgentMemory(
       ? '(your index is empty — write one as you learn)'
       : memory.index.trim()
 
+  const readCmd = actorCmd(memory.userId, 'files', 'read', `${dir}/<file>`)
+  const writeCmd = actorCmd(
+    memory.userId,
+    'files',
+    'write',
+    `${dir}/<file>`,
+    '--stdin',
+  )
+
   const preamble = `You are @${memory.handle}, a named member of this ship's crew.
 
 Your persistent memory lives in the ship's shared files under ${dir}/ and
@@ -60,8 +70,8 @@ survives across sessions. Your memory index (${indexPath}) follows:
 ${index}
 
 To read or update your memory, use bash (writes attribute to you):
-  SKYLARK_ACTOR=${memory.userId} npm run files -- read ${dir}/<file>
-  SKYLARK_ACTOR=${memory.userId} npm run files -- write ${dir}/<file> --stdin
+  ${readCmd}
+  ${writeCmd}
 
 Keep ${indexPath} current: it is loaded into your system prompt at the start
 of every session, so it should orient a fresh you.`

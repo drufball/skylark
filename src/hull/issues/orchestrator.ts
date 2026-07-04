@@ -30,6 +30,7 @@ import {
 } from './handoff'
 import { BUILD_PLAYBOOK_NAME, playbookFor } from './playbooks'
 import type { IssueRow, IssueStatus } from './schema'
+import { buildPrompt, generalPrompt, handoffPrompt } from './prompts'
 
 /**
  * The orchestrator: the heart of M3 and the thing that proves the event bus. It
@@ -132,122 +133,6 @@ export async function slugFromCompletion(
  */
 export function branchNameFor(slug: string, nano: string): string {
   return `${slugify(slug)}-${nano}`
-}
-
-/**
- * The prompt a builder session is seeded with: the issue (title, body, the
- * thread so far) plus the contract for reporting back through the issue CLI.
- * Pure so the wording is reviewable and testable without booting an agent.
- */
-export function buildPrompt(
-  issue: IssueRow,
-  comments: { authorHandle: string; body: string }[],
-  /**
-   * The builder's user id, prefixed onto the issue CLI commands as
-   * `SKYLARK_ACTOR=<id>` so the agent's comments and transitions attribute to
-   * the builder. A command-level prefix sets the env for exactly that child
-   * process, so concurrent builders never race on a shared process env.
-   */
-  builderUserId: string,
-): string {
-  const thread =
-    comments.length > 0
-      ? '\n\nThread so far:\n' +
-        comments.map((c) => `- @${c.authorHandle}: ${c.body}`).join('\n')
-      : ''
-  const issueCmd = `SKYLARK_ACTOR=${builderUserId} npm run issue --`
-  return (
-    `Build this issue (#${issue.nano}).\n\n` +
-    `Title: ${issue.title}\n` +
-    (issue.body ? `\n${issue.body}\n` : '') +
-    thread +
-    '\n\nFollow the ship-feature skill through OPENING the PR: red-green TDD, ' +
-    '`npm run check` clean, branch, push, open a PR. You are already on the ' +
-    'issue branch in a dedicated worktree. Shepherding CI and merging is the ' +
-    "babysitter's job, not yours.\n\n" +
-    'Report back through the issue CLI. Always run it with the actor prefix shown ' +
-    'so your comments and transitions are attributed to you:\n' +
-    `- Once the PR is open, hand the baton as your LAST action and stop: ` +
-    `${issueCmd} handoff ${issue.nano} babysitter "PR #<n> open — <what it does>"\n` +
-    `- If you need clarification, post it and pause: ${issueCmd} comment ${issue.nano} "<question>" ` +
-    `then ${issueCmd} open ${issue.nano}, then stop and wait.\n` +
-    `- If you are stuck or the work needs a decision, ask the issue's owner as ` +
-    `your LAST action and stop: ${issueCmd} handoff ${issue.nano} OWNER "<what you did, what you need>"\n`
-  )
-}
-
-/**
- * The prompt a non-build playbook's entrypoint is seeded with: the issue and
- * thread, plus the plain CLI contract — comment, hand off (roster or OWNER),
- * pause, done. No ship-feature script, no PR talk: the issue's own words are
- * the instructions. Pure, so the wording is testable.
- */
-export function generalPrompt(
-  issue: IssueRow,
-  comments: { authorHandle: string; body: string }[],
-  /** The entrypoint agent's user id, for the SKYLARK_ACTOR command prefix. */
-  entryUserId: string,
-): string {
-  const thread =
-    comments.length > 0
-      ? '\n\nThread so far:\n' +
-        comments.map((c) => `- @${c.authorHandle}: ${c.body}`).join('\n')
-      : ''
-  const issueCmd = `SKYLARK_ACTOR=${entryUserId} npm run issue --`
-  return (
-    `Work this issue (#${issue.nano}).\n\n` +
-    `Title: ${issue.title}\n` +
-    (issue.body ? `\n${issue.body}\n` : '') +
-    thread +
-    '\n\nYou are in a dedicated worktree for this issue. The issue itself is ' +
-    'your brief — do what it asks.\n\n' +
-    'Report back through the issue CLI. Always run it with the actor prefix ' +
-    'shown so your work is attributed to you:\n' +
-    `- Post progress or findings: ${issueCmd} comment ${issue.nano} "<text>"\n` +
-    `- Pass work to another agent on this issue's playbook, as your LAST action: ` +
-    `${issueCmd} handoff ${issue.nano} <agent-handle> "<message>"\n` +
-    `- Ask the issue's owner for a decision or review (also a last action): ` +
-    `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
-    `- If you need clarification, post it and pause: ${issueCmd} comment ${issue.nano} "<question>" ` +
-    `then ${issueCmd} open ${issue.nano}, then stop and wait.\n` +
-    `- When the work is complete, run: ${issueCmd} done ${issue.nano}\n`
-  )
-}
-
-/**
- * The prompt a baton pass seeds/resumes the target agent's session with: who
- * handed it over and why, plus the same actor-prefixed CLI contract the builder
- * gets — the target reports back (and hands off further) as ITSELF. The full
- * thread is deliberately not folded in: the handoff message is the brief, and
- * `issue show` is one command away. Pure, so the wording is testable.
- */
-export function handoffPrompt(
-  issue: IssueRow,
-  fromHandle: string,
-  message: string,
-  toUserId: string,
-): string {
-  const issueCmd = `SKYLARK_ACTOR=${toUserId} npm run issue --`
-  return (
-    `@${fromHandle} handed you issue #${issue.nano}.\n\n` +
-    `Title: ${issue.title}\n\n` +
-    `Their message:\n${message}\n\n` +
-    'You are in the issue worktree, shared by every agent on this issue. ' +
-    `Read the full thread with: ${issueCmd} show ${issue.nano}\n\n` +
-    'Do your part, then report back through the issue CLI. Always run it with ' +
-    'the actor prefix shown so your work is attributed to you:\n' +
-    `- Post progress or findings: ${issueCmd} comment ${issue.nano} "<text>"\n` +
-    `- Pass the baton onward as your LAST action, then stop: ` +
-    `${issueCmd} handoff ${issue.nano} <agent-handle> "<what you did, what is needed next>"\n` +
-    `- Ask the issue's owner for a decision or review (also a last action): ` +
-    `${issueCmd} handoff ${issue.nano} OWNER "<message>"\n` +
-    // "Complete", not "merged": the baton crosses playbooks, and on a general
-    // issue done ≠ a PR. The done-teardown's merge check guards code work.
-    // LAST action: done tears down every session on the issue, including the
-    // one running this very turn — the ending must be chosen, not a surprise.
-    `- When the issue's work is complete, run ${issueCmd} done ${issue.nano} ` +
-    `as your LAST action, then stop.\n`
-  )
 }
 
 /** Is this value one of the four issue statuses? Guards untrusted event payloads. */
@@ -470,6 +355,29 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     }
   }
 
+  /**
+   * Get the babysitter handle for a build playbook: the non-entrypoint member
+   * who shepherds PRs. For the build playbook, this is the member who isn't
+   * the entrypoint (builder → babysitter). Falls back to 'babysitter' if the
+   * playbook structure is unexpected or members aren't resolved.
+   */
+  async function babysitterHandleFor(issue: IssueRow): Promise<string> {
+    const playbook = await playbookFor(db, issue)
+    if (playbook?.name !== BUILD_PLAYBOOK_NAME) {
+      return 'babysitter' // Defensive: non-build playbooks don't use this
+    }
+    // The babysitter is the member who isn't the entrypoint
+    const nonEntryIds = playbook.memberIds.filter(
+      (id) => id !== playbook.entrypointId,
+    )
+    if (nonEntryIds.length > 0) {
+      const babysitter = await getUserById(db, nonEntryIds[0])
+      if (babysitter) return babysitter.handle
+    }
+    // Fallback if the playbook is missing members or they're gone
+    return 'babysitter'
+  }
+
   /** Ensure the worktree + the entrypoint's session exist, idempotently. */
   async function ensureEntrypoint(
     issue: IssueRow,
@@ -540,7 +448,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
         const prompt = build
-          ? buildPrompt(fresh ?? issue, thread, entryUserId)
+          ? buildPrompt(
+              fresh ?? issue,
+              thread,
+              entryUserId,
+              await babysitterHandleFor(issue),
+            )
           : generalPrompt(fresh ?? issue, thread, entryUserId)
         fireTurn(issueId, sessionId, prompt)
         break
