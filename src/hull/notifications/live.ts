@@ -17,8 +17,8 @@ const deliveryHooks: ((notification: NotificationRow) => void)[] = []
 
 /**
  * Register a delivery hook (e.g. "wake the agent this notification is for").
- * Returns an unsubscribe function to remove the hook — callers must store and
- * call it on HMR cleanup to prevent hook stacking (the #xwh2 bug).
+ * Returns an unsubscribe function to remove the hook, for a caller that wants
+ * to swap or drop its hook without re-arming the whole reactor.
  */
 export function onNotificationDelivered(
   hook: (notification: NotificationRow) => void,
@@ -31,7 +31,6 @@ export function onNotificationDelivered(
 }
 
 let booted = false
-let unsubscribe: (() => void) | undefined
 
 /**
  * globalThis-based arm-once registry (defense in depth, survives module
@@ -72,9 +71,10 @@ export function ensureNotificationsReactor(): void {
   registry.armed = true
   booted = true
   // On HMR reload, module state resets but the InProcessBus subscription
-  // persists (it's in a different module). Clean up the old one first.
-  unsubscribe?.()
-  unsubscribe = subscribeToShipLog(
+  // persists (it's in a different module) — that's exactly why `registry.armed`
+  // (globalThis, survives module re-execution) is checked above instead of
+  // just `booted`: it's what keeps this subscribe from ever running twice.
+  subscribeToShipLog(
     createNotificationsReactor({
       db: systemDb,
       // deliverToHooks (tested in the service) isolates each hook, matching

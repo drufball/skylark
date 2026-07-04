@@ -9,6 +9,7 @@ import { createUser } from '@hull/users/service'
 
 import {
   createNotificationsReactor,
+  describeNotification,
   isWatching,
   listNotifications,
   unreadCount,
@@ -207,9 +208,17 @@ describe('generic reactor with self-describing events', () => {
 
     const inbox = await listNotifications(db, alice)
     expect(inbox).toHaveLength(1)
-    // The headline should be stored or derivable from the notification row
-    // For now, verify the notification was created with the right event
     expect(inbox[0].type).toBe('task.commented')
+    // The metadata headline wins over describeNotification's hardcoded
+    // fallback formatting — the whole point of a self-describing event.
+    expect(
+      describeNotification({
+        type: inbox[0].type,
+        topic: inbox[0].topic,
+        payload: inbox[0].payload,
+        actorHandle: 'bob',
+      }),
+    ).toBe('@bob commented on the task')
   })
 
   it('reconcile respects autoWatch metadata when replaying', async () => {

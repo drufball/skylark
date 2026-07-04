@@ -389,3 +389,77 @@ describe('requestHandoff — OWNER', () => {
     expect(result.toOwner).toBe(true)
   })
 })
+
+describe('requestHandoff — event type split', () => {
+  it('emits issue.handoff (no toOwner field) for baton-pass between agents', async () => {
+    const issue = await buildingIssue()
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'babysitter',
+      message: 'PR #12 is open, take it home',
+    })
+
+    const handoffs = await handoffEvents(issue.id)
+    expect(handoffs).toHaveLength(1)
+
+    const payload = handoffs[0].payload as Record<string, unknown>
+    expect(payload).toMatchObject({
+      issueId: issue.id,
+      fromUserId: builder.id,
+      toUserId: babysitter.id,
+      toHandle: 'babysitter',
+      message: 'PR #12 is open, take it home',
+    })
+    // No toOwner field in the new model
+    expect(payload).not.toHaveProperty('toOwner')
+  })
+
+  it('emits issue.owner_ping for OWNER target', async () => {
+    const issue = await buildingIssue({ ownerId: babysitter.id })
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'OWNER',
+      message: 'checks are green — merge?',
+    })
+
+    const ownerPings = await ownerPingEvents(issue.id)
+    expect(ownerPings).toHaveLength(1)
+
+    const payload = ownerPings[0].payload as Record<string, unknown>
+    expect(payload).toMatchObject({
+      issueId: issue.id,
+      fromUserId: builder.id,
+      toUserId: babysitter.id,
+      toHandle: 'babysitter',
+      message: 'checks are green — merge?',
+    })
+    // No toOwner field in the new model
+    expect(payload).not.toHaveProperty('toOwner')
+  })
+
+  it('issue.handoff events have no owner pings mixed in', async () => {
+    const issue = await buildingIssue({ ownerId: babysitter.id })
+
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'babysitter',
+      message: 'take it',
+    })
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'OWNER',
+      message: 'review this',
+    })
+
+    const handoffs = await handoffEvents(issue.id)
+    const ownerPings = await ownerPingEvents(issue.id)
+    expect(handoffs).toHaveLength(1)
+    expect(ownerPings).toHaveLength(1)
+    expect(handoffs[0].type).toBe(ISSUE_HANDOFF)
+    expect(ownerPings[0].type).toBe(ISSUE_OWNER_PING)
+  })
+})

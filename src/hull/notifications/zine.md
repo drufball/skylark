@@ -39,7 +39,10 @@ gets an inbox row → each row is announced on the owner's private
 `notify:<userId>` topic (the topic IS the entitlement) and handed to the
 delivery hooks. Guards: ephemeral events don't notify, the reactor's own
 announcements never re-fan-out, and non-public events never fan out. On boot,
-`reconcile` replays the durable issue events to recover **watches only**.
+`reconcile` does two things: it replays **every** public event on the durable
+log (not just issues — `topicPatterns: ['*']`) to recover watches, and it
+re-delivers every unread notification through the hooks, so a reload never
+strands an already-durable row unshown.
 
 **A wake, end to end.** A delivery hook hands an agent's notification to the
 waker → a debounce gathers the flurry, then the batch is grouped by the chat its
@@ -63,15 +66,19 @@ reader.
   flood late watchers; the thing itself still shows its state).
 - **Auto-watch is scoped to issue topics** for now — chat has its own surface
   and would drown the inbox.
-- **Handoffs bend the watch list, in both directions.** An `issue.handoff` with
-  `toOwner` is delivered to the owner even if they never watched (an owner ping
-  must always land); a baton pass to an agent is NEVER delivered to that agent
-  (the issues orchestrator is already driving it a turn — an inbox wake on top
-  would double-drive it). Watchers other than the target hear both kinds. The
-  handoff itself lives in the [issues zine](../issues/zine.md).
+- **Handoffs bend the watch list, in both directions.** An `issue.owner_ping` is
+  delivered to the owner even if they never watched (an owner ping must always
+  land); an `issue.handoff` baton pass to an agent is NEVER delivered to that
+  agent (the issues orchestrator is already driving it a turn — an inbox wake on
+  top would double-drive it). Watchers other than the target hear both kinds.
+  Both event types live in the [issues zine](../issues/zine.md).
 
 ## Changelog
 
+- **Housekeeping** — fixed doc drift: `reconcile` was documented as recovering
+  watches only from issue events, but it also scans every public topic and
+  re-delivers unread notifications; `issue.handoff`/`toOwner` language updated
+  to the post-#103 `issue.owner_ping` event type.
 - **#2** — Owner-aware delivery: owners auto-watch on `issue.opened`; handoffs
   target the owner or exclude the baton target.
 - **#1** — Inbox + watches + the fan-out reactor, the `notify:` visibility
