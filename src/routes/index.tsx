@@ -102,9 +102,10 @@ function ChatRoute() {
         }
       } else if (event.type === 'chat.message_posted') {
         setWorking(null)
+        void router.invalidate()
       }
     },
-    [members],
+    [members, router],
   )
   useShipLog(topics, onEvent)
 
