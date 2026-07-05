@@ -7,6 +7,7 @@ import { Dock } from '@rigging/views/dock'
 import { IssueThreadView } from '@rigging/views/issue-thread'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useLogout } from '@rigging/lib/use-logout'
 
 // The thread route: a thin mount binding /issues/$id to the thread view. Live
 // updates subscribe to the issue's own topic, so comments, status changes, and
@@ -44,9 +45,11 @@ function ThreadRoute() {
     )
   }
 
+  const onLogout = useLogout()
+
   if (!thread) {
     return (
-      <Dock active="issues" Link={Link}>
+      <Dock active="issues" Link={Link} onLogout={onLogout}>
         <div className="flex h-screen items-center justify-center p-8 text-center text-sm text-muted-foreground">
           <div>
             <p>That issue doesn&apos;t exist.</p>
@@ -60,7 +63,7 @@ function ThreadRoute() {
   }
 
   return (
-    <Dock active="issues" Link={Link}>
+    <Dock active="issues" Link={Link} onLogout={onLogout}>
       <IssueThreadView
         thread={thread}
         busy={busy}

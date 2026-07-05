@@ -1,26 +1,24 @@
 import { getCookie } from '@tanstack/react-start/server'
 
-import { type Database, db, withActor } from '@hull/db/client'
+import { getSessionUser, SESSION_COOKIE } from '@hull/auth/service'
+import { type Database, db, systemDb, withActor } from '@hull/db/client'
 
-import { getUserByHandle, getUserById, resolveActorHandle } from './service'
+import { getUserByHandle, getUserById } from './service'
 import type { UserRow } from './schema'
 
 /**
- * The thin impure edge that answers "who is acting right now?". The rule it
- * follows is pure and unit-tested (resolveActorHandle in service.ts); here we
- * only read the ambient inputs — a cookie on the web, environment variables in
- * the CLI — and turn the resolved handle (or explicit id) into a user row.
+ * The thin impure edge that answers "who is acting right now?". Here we only
+ * read the ambient inputs — a session cookie on the web, environment
+ * variables in the CLI — and turn them into a user row.
  *
- * - **Web** (`currentActor()`): a dev cookie override (`skylark_actor`, naming a
- *   known handle, for testing as different humans) wins, else the configured
- *   operator (`SKYLARK_OPERATOR`, default "captain").
+ * - **Web** (`currentActor()`): the `skylark_session` cookie, resolved against
+ *   real sessions (auth/service.ts) — the session lookup runs on `systemDb`
+ *   because there's no actor (and so no RLS context) until it resolves one.
  * - **CLI** (`cliActor()`): an explicit `SKYLARK_ACTOR=<userId>` wins outright —
  *   that's how an agent process declares its own identity — otherwise it falls
- *   back to the operator handle, the same default the web uses.
+ *   back to the operator handle (`SKYLARK_OPERATOR`). Unrelated to web
+ *   sessions: a stray browser cookie can never change who a CLI process acts as.
  */
-
-/** Cookie that overrides the web actor for testing as a different human. */
-export const ACTOR_COOKIE = 'skylark_actor'
 
 /** The slice of the environment the actor rules read (process.env fits). */
 export interface ActorEnv {
@@ -55,12 +53,7 @@ export async function cliActorOn(
 ): Promise<UserRow | undefined> {
   const explicitId = env.SKYLARK_ACTOR
   if (explicitId) return getUserById(db, explicitId)
-  const handle = resolveActorHandle({
-    context: 'cli',
-    cookieHandle: undefined,
-    operator: operatorHandle(env),
-  })
-  return getUserByHandle(db, handle)
+  return getUserByHandle(db, operatorHandle(env))
 }
 
 /**
@@ -77,18 +70,23 @@ export function requireActor(me: UserRow | undefined): UserRow {
 
 /* v8 ignore start -- impure edge: reads request cookies / the process env and
    module-level db, exercised via the doors. The rules these edges follow
-   (resolveActorHandle, cliActorOn, requireActor) are unit-tested above. */
-/** Resolve the acting user for a web request. Throws if the handle is unknown. */
+   (cliActorOn, requireActor) are unit-tested above; auth/service.ts's
+   getSessionUser is unit-tested there. */
+/**
+ * Resolve the logged-in user for a web request, or undefined if there isn't
+ * one (no cookie, or an unknown/expired session) — never throws, so route
+ * guards can use it to decide "redirect to /login" without a try/catch.
+ */
+export async function getCurrentUser(): Promise<UserRow | undefined> {
+  const token = getCookie(SESSION_COOKIE)
+  if (!token) return undefined
+  return getSessionUser(systemDb, token)
+}
+
+/** Resolve the acting user for a web request. Throws if there's no valid session. */
 export async function currentActor(): Promise<UserRow> {
-  const cookieHandle = getCookie(ACTOR_COOKIE)
-  const handle = resolveActorHandle({
-    context: 'web',
-    cookieHandle,
-    operator: operatorHandle(),
-  })
-  const user = await getUserByHandle(db, handle)
-  if (!user)
-    throw new Error(`Unknown actor handle: ${handle} (is the crew seeded?)`)
+  const user = await getCurrentUser()
+  if (!user) throw new Error('Not authenticated')
   return user
 }
 

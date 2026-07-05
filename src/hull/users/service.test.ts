@@ -11,7 +11,6 @@ import {
   getUserById,
   handleOf,
   listUsers,
-  resolveActorHandle,
   seedCrew,
   SEED_AGENTS,
   UNKNOWN_HANDLE,
@@ -204,39 +203,5 @@ describe('users service', () => {
       )
       expect(defined(await getUserByHandle(db, 'captain')).id).toBe(captain.id)
     })
-  })
-})
-
-describe('resolveActorHandle', () => {
-  // Pure resolution: given the ambient inputs, which handle wins? The actual
-  // reading of cookies/env is the thin impure edge (actor.ts); this is the rule.
-  it('prefers the dev cookie override on the web', () => {
-    expect(
-      resolveActorHandle({
-        context: 'web',
-        cookieHandle: 'bix',
-        operator: 'drufball',
-      }),
-    ).toBe('bix')
-  })
-
-  it('falls back to the configured operator on the web when no cookie', () => {
-    expect(
-      resolveActorHandle({
-        context: 'web',
-        cookieHandle: undefined,
-        operator: 'drufball',
-      }),
-    ).toBe('drufball')
-  })
-
-  it('ignores a cookie in CLI context — only the operator matters there', () => {
-    expect(
-      resolveActorHandle({
-        context: 'cli',
-        cookieHandle: 'bix',
-        operator: 'drufball',
-      }),
-    ).toBe('drufball')
   })
 })

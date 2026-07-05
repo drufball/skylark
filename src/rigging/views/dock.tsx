@@ -6,6 +6,7 @@ import {
   Boxes,
   FolderOpen,
   Hammer,
+  LogOut,
   MessageSquare,
 } from 'lucide-react'
 
@@ -53,11 +54,13 @@ export interface DockProps {
   active: DockSection
   /** The router's Link component (or a stand-in in tests). */
   Link: DockLink
+  /** Ends the session and returns to /login. */
+  onLogout: () => void
   children: ReactNode
 }
 
 /** The app shell: a slim left rail of sections, with the active surface beside it. */
-export function Dock({ active, Link, children }: DockProps) {
+export function Dock({ active, Link, onLogout, children }: DockProps) {
   return (
     <div className="flex h-screen bg-background text-foreground">
       <nav className="flex w-16 shrink-0 flex-col items-center gap-1 border-r bg-muted/30 py-3">
@@ -73,6 +76,14 @@ export function Dock({ active, Link, children }: DockProps) {
             Link={Link}
           />
         ))}
+        <button
+          type="button"
+          onClick={onLogout}
+          className="mt-auto flex w-14 flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        >
+          <LogOut className="size-5" />
+          Log out
+        </button>
       </nav>
       <div className="min-w-0 flex-1">{children}</div>
     </div>

@@ -11,6 +11,7 @@ import { Dock } from '@rigging/views/dock'
 import { FilesView } from '@rigging/views/files'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useLogout } from '@rigging/lib/use-logout'
 
 // The files route: a thin mount binding /files to the shared-documents view and
 // the files service. `?path=` selects the open file (deep-linkable). Live
@@ -71,8 +72,9 @@ function FilesRoute() {
     })
   }
 
+  const onLogout = useLogout()
   return (
-    <Dock active="files" Link={Link}>
+    <Dock active="files" Link={Link} onLogout={onLogout}>
       <FilesView
         files={files}
         selected={selected}

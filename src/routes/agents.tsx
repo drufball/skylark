@@ -31,6 +31,7 @@ import { Dock } from '@rigging/views/dock'
 import { cn } from '@rigging/lib/utils'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useLogout } from '@rigging/lib/use-logout'
 
 // The Agents surface: the dedicated agent-management view. Three sub-tabs —
 // the session **monitor** (the old front-door chat ux, which was only ever a
@@ -194,8 +195,9 @@ function AgentsRoute() {
     model: m.model,
   }))
 
+  const onLogout = useLogout()
   return (
-    <Dock active="agents" Link={Link}>
+    <Dock active="agents" Link={Link} onLogout={onLogout}>
       <div className="flex h-full flex-col">
         <TabBar
           tab={tab}
