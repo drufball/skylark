@@ -12,9 +12,11 @@ import appCss from '@rigging/styles.css?url'
 
 // Any route reroutes to /login unless there's a valid session — this is UX
 // only (an instant redirect instead of every door throwing "Not
-// authenticated"); the real enforcement is currentActor() itself, which every
-// web door already runs through. /login and /signup are the two doors into
-// the ship, so they're exempt.
+// authenticated"). The real enforcement is per-door, not this redirect: a
+// createServerFn is directly RPC-invocable, bypassing beforeLoad entirely, so
+// each door is responsible for its own currentActor()/withCurrentActor() check
+// — this only covers doors reached by page navigation. /login and /signup are
+// the two doors into the ship, so they're exempt here.
 const PUBLIC_PATHS = new Set(['/login', '/signup'])
 
 export const Route = createRootRoute({

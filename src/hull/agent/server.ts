@@ -156,8 +156,11 @@ export const listAgentExtensions = createServerFn({ method: 'GET' }).handler(
 // --- Models (the gateway surface) -------------------------------------------
 
 /** The model a new session defaults to (the resolved SKYLARK_DEFAULT_MODEL). */
-export const getDefaultModel = createServerFn({ method: 'GET' }).handler(() =>
-  Promise.resolve({ ref: defaultModelRef() }),
+export const getDefaultModel = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    await currentActor()
+    return { ref: defaultModelRef() }
+  },
 )
 
 /** What the gateway probe reports: reachable + the model names it serves. */
@@ -176,6 +179,7 @@ export interface GatewayModels {
  */
 export const listGatewayModels = createServerFn({ method: 'GET' }).handler(
   async (): Promise<GatewayModels> => {
+    await currentActor()
     try {
       const res = await fetch(`${gatewayBaseUrl()}/models`, {
         headers: { authorization: `Bearer ${gatewayApiKey()}` },
