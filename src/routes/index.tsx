@@ -29,6 +29,7 @@ import {
 import { Dock } from '@rigging/views/dock'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLog, type ShipLogEvent } from '@rigging/lib/use-ship-log'
+import { useLogout } from '@rigging/lib/use-logout'
 
 // The ship's front door: chat with the crew. Participant-focused — it opens your
 // most recent conversation, since you keep messaging the same people with new
@@ -153,8 +154,9 @@ function ChatRoute() {
     type: c.type,
   }))
 
+  const onLogout = useLogout()
   return (
-    <Dock active="chat" Link={Link}>
+    <Dock active="chat" Link={Link} onLogout={onLogout}>
       <ChatView
         chats={chatItems}
         activeId={activeId}

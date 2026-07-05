@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Dock, type DockLink } from './dock'
 import { classTokensOf } from './test-support'
@@ -18,7 +18,7 @@ const FakeLink: DockLink = ({ to, className, children }) => (
 describe('Dock', () => {
   it('renders the chat, issues, files, agents, and models links and the children', () => {
     render(
-      <Dock active="issues" Link={FakeLink}>
+      <Dock active="issues" Link={FakeLink} onLogout={() => undefined}>
         <p>surface</p>
       </Dock>,
     )
@@ -45,7 +45,7 @@ describe('Dock', () => {
 
   it('marks Files active on the files surface', () => {
     render(
-      <Dock active="files" Link={FakeLink}>
+      <Dock active="files" Link={FakeLink} onLogout={() => undefined}>
         <span />
       </Dock>,
     )
@@ -56,7 +56,7 @@ describe('Dock', () => {
 
   it('flags only the active section for assistive tech', () => {
     render(
-      <Dock active="issues" Link={FakeLink}>
+      <Dock active="issues" Link={FakeLink} onLogout={() => undefined}>
         <span />
       </Dock>,
     )
@@ -69,11 +69,22 @@ describe('Dock', () => {
 
   it('highlights only the active section', () => {
     render(
-      <Dock active="issues" Link={FakeLink}>
+      <Dock active="issues" Link={FakeLink} onLogout={() => undefined}>
         <span />
       </Dock>,
     )
     expect(classTokensOf('Issues', 'a')).toContain('bg-accent')
     expect(classTokensOf('Chat', 'a')).not.toContain('bg-accent')
+  })
+
+  it('calls onLogout when the log-out control is clicked', () => {
+    const onLogout = vi.fn()
+    render(
+      <Dock active="issues" Link={FakeLink} onLogout={onLogout}>
+        <span />
+      </Dock>,
+    )
+    fireEvent.click(screen.getByText('Log out'))
+    expect(onLogout).toHaveBeenCalledOnce()
   })
 })

@@ -10,7 +10,7 @@ import {
 import { runShipLogStream } from '@hull/events/replay-stream'
 import { parseTopics } from '@hull/events/sse'
 import { canSeeTopic } from '@hull/access/visibility'
-import { currentActor } from '@hull/users/actor'
+import { currentSession } from '@hull/auth/server'
 
 // The ship's log, streamed. A GET here is a Server-Sent-Events connection: the
 // browser's EventSource opens it, the server keeps it open, and every event the
@@ -37,10 +37,16 @@ export const Route = createFileRoute('/api/stream')({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        // Who are you? Refuse before replaying anyone's transcript. Throws if
-        // no actor resolves (e.g. crew unseeded) — a 500 is the right answer:
-        // an unauthenticated caller gets no stream. The id gates entitlement.
-        const actor = await currentActor()
+        // Who are you? Refuse before replaying anyone's transcript. A 500 is
+        // the right answer for no session: an unauthenticated caller gets no
+        // stream. The id gates entitlement. Goes through the auth door
+        // (currentSession, a createServerFn) rather than calling
+        // users/actor.ts's currentActor() directly — routes are isomorphic and
+        // bundled client-side, and only a createServerFn boundary lets the
+        // build tree-shake away auth/service.ts's node:crypto use
+        // (architecture.test.ts enforces this).
+        const actor = await currentSession()
+        if (!actor) throw new Error('Not authenticated')
 
         ensureShipLogListener()
 

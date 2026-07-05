@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 
+import { loginAs, loginAsOperator } from './auth'
 import { addMessage, createChat } from '../src/hull/chat/service'
 import { chatTopic } from '../src/hull/chat/topic'
 import type { Database } from '../src/hull/db/client'
@@ -46,6 +47,7 @@ function collectFrames(
 }
 
 let privateChatTopic: string
+let samId: string
 
 test.beforeAll(async () => {
   // Plant the fixture as the superuser, on the same smoke db the app uses.
@@ -55,13 +57,21 @@ test.beforeAll(async () => {
   )
   const sysDb: Database = drizzle(sql)
   try {
-    const sam = uuidv7()
-    await createUser(sysDb, {
-      id: sam,
-      handle: 'sam',
-      displayName: 'Sam',
-      type: 'human',
-    })
+    // Idempotent: a Playwright worker restart after a failure re-runs
+    // beforeAll without re-truncating the db, so re-planting must tolerate an
+    // already-seeded fixture rather than crash on the handle's unique
+    // constraint.
+    const existingSam = await getUserByHandle(sysDb, 'sam')
+    const sam = existingSam?.id ?? uuidv7()
+    samId = sam
+    if (!existingSam) {
+      await createUser(sysDb, {
+        id: sam,
+        handle: 'sam',
+        displayName: 'Sam',
+        type: 'human',
+      })
+    }
     const tilde = await getUserByHandle(sysDb, 'tilde')
     if (!tilde) throw new Error('tilde not seeded — global-setup should have')
     const chatId = uuidv7()
@@ -82,8 +92,9 @@ test.beforeAll(async () => {
 test('the live stream hides a private chat from a non-member', async ({
   browser,
 }) => {
-  // Default web actor is the operator, who is NOT in the chat.
+  // The operator is logged in but NOT in the chat.
   const page = await browser.newPage()
+  await loginAsOperator(page)
   await page.goto('/')
   const frames = await collectFrames(page, privateChatTopic, 2500)
   expect(frames).toHaveLength(0) // RLS, as app_user, hides every event
@@ -93,12 +104,9 @@ test('the live stream hides a private chat from a non-member', async ({
 test('the live stream delivers a private chat to a member', async ({
   browser,
 }) => {
-  // Act as sam (a member) via the dev actor cookie.
   const ctx = await browser.newContext()
-  await ctx.addCookies([
-    { name: 'skylark_actor', value: 'sam', domain: 'localhost', path: '/' },
-  ])
   const page = await ctx.newPage()
+  await loginAs(page, samId) // sam is a member
   await page.goto('/')
   const frames = await collectFrames(page, privateChatTopic, 2500)
   expect(frames.some((f) => f.type === 'chat.message_posted')).toBe(true)

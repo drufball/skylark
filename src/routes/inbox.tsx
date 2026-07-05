@@ -6,6 +6,7 @@ import { Dock } from '@rigging/views/dock'
 import { InboxView } from '@rigging/views/inbox'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useLogout } from '@rigging/lib/use-logout'
 
 // The inbox route: a thin mount binding /inbox to the notifications service.
 // Live updates ride the ship's log — every notification is announced on the
@@ -28,8 +29,9 @@ function InboxRoute() {
     await run(() => markInboxRead())
   }
 
+  const onLogout = useLogout()
   return (
-    <Dock active="inbox" Link={Link}>
+    <Dock active="inbox" Link={Link} onLogout={onLogout}>
       <InboxView
         entries={items}
         unread={unread}

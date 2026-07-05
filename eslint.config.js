@@ -118,6 +118,14 @@ export default defineConfig(
       // The notifications reactor fans out inbox rows ACROSS users — plumbing
       // no single actor's RLS context could run.
       'src/hull/notifications/live.ts',
+      // Auth bootstrapping: resolving "who is this?" (session lookup) and
+      // signup/login/logout necessarily run BEFORE an actor — and so an RLS
+      // context — exists. credentials/sessions are RLS-locked to deny even
+      // app_user (migration 0022), so this is the one place identity can be
+      // established or handed a cookie at all.
+      'src/hull/users/actor.ts',
+      'src/hull/auth/server.ts',
+      'src/hull/auth/cli.ts',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },

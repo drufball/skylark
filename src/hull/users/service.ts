@@ -8,9 +8,9 @@ import { users, type UserRow } from './schema'
 /**
  * Pure persistence logic for the users service — the crew aboard the ship. Like
  * every service it's database-agnostic: hand it any drizzle database (live
- * Postgres, or PGlite in tests) and it touches only its own `users` table. The
- * cookie/env reading that picks *who the actor is* lives in actor.ts, the thin
- * impure edge; the rule it follows (resolveActorHandle) is here and unit-tested.
+ * Postgres, or PGlite in tests) and it touches only its own `users` table. Who
+ * is acting — a real session on the web, an env var on the CLI — is resolved
+ * in actor.ts (the web session lookup delegates to hull/auth/service.ts).
  */
 
 export type UserType = UserRow['type']
@@ -163,23 +163,4 @@ export async function seedCrew(
     if (existing) continue
     await createUser(db, { id: uuidv7(), ...member })
   }
-}
-
-/**
- * Which user handle is the actor, given the ambient inputs? The rule, kept pure
- * so it's trivially testable:
- * - **web**: a dev cookie override (test as a different human) wins, else the
- *   configured operator.
- * - **cli**: the operator only — the cookie is a browser concept and is ignored
- *   so a stray cookie can never change who the CLI acts as. (The CLI's own
- *   explicit identity override, SKYLARK_ACTOR, is a userId handled in actor.ts,
- *   upstream of this handle resolution.)
- */
-export function resolveActorHandle(input: {
-  context: 'web' | 'cli'
-  cookieHandle: string | undefined
-  operator: string
-}): string {
-  if (input.context === 'web' && input.cookieHandle) return input.cookieHandle
-  return input.operator
 }

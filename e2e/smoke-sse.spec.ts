@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { loginAsOperator } from './auth'
 import { commentOnIssue, openIssue } from './helpers'
 
 // SSE smoke: the highest-value wiring check. Proves the EventSource ↔
@@ -46,6 +47,7 @@ test('an event is delivered live to a separately connected client', async ({
   // The real "replaces polling" promise: one client's action reaches another's
   // already-open stream live (no reload). watcher holds the stream; actor acts.
   const watcher = await browser.newPage()
+  await loginAsOperator(watcher)
   await watcher.goto('/issues')
   await openIssueStream(watcher)
 
@@ -58,6 +60,7 @@ test('an event is delivered live to a separately connected client', async ({
   // durable issue.commented event → pg_notify → the in-process bus → every open
   // stream, including the watcher's.
   const actor = await browser.newPage()
+  await loginAsOperator(actor)
   await actor.goto('/issues')
   const title = `smoke-live-${String(Date.now())}`
   await openIssue(actor, title)
@@ -77,6 +80,7 @@ test('an event is delivered live to a separately connected client', async ({
 test('reconnecting with Last-Event-ID does not re-deliver what was already seen', async ({
   page,
 }) => {
+  await loginAsOperator(page)
   await page.goto('/issues')
 
   // Seed one issue so the stream has at least one durable event to replay.
