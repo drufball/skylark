@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# scripts/setup-tunnel — expose Skylark publicly over Cloudflare Tunnel, so
+# you can reach it from a phone or laptop anywhere without opening a port on
+# your router or putting anyone on a VPN. Deliberately NOT called from hoist:
+# it needs your own Cloudflare account, a domain already in it, and a
+# one-time browser login — none of which can be scripted around. Run it
+# yourself whenever you're ready; idempotent, safe to re-run.
+#
+# Security note: only run this once real auth is in place (see
+# hull/auth/zine.md) — this makes the ship reachable from the open internet,
+# gated by whatever's actually enforcing login at that point.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+TUNNEL_NAME="skylark"
+
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "cloudflared isn't installed — run ./scripts/install-system-deps first (or ./scripts/hoist)."
+  exit 1
+fi
+
+if [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
+  echo "Not logged into Cloudflare yet."
+  read -rp "Run 'cloudflared tunnel login' now? This opens a browser. [Y/n] " reply
+  case "$reply" in
+    n | N | no | No)
+      echo "Skipped — re-run this script once you're ready."
+      exit 0
+      ;;
+  esac
+  cloudflared tunnel login
+fi
+
+# Look up an existing tunnel's id by name — node instead of jq, since node's
+# already a hard requirement and jq isn't installed by scripts/install-system-deps.
+tunnel_id_for() {
+  cloudflared tunnel list -o json 2>/dev/null | node -e '
+    const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    const t = data.find((t) => t.name === process.argv[1]);
+    if (t) process.stdout.write(t.id);
+  ' "$1"
+}
+
+TUNNEL_ID="$(tunnel_id_for "$TUNNEL_NAME")"
+if [ -z "$TUNNEL_ID" ]; then
+  echo "→ creating tunnel \"$TUNNEL_NAME\"…"
+  cloudflared tunnel create "$TUNNEL_NAME"
+  TUNNEL_ID="$(tunnel_id_for "$TUNNEL_NAME")"
+else
+  echo "  ✓ tunnel \"$TUNNEL_NAME\" already exists"
+fi
+
+read -rp "Hostname to route to this ship (e.g. skylark.yourdomain.com), blank to skip: " HOSTNAME
+if [ -z "$HOSTNAME" ]; then
+  echo "Skipped DNS routing — re-run this script once you have a domain ready."
+  exit 0
+fi
+
+cloudflared tunnel route dns "$TUNNEL_NAME" "$HOSTNAME"
+
+CONFIG_DIR="$HOME/.cloudflared"
+mkdir -p "$CONFIG_DIR"
+cat >"$CONFIG_DIR/config.yml" <<EOF
+tunnel: ${TUNNEL_ID}
+credentials-file: ${CONFIG_DIR}/${TUNNEL_ID}.json
+ingress:
+  - hostname: ${HOSTNAME}
+    service: http://localhost:3000
+  - service: http_status:404
+EOF
+
+echo "→ installing the tunnel as a system service (needs sudo)…"
+sudo cloudflared service install
+
+echo "✓ tunnel ready — https://${HOSTNAME} should reach this ship."
