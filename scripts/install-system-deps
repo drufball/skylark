@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# scripts/install-system-deps — the host tools Skylark and its agents need, on
+# macOS (Linux is a later issue). Idempotent: every step checks before
+# installing, so re-running is fast and safe once everything's there.
+#
+# NOT part of scripts/setup: setup runs on every session — worktrees, CI, this
+# very session — and has to stay instant. This only runs from scripts/hoist, a
+# human, top-level action, so it's fine for it to take a while the first time.
+set -euo pipefail
+
+echo "→ checking system dependencies"
+
+if ! command -v brew >/dev/null 2>&1; then
+  echo "  installing Homebrew…"
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  # Pick up whichever prefix the installer used so the rest of this script
+  # (and this shell) can see `brew` without a fresh terminal.
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+fi
+
+install_formula() {
+  local formula="$1"
+  if brew list --formula "$formula" >/dev/null 2>&1; then
+    echo "  ✓ $formula already installed"
+  else
+    echo "  installing $formula…"
+    brew install "$formula"
+  fi
+}
+
+install_cask() {
+  local cask="$1"
+  if brew list --cask "$cask" >/dev/null 2>&1; then
+    echo "  ✓ $cask already installed"
+  else
+    echo "  installing $cask…"
+    brew install --cask "$cask"
+  fi
+}
+
+# Node itself: skip if some version is already on PATH (a version-manager
+# user — nvm, fnm — already has their own; this is only the no-node-at-all
+# fallback). Doesn't try to pin the exact .nvmrc version.
+command -v node >/dev/null 2>&1 || install_formula node
+
+install_formula gh
+install_formula cloudflared
+
+# Docker Desktop is an app, not a brew-managed daemon — install the cask if
+# missing, then launch and wait for the socket.
+command -v docker >/dev/null 2>&1 || install_cask docker
+
+if ! docker info >/dev/null 2>&1; then
+  echo "  starting Docker Desktop…"
+  open -a Docker
+  echo "  waiting for the Docker daemon (up to 90s)…"
+  ready=0
+  for _ in $(seq 1 90); do
+    if docker info >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ready" != "1" ]; then
+    # First run can need one manual click to grant Docker's privileged
+    # helper access — that dialog can't be scripted around.
+    echo "  ⚠ Docker still isn't responding — open Docker Desktop, approve any"
+    echo "    permission prompt, and re-run ./scripts/hoist."
+  fi
+fi
+
+echo "✓ system dependencies ready"

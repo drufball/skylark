@@ -26,8 +26,10 @@ Start here:
 ## Commands
 
 ```
-./scripts/setup          bootstrap a fresh clone/worktree/session (idempotent)
-./scripts/hoist          setup + Postgres + LLM gateway + dev — the "go live" one move
+./scripts/setup          bootstrap a fresh clone/worktree/session (idempotent, fast — every session runs this)
+./scripts/hoist          the full "go live" move on a fresh machine: system deps, .env/LLM keys, then a
+                         persistent service (macOS: launchd; elsewhere: foreground) — see Working notes
+./scripts/setup-tunnel   expose the ship publicly via Cloudflare Tunnel (manual, one-time, macOS)
 npm run dev              start the ship (port 3000)
 npm run agent            the agent service CLI (sessions, seed, extensions)
 npm run users            the users service CLI (seed, list, whoami)
@@ -106,6 +108,27 @@ disabled. The weekly sweeps and their secrets are documented in
   and PR'd.
 - The app degrades to "database: down" when Postgres is asleep rather than
   crashing.
+- **Home-server provisioning** (macOS-only for now) lives in `scripts/`,
+  orchestrated by `hoist`, never by `setup` — `setup` runs on every session
+  (worktrees, CI, this one) and has to stay instant and non-interactive:
+  - `install-system-deps` — installs Homebrew (if missing), then Node, `gh`,
+    `cloudflared`, and Docker Desktop via `brew`; idempotent, checks before
+    installing each.
+  - `configure-env` — interactively fills in `.env`: which LLM provider(s) to
+    use + API keys (also wires a `{provider}/*` route into `litellm.config.yaml`
+    for anything beyond the pre-wired Anthropic), and the `SKYLARK_INVITE_CODE`
+    real signups need. Skips itself in CI or a non-interactive shell; never
+    re-prompts for an already-set value.
+  - `install-launchd` — installs a per-user LaunchAgent
+    (`~/Library/LaunchAgents/com.skylark.serve.plist`) running `scripts/serve`
+    (Postgres + gateway + migrate + seed + `npm run dev`), so the ship survives
+    reboots and restarts itself if it crashes. `KeepAlive` only acts on an
+    actual process exit — it doesn't fight Vite's hot-reload, which never exits
+    the process for an ordinary file change.
+  - `setup-tunnel` — the only manual, human-run step: logs into Cloudflare
+    (`cloudflared tunnel login`), creates a named tunnel, routes DNS to a
+    hostname you choose, and installs `cloudflared` as its own system service.
+    Not part of `hoist` since it needs your own Cloudflare account/domain.
 
 ## The crew
 

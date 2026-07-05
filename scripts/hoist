@@ -1,38 +1,49 @@
 #!/usr/bin/env bash
-# scripts/hoist — bring the ship up.
+# scripts/hoist — bring the ship up AND keep it up. Provisions a fresh
+# machine (system deps, .env / LLM provider keys), then hands off to a
+# persistent service so the ship survives reboots and crashes without a
+# terminal open. On macOS that's launchd (see scripts/install-launchd);
+# elsewhere — a later issue — hoist just runs scripts/serve in the
+# foreground, same as always.
 #
-# In Skylark, `npm run dev` IS the production server. hoist is that one move,
-# plus a setup if you've never run it. (The tunnel to the open sea — log in from
-# any phone — lands in a later issue.)
+# Public access (Cloudflare Tunnel) is a deliberately separate, manual step —
+# see scripts/setup-tunnel — since it needs your own Cloudflare account/domain
+# and a one-time browser login. hoist never blocks on it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-[ -d node_modules ] || ./scripts/setup
+./scripts/setup
 
-# Bring up Postgres and the LLM gateway, WAITING for health — `up --wait`
-# blocks on each service's healthcheck, so migrate/seed below can't race a
-# still-booting server (#u4ct). (Assumes Docker is running — making hoist
-# start Docker itself is a later issue.) If it can't, sail anyway: the app
-# degrades to "database: down" / "gateway: unreachable" rather than refusing
-# to start.
-if docker compose up -d --wait; then
-  # Migrate and seed the crew so a fresh ship boots with a resolvable actor —
-  # currentActor() needs at least the operator aboard. Both are idempotent, and
-  # best-effort: a hiccup here never blocks `npm run dev`.
-  npm run db:migrate || echo "⚠ couldn't apply migrations — continuing anyway"
-  npm run users seed || echo "⚠ couldn't seed the crew — continuing anyway"
+if [ "$(uname)" = "Darwin" ]; then
+  ./scripts/install-system-deps
+fi
+
+./scripts/configure-env
+
+if [ "$(uname)" != "Darwin" ]; then
+  echo "⚠ no persistent-service support yet outside macOS — running in the foreground."
+  exec ./scripts/serve
+fi
+
+./scripts/install-launchd
+
+echo "→ waiting for the service to come up…"
+ready=0
+for _ in $(seq 1 30); do
+  if curl -fsS http://localhost:3000/status >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+
+echo
+if [ "$ready" = "1" ]; then
+  echo "✓ Skylark is up at http://localhost:3000"
 else
-  echo "⚠ couldn't start Postgres + gateway — is Docker running? continuing anyway"
+  echo "⚠ didn't respond within 30s — check the logs: ~/Library/Logs/skylark/serve.log"
 fi
-
-# Export the default model override so the dev server inherits it at spawn.
-# DEFAULT_MODEL is read once when the agent module is imported, so the value
-# must be in the environment before then; exporting here guarantees that
-# regardless of when the framework loads .env. (CLIs get it from .env via
-# --env-file; this line is the dev-server path, since a child script can't set
-# its parent's env.)
-if [ -f .env ] && grep -q '^SKYLARK_DEFAULT_MODEL=' .env; then
-  export "$(grep '^SKYLARK_DEFAULT_MODEL=' .env | tail -n1)"
-fi
-
-exec npm run dev
+echo "  Runs as a persistent service — survives logout and reboot."
+echo "  Logs:          ~/Library/Logs/skylark/serve.log"
+echo "  Status:        launchctl print gui/$(id -u)/com.skylark.serve"
+echo "  Public access: ./scripts/setup-tunnel (whenever you're ready)"

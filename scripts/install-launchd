@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# scripts/install-launchd — installs a per-user LaunchAgent that runs
+# scripts/serve, so Skylark survives reboots and restarts itself if it ever
+# crashes, without a terminal open. A LaunchAgent (not a LaunchDaemon) runs in
+# your own login session — no sudo, fine for a Mac that stays logged in.
+# Idempotent: safe to re-run any time, e.g. after editing .env.
+#
+# `KeepAlive` only restarts the process if it actually EXITS (crash or
+# reboot) — it never touches a process that's still running, so it doesn't
+# fight with Vite's hot-reload (which never exits the Node process for an
+# ordinary file change; see CLAUDE.md — `npm run dev` IS production here).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+REPO_DIR="$(pwd)"
+LABEL="com.skylark.serve"
+PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+LOG_DIR="$HOME/Library/Logs/skylark"
+UID_NUM="$(id -u)"
+
+mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
+
+# A plain Homebrew + system PATH won't find a version-manager Node (nvm, fnm)
+# — and launchd's `-lc` login shell won't source the ~/.zshrc or ~/.bashrc
+# those typically init from, so the service can't rely on discovering it
+# itself. Resolve whatever `node` THIS shell currently sees (installed by
+# scripts/install-system-deps or a version manager) and bake its directory
+# into the plist's PATH, so the persistent service finds the same node this
+# install ran with regardless of how it got there.
+BASE_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SERVICE_PATH="$BASE_PATH"
+if NODE_BIN="$(command -v node)"; then
+  NODE_DIR="$(dirname "$NODE_BIN")"
+  case ":${BASE_PATH}:" in
+    *":${NODE_DIR}:"*) ;;
+    *) SERVICE_PATH="${NODE_DIR}:${BASE_PATH}" ;;
+  esac
+fi
+
+cat >"$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd "${REPO_DIR}" &amp;&amp; exec ./scripts/serve</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${REPO_DIR}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${LOG_DIR}/serve.log</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_DIR}/serve.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${SERVICE_PATH}</string>
+  </dict>
+</dict>
+</plist>
+PLIST_EOF
+
+# bootout is a no-op (ignored) if it wasn't loaded yet — this is how we pick
+# up a changed plist (a new REPO_DIR, edited env) on re-run.
+launchctl bootout "gui/${UID_NUM}" "$PLIST" >/dev/null 2>&1 || true
+launchctl bootstrap "gui/${UID_NUM}" "$PLIST"
+launchctl enable "gui/${UID_NUM}/${LABEL}"
+
+echo "✓ persistent service installed (${LABEL})"
