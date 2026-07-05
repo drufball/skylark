@@ -20,6 +20,23 @@ UID_NUM="$(id -u)"
 
 mkdir -p "$LOG_DIR" "$HOME/Library/LaunchAgents"
 
+# A plain Homebrew + system PATH won't find a version-manager Node (nvm, fnm)
+# — and launchd's `-lc` login shell won't source the ~/.zshrc or ~/.bashrc
+# those typically init from, so the service can't rely on discovering it
+# itself. Resolve whatever `node` THIS shell currently sees (installed by
+# scripts/install-system-deps or a version manager) and bake its directory
+# into the plist's PATH, so the persistent service finds the same node this
+# install ran with regardless of how it got there.
+BASE_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SERVICE_PATH="$BASE_PATH"
+if NODE_BIN="$(command -v node)"; then
+  NODE_DIR="$(dirname "$NODE_BIN")"
+  case ":${BASE_PATH}:" in
+    *":${NODE_DIR}:"*) ;;
+    *) SERVICE_PATH="${NODE_DIR}:${BASE_PATH}" ;;
+  esac
+fi
+
 cat >"$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,7 +63,7 @@ cat >"$PLIST" <<PLIST_EOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>${SERVICE_PATH}</string>
   </dict>
 </dict>
 </plist>

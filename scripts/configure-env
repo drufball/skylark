@@ -93,7 +93,10 @@ if env_has SKYLARK_INVITE_CODE; then
 else
   read -rp "  Set an invite code now (blank to generate a random one): " code
   if [ -z "$code" ]; then
-    code="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 12)"
+    # `head -c` closing the pipe early sends tr a SIGPIPE; under this script's
+    # `pipefail` that reads as failure and set -e would abort here, before the
+    # code is ever saved. Isolate pipefail to the subshell computing $().
+    code="$(set +o pipefail; LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 12)"
     echo "  generated: $code"
   fi
   set_env SKYLARK_INVITE_CODE "$code"
