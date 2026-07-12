@@ -2,23 +2,32 @@
 
 ## Recent Work
 
-### Issue #en2b: Sidebar/dock sticky positioning (PR #125)
-- **Status**: PR open, handed to @babysitter
-- **What**: Dock shell + every view's aside+content split (chat.tsx,
-  agent-chat.tsx, files.tsx, issue-board.tsx, issue-thread.tsx, inbox.tsx)
-  now clips its own row (`overflow-hidden`) and every flex child that could
-  grow past its share carries `min-h-0`, so each side's own `ScrollArea`
-  scrolls independently — a tall content pane no longer drags the
-  sidebar/dock away with it.
-- **Pattern**: shell = `h-full`/`h-screen` + `overflow-hidden`; each flex
-  child that holds a `ScrollArea` (or grows) needs `min-h-0`; the
-  `ScrollArea`'s own className needs `min-h-0 flex-1` too, not just `flex-1`.
-  Dock's own routed-surface wrapper carries `overflow-y-auto` as a fallback
-  for surfaces with no internal scroll of their own (e.g. Models).
-- **Note**: found the branch already had dock.tsx + chat.tsx partially fixed
-  from an earlier incomplete session (uncommitted) — reused/extended that
-  work rather than redoing it. Also found package-lock.json had spurious
-  npm-version-drift diffs (see gotcha below) — reverted before committing.
+### Issue #en2b: Sidebar/dock sticky positioning fix (PR #125)
+- **Status**: PR open (mergeable, CI running), baton with @babysitter
+- **What**: Fixed desktop layout bug where the sidebar/dock scrolled away with
+  tall content instead of staying pinned to the viewport.
+- **Pattern**: outer shell `h-full`/`h-screen` + `overflow-hidden` on the row;
+  every flex child that could grow past its share gets `min-h-0` so its own
+  `ScrollArea` (or Dock's `overflow-y-auto` fallback for scroll-less surfaces
+  like Models) is what scrolls — never the row.
+- **Gotcha — race with a concurrently-merging PR**: while this branch was in
+  flight, PR #124 (mobile collapsible sidebar, `CollapsibleSidebar` component)
+  merged to main first, touching the same three files (chat.tsx,
+  agent-chat.tsx, files.tsx). Rebasing onto main after that conflicted in
+  exactly those files — mechanical, not conceptual: just reapply the
+  min-h-0/overflow-hidden classes onto the CollapsibleSidebar-wrapped markup.
+  Lesson: before opening a PR (or if one sits pushed for a while), check
+  `git fetch && git rebase origin/main` early to catch this while it's still
+  fresh in context, rather than after the fact.
+- **Gotcha — flaky test timeouts under system load**: `npm run check` failed
+  with 251 failed tests / Hook-timed-out errors once — turned out to be stray
+  concurrent `vitest` processes from earlier session attempts (and other
+  worktrees' dev servers) competing for the same PGlite/CPU resources on a
+  heavily loaded machine (load avg 20+ on 12 cores). Killed stray `vitest`/`npm
+  run test` processes (`ps aux | grep vitest`, `pkill -9 -f
+  <worktree>/node_modules/.bin/vitest`) and reran clean — all 830 passed.
+  Always check `ps aux | grep vitest` for leftover runs before trusting a
+  failing `npm run check`.
 
 ### Issue #mp1q: Local-time formatter for inbox timestamps (PR #83)
 - **Status**: PR open, handed to @babysitter
@@ -37,24 +46,17 @@
 - Tests run on PGlite (in-memory), no external DB needed
 - Coverage gates: global threshold + diff coverage on PRs
 - Run `npm run check` before committing (format, lint, knip, typecheck, test)
-- eslint's `@typescript-eslint/no-non-null-assertion` forbids `foo!` AND its
-  autofix suggestion for `as HTMLElement` non-null-assertion-style rewrites —
-  don't run `eslint --fix` on `as X` casts in tests; instead use optional
-  chaining (`container.querySelector('aside')?.className`) like the existing
-  `classTokensOf` helper does.
-
-### Layout (dock + sidebars)
-- Shell pattern for any view with its own sidebar: outer `flex h-full
-  overflow-hidden` (or `h-screen` only at the true root, i.e. Dock itself),
-  `aside`/`section` children each carry `min-h-0`, and their internal
-  `ScrollArea` is `min-h-0 flex-1` (not just `flex-1`) so it — not the row —
-  is what grows/scrolls.
+- On a shared/loaded machine, stray `vitest` processes from earlier attempts
+  can cause spurious timeouts — check `ps aux | grep vitest` and kill leftovers
+  before trusting a failing run.
 
 ### Structure
 - **Rigging layer** (`src/rigging/`): UI components, views, formatters
 - **Hull layer** (`src/hull/`): Core services, business logic
 - **Home layer** (`src/home/`): Routes, pages, glue code
 - Utilities go in `lib/` directories within each layer
+- Shared UI components (e.g. `CollapsibleSidebar`) live in
+  `src/rigging/components/`, imported by multiple views.
 
 ### Build Loop (build-feature skill)
 1. Red-green TDD: test first, then implementation
@@ -62,45 +64,8 @@
 3. Commit (commit-gate auto-runs check)
 4. Push
 5. Open PR via `gh pr create`
-6. Hand off via issue CLI: `SKYLARK_ACTOR=<id> npm run issue -- handoff <issue> babysitter "<message>"`
-7. Stop (babysitter shepherds CI and merge)
-
-### Environment gotchas (this sandbox)
-- If `git push`/`gh pr create` fail with credential errors despite `gh auth
-  status` succeeding, run `gh auth setup-git` first — it wires the gh keyring
-  credential into git's credential helper.
-- `gh pr create --body "$(cat <<'EOF' ... EOF)"` can trip bash's heredoc
-  parsing when passed through certain shells/tools; write the PR body to a
-  temp file and use `--body-file /tmp/whatever.md` instead — more reliable.
-- **npm version drift breaks CI**: CI's node 22 setup bundles npm 10.9.8; a
-  sandbox's ambient/global npm can be newer (e.g. 11.17.0) and produce a
-  *differently-shaped but still valid* `package-lock.json` (e.g. nitro's
-  optional peer `lru-cache` resolves without an explicit
-  `node_modules/nitro/node_modules/lru-cache` entry) that npm 10.9.8's
-  `npm ci` rejects as "out of sync" — every CI job (verify/coverage/smoke)
-  goes red at the setup step, with nothing wrong in the actual diff. Fix/
-  avoid: run lockfile-touching installs with `npx npm@10.9.8 install`
-  (matching whatever `.nvmrc` + CI's setup-node implies), not the ambient
-  npm. If `npm install` touches `package-lock.json` with no real dependency
-  change (just optional-platform metadata like `libc` fields, or a
-  transitive optional peer's node_modules entry appearing/disappearing),
-  it's this drift — `git checkout -- package-lock.json` before committing.
-  Systemic fix (pin `packageManager` + corepack) tracked in #iv1t.
-- This sandbox's local npm cache can go flaky/corrupted mid-session (tarball
-  "seems to be corrupted", `ENOTEMPTY` on `rm -rf node_modules` if a
-  dev-server process still has files open, stale `node_modules` reappearing
-  after a supposedly-clean delete). If `npm ci`/`npm install` throws weird
-  filesystem errors, check `ps aux` for a lingering `vite dev` in that
-  worktree, kill it, `rm -rf node_modules` again, and retry — usually clears
-  up on the 2nd or 3rd attempt without deeper action needed.
-
-### Issue/inbox-session hygiene
-- The inbox session (this one) is a **router only**: read the update, find
-  the chat where the work was planned via `npm run chat -- list/show`, post
-  a concise summary, stop. Do NOT re-investigate or re-fix work another
-  session (e.g. @babysitter) already resolved — check `gh pr view <n>
-  --json state,mergedAt` and `npm run issue -- show <id>` first; if the PR's
-  merged and the issue's already `done`/`closed`, there's nothing to do.
-  (Issue #hmu1, filed by @tilde, tracks tightening this prompt further after
-  a prior inbox session burned ~12 minutes re-debugging a CI failure the
-  babysitter had already fixed.)
+6. Before/while a PR sits open, `git fetch && git rebase origin/main`
+   periodically — another PR touching the same files may land first and cause
+   a conflicting rebase later; catching it early is cheaper.
+7. Hand off via issue CLI: `SKYLARK_ACTOR=<id> npm run issue -- handoff <issue> babysitter "<message>"`
+8. Stop (babysitter shepherds CI and merge)
