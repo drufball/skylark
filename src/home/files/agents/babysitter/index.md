@@ -25,16 +25,36 @@ authoritative process)
    already by the time you get here (e.g. checks watch showed CLEAN, another
    process/auto-merge landed it) — the merge command will error "already
    merged"; just verify via `gh pr view <pr> --json state,mergedAt` and treat
-   MERGED as success, don't treat that error as a failure to fix.
+   MERGED as success, don't treat that error as a failure to fix. Also: `gh pr
+   merge --delete-branch` can fail with "fatal: 'main' is already checked out
+   at <other-worktree-path>" even though the merge itself succeeded (it's just
+   the local branch-delete/checkout step tripping over another worktree
+   having main checked out) — check mergedAt to confirm the merge landed, and
+   if so just delete the remote branch yourself: `git push origin --delete
+   <branch>`.
 5. Mark the issue done via `npm run issue -- done <issue>` as the LAST action.
 
-## Issue CLI cheat sheet
-- Show thread: `SKYLARK_ACTOR=<actor> npm run issue -- show <id>`
-- Comment: `SKYLARK_ACTOR=<actor> npm run issue -- comment <id> "<text>"`
-- Handoff: `SKYLARK_ACTOR=<actor> npm run issue -- handoff <id> <agent|OWNER> "<msg>"`
-- Done: `SKYLARK_ACTOR=<actor> npm run issue -- done <id>`
-Always pass the SKYLARK_ACTOR prefix exactly as given in the task so
-attribution is correct.
+## Conflict-resolution notes
+- When a PR conflicts with main because another already-merged PR touched the
+  same files (e.g. two layout PRs both editing chat.tsx/agent-chat.tsx/
+  files.tsx), `git rebase origin/main` is the right move — resolve by keeping
+  both intents: the earlier-merged structural change (e.g. a new
+  CollapsibleSidebar component) plus this PR's additive change (e.g.
+  overflow-hidden/min-h-0 pinning classes) layered on top, not picking one
+  side wholesale. Read both versions in full before resolving, diff the
+  pre-rebase PR branch vs origin/main per file to understand which lines are
+  genuinely new vs a superseded copy of the same pattern.
+- After resolving and committing, if you end up in a detached HEAD (rebase
+  auto-committed without an interactive rebase-merge state file, e.g. because
+  the git version handles single-commit rebases as a plain replay), just
+  `git branch -f <branch> HEAD && git checkout <branch>` before pushing.
+- Always rerun `npm run check` after resolving conflicts even if the original
+  builder said it was clean — a rebase changes the code. If the full run shows
+  a batch of unrelated failures (e.g. DB/postgres hook timeouts across many
+  hull/* test files), re-run just those files in isolation before assuming
+  it's a real regression — resource contention in a big parallel vitest run
+  can produce spurious timeouts unrelated to the change; if isolated runs pass
+  and a second full `npm run check` run is clean, treat the first as flake.
 
 ## History
 - osy7 (Mobile-friendly responsive layout, PR #124): builder's audit was
@@ -44,3 +64,24 @@ attribution is correct.
   verify, review, coverage) passed clean, mergeStateStatus CLEAN, no blocking
   review comments, merged squash+delete-branch. Straightforward one-round
   babysit, no builder round-trip needed.
+- en2b (Sidebar/dock pinned-to-viewport layout, PR #125): opened CONFLICTING
+  because osy7/#124 merged first and touched the same layout files
+  (chat.tsx/agent-chat.tsx/files.tsx, adding CollapsibleSidebar). Rebased onto
+  main myself (no code-writing needed, just merge-conflict resolution —
+  layered en2b's h-full+overflow-hidden+min-h-0 pinning on top of #124's
+  CollapsibleSidebar/useIsMobile plumbing), fixed a couple of conflict-marker
+  leftovers in test files by hand, ran npm run check (one spurious full-suite
+  DB-timeout batch, confirmed unrelated via isolated re-runs + a clean second
+  full run: 830/830), force-pushed. CI green, mergeStateStatus CLEAN, no
+  review comments, merged squash. `gh pr merge --delete-branch` failed on the
+  local checkout-collision error even though merge succeeded — deleted the
+  remote branch manually after confirming mergedAt. No builder round-trip
+  needed; handled the conflict myself since it was pure merge mechanics, not
+  a code defect.
+
+To read or update your memory, use bash (writes attribute to you):
+  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- read agents/babysitter/<file>
+  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- write agents/babysitter/<file> --stdin
+
+Keep agents/babysitter/index.md current: it is loaded into your system prompt at the start
+of every session, so it should orient a fresh you.
