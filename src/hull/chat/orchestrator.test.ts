@@ -14,7 +14,13 @@ import {
   type ChatAgentRuntime,
   createChatOrchestrator,
 } from './orchestrator'
-import { addMessage, createChat, listMembers, listMessages } from './service'
+import {
+  addMessage,
+  createChat,
+  listMembers,
+  listMessages,
+  setMemberProgress,
+} from './service'
 import { CHAT_MESSAGE_POSTED, chatTopic } from './topic'
 
 // Pin DEFAULT_MODEL to a sentinel so the assertion below checks the ambient
@@ -184,6 +190,108 @@ describe('chat orchestrator', () => {
     expect(events.map((e) => e.type)).not.toContain('chat.agent_progress')
   })
 
+  it('persists the progress line on the member row so it survives navigation, then clears it once the turn ends', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'go' })
+
+    const tool = (toolName: string) =>
+      ({
+        type: 'tool_execution_start',
+        toolName,
+      }) as unknown as AgentSessionEvent
+
+    let seenDuringTurn: string | null | undefined
+    const streaming: ChatAgentRuntime = {
+      async runTurn(sessionId, _text, onEvent) {
+        onEvent?.(tool('read'))
+        // Read the member row WHILE the turn is "in flight" (from this fake's
+        // point of view) to prove the line landed durably, not just on the bus.
+        seenDuringTurn = (await listMembers(db, chatId)).find(
+          (m) => m.userId === tilde,
+        )?.progressLine
+        const message = {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'done' }],
+        }
+        await appendMessage(db, { sessionId, role: 'assistant', message })
+        return { queued: false as const, messages: [message as never] }
+      },
+    }
+
+    const orch = createChatOrchestrator({ db, runtime: streaming })
+    await orch.respond({ chatId, authorId: dru, body: 'go' })
+
+    expect(seenDuringTurn).toBe('using read…')
+    // Once the turn's done and the reply posted, the bubble clears.
+    const after = await listMembers(db, chatId)
+    expect(after.find((m) => m.userId === tilde)?.progressLine).toBeNull()
+  })
+
+  it('clears the persisted progress line even when the turn produces no text', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    const silent: ChatAgentRuntime = {
+      runTurn: async (sessionId) => {
+        const message = { role: 'toolResult', toolName: 'read', content: 'x' }
+        await appendMessage(db, { sessionId, role: 'toolResult', message })
+        return { queued: false as const, messages: [message as never] }
+      },
+    }
+    const orch = createChatOrchestrator({ db, runtime: silent })
+    await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+    const members = await listMembers(db, chatId)
+    expect(members.find((m) => m.userId === tilde)?.progressLine).toBeNull()
+  })
+
+  it('clears the persisted progress line even when the turn throws', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'boom?' })
+
+    const throwing: ChatAgentRuntime = {
+      runTurn: () => Promise.reject(new Error('turn failed')),
+    }
+    const orch = createChatOrchestrator({ db, runtime: throwing })
+    await expect(
+      orch.respond({ chatId, authorId: dru, body: 'boom?' }),
+    ).rejects.toThrow('turn failed')
+
+    const members = await listMembers(db, chatId)
+    expect(members.find((m) => m.userId === tilde)?.progressLine).toBeNull()
+  })
+
+  it('leaves no stale bubble mid-navigation: a fresh load of members reflects the live line', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'go' })
+
+    // Simulate a page navigating away and back mid-turn: nothing but a fresh
+    // listMembers call (no SSE, no in-memory state) stands in for "the route
+    // remounted and re-ran its loader."
+    let midTurnLine: string | null | undefined
+    const runtime: ChatAgentRuntime = {
+      async runTurn(sessionId) {
+        midTurnLine = (await listMembers(db, chatId)).find(
+          (m) => m.userId === tilde,
+        )?.progressLine
+        const message = {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'done' }],
+        }
+        await appendMessage(db, { sessionId, role: 'assistant', message })
+        return { queued: false as const, messages: [message as never] }
+      },
+    }
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.respond({ chatId, authorId: dru, body: 'go' })
+
+    expect(midTurnLine).toBe('thinking…')
+  })
+
   it('emits one progress line per distinct step, deduping consecutive repeats', async () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
@@ -300,6 +408,26 @@ describe('chat orchestrator', () => {
     } finally {
       errSpy.mockRestore()
     }
+  })
+
+  it('does not null the bubble on a queued call — only the turn that owns it clears it', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    // Some OTHER, still-in-flight turn owns the bubble right now. This call's
+    // prompt gets folded into that turn (queued) — it must not be the one to
+    // null the bubble in its `finally`, since the turn that's actually running
+    // still owns it and will clear it itself when IT finishes.
+    await setMemberProgress(db, chatId, tilde, 'using bash…')
+    const queued: ChatAgentRuntime = {
+      runTurn: () => Promise.resolve({ queued: true }),
+    }
+    const orch = createChatOrchestrator({ db, runtime: queued })
+    await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+    const members = await listMembers(db, chatId)
+    expect(members.find((m) => m.userId === tilde)?.progressLine).not.toBeNull()
   })
 
   it('answers only the @mentioned agent in a group', async () => {

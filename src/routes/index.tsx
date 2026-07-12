@@ -25,6 +25,7 @@ import {
   type ChatMemberItem,
   type ChatMsg,
   type CrewMember,
+  workingFromMembers,
 } from '@rigging/views/chat'
 import { Dock } from '@rigging/views/dock'
 import { useServerAction } from '@rigging/lib/use-server-action'
@@ -90,6 +91,23 @@ function ChatRoute() {
   } | null>(null)
 
   const members = useMemo(() => thread?.members ?? [], [thread])
+
+  // Seed (or reset) `working` from the loader's own data whenever the active
+  // chat changes — including a navigate-away-and-back to the SAME chat, which
+  // remounts nothing but still re-runs the loader. Without this, `working` is
+  // ONLY ever set by a live SSE event, so a chat you return to (after missing
+  // one) shows no bubble even though the agent is still mid-turn: the
+  // loader's `getChatThread` already carries each member's durable
+  // `progressLine` (chat/service.ts persists it precisely so this read-back
+  // works). Compared during render (not an effect) so the very first paint
+  // after a switch already reflects it, rather than flashing empty for a tick.
+  const [seededFor, setSeededFor] = useState<string | undefined>(undefined)
+  if (seededFor !== activeId) {
+    setSeededFor(activeId)
+    const seeded = activeId ? workingFromMembers(members) : null
+    setWorking(seeded && activeId ? { chatId: activeId, ...seeded } : null)
+  }
+
   const topics = activeId ? [chatTopic(activeId)] : []
   const onEvent = useCallback(
     (event: ShipLogEvent) => {
@@ -140,6 +158,7 @@ function ChatRoute() {
     userId: m.userId,
     handle: m.handle,
     type: m.type,
+    progressLine: m.progressLine,
   }))
   const messageItems: ChatMsg[] = (thread?.messages ?? []).map((m) => ({
     id: m.id,

@@ -20,6 +20,7 @@ import {
   messagesSinceAgent,
   parseMentions,
   removeMember,
+  setMemberProgress,
   setMemberSession,
   setTitle,
   targetsForMessage,
@@ -253,5 +254,25 @@ describe('chat persistence', () => {
     await setMemberSession(db, id, tilde, sessionId)
     const members = await listMembers(db, id)
     expect(members.find((m) => m.userId === tilde)?.sessionId).toBe(sessionId)
+  })
+
+  it('persists an agent member progress line, defaulting to null', async () => {
+    const id = await makeChat()
+    const before = await listMembers(db, id)
+    expect(before.find((m) => m.userId === tilde)?.progressLine).toBeNull()
+
+    await setMemberProgress(db, id, tilde, 'using bash…')
+    const after = await listMembers(db, id)
+    expect(after.find((m) => m.userId === tilde)?.progressLine).toBe(
+      'using bash…',
+    )
+  })
+
+  it('clears a member progress line by setting it to null', async () => {
+    const id = await makeChat()
+    await setMemberProgress(db, id, tilde, 'thinking…')
+    await setMemberProgress(db, id, tilde, null)
+    const members = await listMembers(db, id)
+    expect(members.find((m) => m.userId === tilde)?.progressLine).toBeNull()
   })
 })

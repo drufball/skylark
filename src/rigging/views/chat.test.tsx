@@ -2,7 +2,12 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { ChatView, type ChatViewProps, chatName } from './chat'
+import {
+  ChatView,
+  type ChatViewProps,
+  chatName,
+  workingFromMembers,
+} from './chat'
 import { classTokensOf } from './test-support'
 
 beforeAll(() => {
@@ -28,6 +33,39 @@ describe('chatName', () => {
       '@tilde, @bix',
     )
     expect(chatName({ title: null, memberHandles: [] })).toBe('New chat')
+  })
+})
+
+describe('workingFromMembers', () => {
+  it('is null when no member has a persisted progress line', () => {
+    expect(
+      workingFromMembers([
+        { userId: 'a', handle: 'tilde', type: 'agent' },
+        { userId: 'b', handle: 'dru', type: 'human' },
+      ]),
+    ).toBeNull()
+  })
+
+  it('is null when progressLine is explicitly null', () => {
+    expect(
+      workingFromMembers([
+        { userId: 'a', handle: 'tilde', type: 'agent', progressLine: null },
+      ]),
+    ).toBeNull()
+  })
+
+  it('surfaces the handle + line of the member mid-turn', () => {
+    expect(
+      workingFromMembers([
+        { userId: 'a', handle: 'tilde', type: 'agent', progressLine: null },
+        {
+          userId: 'b',
+          handle: 'bix',
+          type: 'agent',
+          progressLine: 'using bash…',
+        },
+      ]),
+    ).toEqual({ handle: 'bix', line: 'using bash…' })
   })
 })
 
