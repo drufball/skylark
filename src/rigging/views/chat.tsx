@@ -31,6 +31,12 @@ export interface ChatMemberItem {
   userId: string
   handle: string
   type: 'human' | 'agent'
+  /**
+   * The agent's persisted "working…" line, if it's mid-turn right now — the
+   * durable half of the placeholder, so it's still here after a page
+   * navigation reloads the thread instead of catching a live SSE event.
+   */
+  progressLine?: string | null
 }
 
 export interface CrewMember {
@@ -69,6 +75,23 @@ export function chatName(item: {
   return item.memberHandles.length > 0
     ? item.memberHandles.map((h) => `@${h}`).join(', ')
     : 'New chat'
+}
+
+/**
+ * The working placeholder derived from a chat's own durably-persisted member
+ * data (chat/service.ts's `progressLine`), rather than a live SSE event —
+ * this is what lets the bubble show up on a fresh load (a page navigation
+ * away and back), not only while a tab was open to catch the event live. A
+ * route seeds its live `working` state from this on every activeId change;
+ * pure and exported so the derivation itself is unit-tested directly.
+ */
+export function workingFromMembers(
+  members: ChatMemberItem[],
+): { handle: string; line: string } | null {
+  const inProgress = members.find((m) => m.progressLine)
+  return inProgress?.progressLine
+    ? { handle: inProgress.handle, line: inProgress.progressLine }
+    : null
 }
 
 export function ChatView(props: ChatViewProps) {

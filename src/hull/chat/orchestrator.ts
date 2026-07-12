@@ -23,6 +23,7 @@ import {
   listMembers,
   listMessages,
   messagesSinceAgent,
+  setMemberProgress,
   setMemberSession,
   targetsForMessage,
   type ChatMemberView,
@@ -168,15 +169,19 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     return id
   }
 
-  /** Emit one live progress line for the chat's "working…" placeholder. */
-  function emitProgress(
+  /**
+   * Show one live progress line for the chat's "working…" placeholder: emitted
+   * transiently on the bus (for a mounted view watching live) AND persisted on
+   * the member row (so it's still there after a page navigation, when the SSE
+   * connection reopens and re-runs the loader instead of catching a live
+   * event). The durable write is the source of truth the loader reads; the
+   * ephemeral emit just avoids waiting on a round trip while the tab is open.
+   */
+  async function setProgress(
     chatId: string,
     agentUserId: string,
     line: string,
-  ): void {
-    // Progress is transient UI — notify-only, not durable, not replayed. It
-    // still carries the chat's topic + members audience so the SSE route gates
-    // it exactly like a durable chat event (members-only, this chat's topic).
+  ): Promise<void> {
     const payload: ChatAgentProgressPayload = { chatId, agentUserId, line }
     notifyOnly({
       type: CHAT_AGENT_PROGRESS,
@@ -185,6 +190,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       audience: MEMBERS_AUDIENCE,
       payload,
     })
+    await setMemberProgress(db, chatId, agentUserId, line)
   }
 
   /**
@@ -200,32 +206,54 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
   ): Promise<void> {
     const sessionId = await ensureSession(chatId, agent)
 
-    // One "thinking…" up front, then a line per meaningful step — deduped, so a
-    // turn writes a handful of durable progress events, never one per delta.
-    let lastLine = 'thinking…'
-    emitProgress(chatId, agent.userId, lastLine)
-    const result = await runtime.runTurn(sessionId, prompt, (event) => {
-      const line = chatProgressLine(event)
-      if (line && line !== lastLine) {
-        lastLine = line
-        emitProgress(chatId, agent.userId, line)
-      }
-    })
-
-    // Queued: the prompt was folded into a turn already in flight on this
-    // session, whose eventual reply covers it — post nothing here, or the
-    // agent would double-speak (and an empty result is NOT "the agent had
-    // nothing to say").
-    if (result.queued) return
-
-    const text = assistantTextFrom(result.messages)
-    if (text) {
-      await addMessage(db, {
-        id: uuidv7(),
-        chatId,
-        authorId: agent.userId,
-        body: text,
+    // Whether THIS call owns the bubble it started (so `finally` should
+    // clear it): true unless the result comes back `queued` — a queued call's
+    // prompt was folded into a turn already in flight, and that turn (not
+    // this one) still owns the progress line, so clearing it here would blank
+    // an active "working…" out from under it. Defaults true so a THROWN turn
+    // (this call's own) still clears its bubble on the way out.
+    let ownsTurn = true
+    try {
+      // One "thinking…" up front, then a line per meaningful step — deduped, so
+      // a turn writes a handful of durable progress events, never one per
+      // delta.
+      let lastLine = 'thinking…'
+      await setProgress(chatId, agent.userId, lastLine)
+      const result = await runtime.runTurn(sessionId, prompt, (event) => {
+        const line = chatProgressLine(event)
+        if (line && line !== lastLine) {
+          lastLine = line
+          void setProgress(chatId, agent.userId, line).catch(
+            /* v8 ignore next 2 -- defensive: a progress-line write failing must never break a reply */
+            (err: unknown) => {
+              console.error(`chat progress line failed: ${errorMessage(err)}`)
+            },
+          )
+        }
       })
+      if (result.queued) ownsTurn = false
+
+      // Queued: the prompt was folded into a turn already in flight on this
+      // session, whose eventual reply covers it — post nothing here, or the
+      // agent would double-speak (and an empty result is NOT "the agent had
+      // nothing to say").
+      if (result.queued) return
+
+      const text = assistantTextFrom(result.messages)
+      if (text) {
+        await addMessage(db, {
+          id: uuidv7(),
+          chatId,
+          authorId: agent.userId,
+          body: text,
+        })
+      }
+    } finally {
+      // The bubble is scoped to the turn that owns it: whether it finished,
+      // produced nothing, or threw, there's no "working…" left to show once
+      // ITS driveTurn returns — but a queued call must leave the actively
+      // running turn's bubble alone.
+      if (ownsTurn) await setMemberProgress(db, chatId, agent.userId, null)
     }
   }
 
