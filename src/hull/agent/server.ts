@@ -10,6 +10,7 @@ import {
   defaultModelRef,
   gatewayApiKey,
   gatewayBaseUrl,
+  gatewayUiUrl,
   parseGatewayModels,
 } from './models'
 import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
@@ -163,10 +164,13 @@ export const getDefaultModel = createServerFn({ method: 'GET' }).handler(
   },
 )
 
-/** What the gateway probe reports: reachable + the model names it serves. */
+/** What the gateway probe reports: reachable + the model names it serves,
+ * plus where its admin UI lives (models and provider keys are managed there,
+ * so the Models page can point at it even when the probe fails). */
 export interface GatewayModels {
   ok: boolean
   models: string[]
+  uiUrl: string
 }
 
 /* v8 ignore start -- live HTTP edge to the gateway; parseGatewayModels is the
@@ -180,15 +184,16 @@ export interface GatewayModels {
 export const listGatewayModels = createServerFn({ method: 'GET' }).handler(
   async (): Promise<GatewayModels> => {
     await currentActor()
+    const uiUrl = gatewayUiUrl()
     try {
       const res = await fetch(`${gatewayBaseUrl()}/models`, {
         headers: { authorization: `Bearer ${gatewayApiKey()}` },
         signal: AbortSignal.timeout(1500),
       })
-      if (!res.ok) return { ok: false, models: [] }
-      return { ok: true, models: parseGatewayModels(await res.json()) }
+      if (!res.ok) return { ok: false, models: [], uiUrl }
+      return { ok: true, models: parseGatewayModels(await res.json()), uiUrl }
     } catch {
-      return { ok: false, models: [] }
+      return { ok: false, models: [], uiUrl }
     }
   },
 )

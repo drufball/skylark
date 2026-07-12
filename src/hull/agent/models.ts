@@ -3,14 +3,14 @@ import type { Model } from '@earendil-works/pi-ai'
 // Model resolution through the LiteLLM gateway. A stored model is a string the
 // runtime hands to pi.dev; this module turns that string into a concrete pi
 // `Model` pointed at the gateway. The app knows exactly one inference endpoint
-// — which providers back which model names is the gateway's business
-// (litellm.config.yaml), so swapping providers (hosted or local) never touches
-// app code.
+// — which providers back which model names is the gateway's business (models
+// and keys are managed in its admin UI), so swapping providers (hosted or
+// local) never touches app code.
 
 /**
  * The default when nothing is configured: the strong hosted model. Every
  * session that doesn't pin a model boots on this; `SKYLARK_DEFAULT_MODEL`
- * overrides it. The name must exist in litellm.config.yaml's model_list.
+ * overrides it. The name must match a model added in the gateway's admin UI.
  */
 export const FALLBACK_DEFAULT_MODEL = 'claude-sonnet-5'
 
@@ -43,6 +43,19 @@ export function gatewayBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
 function withV1(root: string): string {
   const trimmed = root.replace(/\/+$/, '')
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+}
+
+/**
+ * The gateway's admin UI, where models and provider keys are managed. Derived
+ * from the gateway URL by default; `SKYLARK_GATEWAY_UI_URL` overrides it
+ * verbatim, for when browsers reach the UI at a different address than the
+ * app's server-side gateway calls — e.g. a public tunnel hostname while the
+ * app keeps talking to localhost.
+ */
+export function gatewayUiUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.SKYLARK_GATEWAY_UI_URL?.trim()
+  if (configured) return configured
+  return gatewayBaseUrl(env).replace(/\/v1$/, '/ui')
 }
 
 /**

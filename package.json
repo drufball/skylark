@@ -29,7 +29,7 @@
     "format:check": "prettier --check .",
     "check": "npm run format:check && npm run lint && npm run knip && npm run typecheck && npm run test",
     "db:up": "docker compose up -d --wait db",
-    "gateway:up": "docker compose up -d --wait litellm",
+    "gateway:up": "./scripts/gateway-up",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

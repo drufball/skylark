@@ -48,7 +48,7 @@ export type AgentEmitter = (event: AppendEventInput) => Promise<unknown>
  * Default model when a session doesn't pin one. Resolved from
  * `SKYLARK_DEFAULT_MODEL`, falling back to the strong hosted default
  * (`claude-sonnet-5`). Every model name is a gateway name — what serves it is
- * litellm.config.yaml's business. Read once at boot; hoist sets the env
+ * decided in the gateway's admin UI. Read once at boot; hoist sets the env
  * before `npm run dev` starts. Pin per session / per agent to override.
  */
 export const DEFAULT_MODEL = defaultModelRef()

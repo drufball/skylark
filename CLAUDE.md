@@ -27,7 +27,7 @@ Start here:
 
 ```
 ./scripts/setup          bootstrap a fresh clone/worktree/session (idempotent, fast — every session runs this)
-./scripts/hoist          the full "go live" move on a fresh machine: system deps, .env/LLM keys, then a
+./scripts/hoist          the full "go live" move on a fresh machine: system deps, machine secrets, then a
                          persistent service (macOS: launchd; elsewhere: foreground) — see Working notes
 ./scripts/setup-tunnel   expose the ship publicly via Cloudflare Tunnel (manual, one-time, macOS)
 npm run dev              start the ship (port 3000)
@@ -54,12 +54,14 @@ npm run mutate:diff      mutation-test only the files this branch changed vs mai
 ```
 
 The app and pi.dev run **natively**; Postgres and the **LiteLLM gateway** run in
-Docker (`docker compose up -d --wait`, which hoist does). Every model call goes
-through the gateway: `litellm.config.yaml` maps model names to providers
-(Anthropic by default; OpenAI, Together, Fireworks, or a bring-your-own local
-server are config edits, not code), and provider keys live in `.env` where only
-the gateway container reads them. The default model is `SKYLARK_DEFAULT_MODEL`,
-a gateway model name (unset → `claude-sonnet-5`).
+Docker (`npm run gateway:up`, which hoist/serve do). Every model call goes
+through the gateway. Models and provider keys are managed in the gateway's admin
+UI (`http://localhost:4000/ui`, log in as `admin` with the `LITELLM_MASTER_KEY`
+from `.env`) and stored encrypted in the gateway's own `litellm` database — any
+provider, hosted or local, without touching code or `.env`;
+`litellm.config.yaml` only carries gateway-wide settings. The default model is
+`SKYLARK_DEFAULT_MODEL`, a gateway model name (unset → `claude-sonnet-5` — a
+fresh gateway needs a model by that name added in the UI).
 
 ## Skills
 
@@ -114,11 +116,13 @@ disabled. The weekly sweeps and their secrets are documented in
   - `install-system-deps` — installs Homebrew (if missing), then Node, `gh`,
     `cloudflared`, and Docker Desktop via `brew`; idempotent, checks before
     installing each.
-  - `configure-env` — interactively fills in `.env`: which LLM provider(s) to
-    use + API keys (also wires a `{provider}/*` route into `litellm.config.yaml`
-    for anything beyond the pre-wired Anthropic), and the `SKYLARK_INVITE_CODE`
-    real signups need. Skips itself in CI or a non-interactive shell; never
-    re-prompts for an already-set value.
+  - `configure-env` — mints the machine secrets `.env` needs, prompt-free:
+    `LITELLM_MASTER_KEY` (gateway API auth + UI login), `LITELLM_SALT_KEY`
+    (encrypts stored provider keys — never rotate it), and the
+    `SKYLARK_INVITE_CODE` real signups need. LLM provider keys are NOT gathered
+    here — they're added in the gateway UI. Skips itself in CI; never touches an
+    already-set value. `serve` also runs it, so secrets exist before the
+    gateway's first boot.
   - `install-launchd` — installs a per-user LaunchAgent
     (`~/Library/LaunchAgents/com.skylark.serve.plist`) running `scripts/serve`
     (Postgres + gateway + migrate + seed + `npm run dev`), so the ship survives

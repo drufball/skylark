@@ -190,11 +190,12 @@ idle session, because the truth is in the database, not the registry.
   is hull.
 - **Every model call goes through the LLM gateway.** A stored model is a gateway
   model name resolved by [`models.ts`](models.ts) into an OpenAI-compatible pi
-  `Model` pointed at the LiteLLM proxy (`docker compose up litellm`;
+  `Model` pointed at the LiteLLM proxy (`npm run gateway:up`;
   `SKYLARK_GATEWAY_URL` overrides the endpoint). Which provider serves a name —
-  Anthropic, OpenAI, Together, a local server — is `litellm.config.yaml`'s
-  business, so swapping providers never touches app code, and provider keys are
-  read by the gateway container alone. The default (`DEFAULT_MODEL`) comes from
+  Anthropic, OpenAI, Together, a local server — is decided in the gateway's
+  admin UI (`gatewayUiUrl()`, linked from the Models page) and stored encrypted
+  in the gateway's own database, so swapping providers or adding keys never
+  touches app code or `.env`. The default (`DEFAULT_MODEL`) comes from
   `defaultModelRef()` reading `SKYLARK_DEFAULT_MODEL`, falling back to the
   strong hosted default (`claude-sonnet-5`). One default everywhere — chat,
   builders, the slug call; pinned per session and overridable per agent.
@@ -237,6 +238,11 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **Gateway keys move to the gateway's own UI.** Provider keys and model routes
+  leave `.env`/`litellm.config.yaml` for the gateway's admin UI, stored
+  encrypted in a `litellm` database beside the ship's; `gatewayUiUrl()` tells
+  the Models page where that UI lives (`SKYLARK_GATEWAY_UI_URL` overrides it for
+  a public tunnel hostname).
 - **Builder and babysitter prompts point at their skills, not each other's
   content.** `BUILDER_CONFIG` follows `build-feature` through opening the PR,
   then hands off to `@babysitter` instead of running `babysit-pr` itself.
