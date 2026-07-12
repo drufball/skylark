@@ -2,8 +2,18 @@
 
 ## Recent Work
 
-### Issue #zo3a: Chat thinking bubbles lost on page navigation (PR #128)
-- **Status**: PR open, handed to @babysitter
+### npm-version-drift saga — fully closed
+- Chain: #3c5b (devtools removal) hit CI-only lockfile failure →
+  #59vb (immediate unblock: regenerate lockfile with npm 10.9.8) →
+  #iv1t (systemic fix: pin `packageManager: "npm@10.9.8"` in
+  package.json, PR #127, merged c7414e3). All three done. If `npm
+  run check` is clean locally but CI's verify/coverage/smoke all fail
+  identically at the `npm ci`/setup step, this class of bug should now
+  be prevented by the packageManager pin — but if it recurs, check
+  corepack is actually enabled/respected in the environment.
+
+### Issue #zo3a: Chat thinking bubbles lost on page navigation (PR #128) — MERGED
+- **Status**: Merged. CI green, no unresolved review comments.
 - **What**: Chat's live agent "working…" bubble was purely ephemeral —
   pushed over SSE via `notifyOnly`, never persisted — so navigating away from
   a chat and back showed nothing even though the agent was still mid-turn.
