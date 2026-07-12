@@ -129,24 +129,17 @@ export function inboxTurnContext(input: {
     '<chatId>',
     '"<update>"',
   )
-  const fileCmd = actorCmd(
-    input.userId,
-    'issue',
-    'new',
-    '"<title>"',
-    '--body',
-    '"<details>"',
-  )
   return `[You are @${input.handle}. This is your inbox session — updates on
-work you're watching land here; it is not a chat. Decide which conversation
-each update belongs in: search your chats for where the work was planned, use
-bash:
+work you're watching land here; it is not a chat. Your only job is to decide
+which conversation each update belongs in: search your chats for where the
+work was planned, use bash:
   ${listCmd}
   ${showCmd}
 and post a concise update there with:
   ${postCmd}
-If no chat fits, do nothing. To file follow-up work:
-  ${fileCmd}]`
+Do not investigate, debug, or do the work yourself — another session owns it;
+the crew in the chat you post to decides any follow-up. If no chat fits, do
+nothing.]`
 }
 
 export interface ChatOrchestratorDeps {
