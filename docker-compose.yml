@@ -25,21 +25,31 @@ services:
       retries: 5
 
   # The LLM gateway (LiteLLM proxy). The app speaks OpenAI-compatible HTTP to
-  # this one endpoint; litellm.config.yaml maps model names to providers.
-  # Provider keys are interpolated from .env (compose reads it automatically).
+  # this one endpoint. Models and provider keys are managed in the gateway's
+  # admin UI (http://localhost:4000/ui — log in as `admin` with the master
+  # key) and stored encrypted in the gateway's own database; nothing
+  # provider-specific lives in .env or litellm.config.yaml.
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm-database:main-stable
     restart: unless-stopped
     command: ['--config', '/app/config.yaml']
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      TOGETHERAI_API_KEY: ${TOGETHERAI_API_KEY:-}
-      FIREWORKS_AI_API_KEY: ${FIREWORKS_AI_API_KEY:-}
+      # Where UI-added models and their encrypted provider keys live: a
+      # separate `litellm` database in the ship's Postgres, created by
+      # scripts/gateway-up before this container boots.
+      DATABASE_URL: postgres://postgres:postgres@db:5432/litellm
       # The key the gateway requires on every request; the app sends the same
-      # value automatically (see gatewayApiKey). Override in .env to lock the
-      # gateway with a real secret (e.g. when exposing it beyond localhost).
+      # value automatically (see gatewayApiKey), and `admin` + this key logs
+      # into the UI. scripts/configure-env generates a real secret into .env;
+      # the fallback only suits a localhost-only gateway on a dev clone.
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm}
+      # Encrypts provider keys at rest in the database. Never rotate it once
+      # keys are stored — they'd become undecryptable and need re-adding in
+      # the UI.
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-litellm}
     ports:
       # Localhost only: the default master key is a public constant, and the
       # gateway relays to paid provider APIs — never expose it to the LAN by

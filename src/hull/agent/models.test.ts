@@ -5,6 +5,7 @@ import {
   FALLBACK_DEFAULT_MODEL,
   gatewayApiKey,
   gatewayBaseUrl,
+  gatewayUiUrl,
   parseGatewayModels,
   resolveModel,
 } from './models'
@@ -52,6 +53,36 @@ describe('gatewayBaseUrl', () => {
   it('treats a blank override as unset', () => {
     expect(gatewayBaseUrl({ SKYLARK_GATEWAY_URL: '   ' })).toBe(
       'http://localhost:4000/v1',
+    )
+  })
+})
+
+describe('gatewayUiUrl', () => {
+  it('defaults to the local gateway admin UI', () => {
+    expect(gatewayUiUrl({})).toBe('http://localhost:4000/ui')
+  })
+
+  it('derives from SKYLARK_GATEWAY_URL, with or without its /v1 suffix', () => {
+    expect(gatewayUiUrl({ SKYLARK_GATEWAY_URL: 'http://box:9000' })).toBe(
+      'http://box:9000/ui',
+    )
+    expect(gatewayUiUrl({ SKYLARK_GATEWAY_URL: 'http://box:9000/v1' })).toBe(
+      'http://box:9000/ui',
+    )
+  })
+
+  it('honors SKYLARK_GATEWAY_UI_URL verbatim — a tunnel hostname differs from the local one', () => {
+    expect(
+      gatewayUiUrl({
+        SKYLARK_GATEWAY_UI_URL: 'https://llm.example.com/ui',
+        SKYLARK_GATEWAY_URL: 'http://box:9000',
+      }),
+    ).toBe('https://llm.example.com/ui')
+  })
+
+  it('treats a blank override as unset', () => {
+    expect(gatewayUiUrl({ SKYLARK_GATEWAY_UI_URL: '  ' })).toBe(
+      'http://localhost:4000/ui',
     )
   })
 })

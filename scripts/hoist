@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # scripts/hoist — bring the ship up AND keep it up. Provisions a fresh
-# machine (system deps, .env / LLM provider keys), then hands off to a
-# persistent service so the ship survives reboots and crashes without a
-# terminal open. On macOS that's launchd (see scripts/install-launchd);
+# machine (system deps, machine secrets in .env — LLM provider keys are
+# added later in the gateway's admin UI, never gathered here), then hands
+# off to a persistent service so the ship survives reboots and crashes
+# without a terminal open. On macOS that's launchd (see scripts/install-launchd);
 # elsewhere — a later issue — hoist just runs scripts/serve in the
 # foreground, same as always.
 #
@@ -43,7 +44,14 @@ if [ "$ready" = "1" ]; then
 else
   echo "⚠ didn't respond within 30s — check the logs: ~/Library/Logs/skylark/serve.log"
 fi
+invite_code="$(grep '^SKYLARK_INVITE_CODE=' .env | tail -n1 | cut -d= -f2-)"
 echo "  Runs as a persistent service — survives logout and reboot."
 echo "  Logs:          ~/Library/Logs/skylark/serve.log"
 echo "  Status:        launchctl print gui/$(id -u)/com.skylark.serve"
 echo "  Public access: ./scripts/setup-tunnel (whenever you're ready)"
+echo
+echo "Next steps:"
+echo "  1. Add an LLM provider key: http://localhost:4000/ui — log in as admin"
+echo "     with the master key (grep LITELLM_MASTER_KEY .env), then add a model"
+echo "     named claude-sonnet-5 (or set SKYLARK_DEFAULT_MODEL to your name)."
+echo "  2. Sign up at http://localhost:3000/signup — invite code: ${invite_code:-<unset>}"

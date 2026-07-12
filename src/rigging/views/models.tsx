@@ -10,8 +10,9 @@ import { cn } from '@rigging/lib/utils'
 export interface ModelsData {
   /** The model new sessions default to, e.g. "claude-sonnet-5". */
   defaultRef: string
-  /** Whether the gateway answered, and the model names it serves. */
-  gateway: { ok: boolean; models: string[] }
+  /** Whether the gateway answered, the model names it serves, and where its
+   * admin UI lives (models and provider keys are managed there). */
+  gateway: { ok: boolean; models: string[]; uiUrl: string }
 }
 
 export function Models({ defaultRef, gateway }: ModelsData) {
@@ -50,12 +51,27 @@ export function Models({ defaultRef, gateway }: ModelsData) {
           </span>
         </div>
         <p className="text-sm text-muted-foreground">
-          Every model call goes through the ship’s LLM gateway (LiteLLM). Model
-          names map to providers in <code>litellm.config.yaml</code> — edit it
-          to swap providers (Anthropic, OpenAI, Together, Fireworks, a local
-          server, …) without touching the ship. Provider keys live in{' '}
-          <code>.env</code>; only the gateway reads them.
+          Every model call goes through the ship’s LLM gateway (LiteLLM).{' '}
+          <a
+            className="font-medium text-foreground underline underline-offset-4"
+            href={gateway.uiUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Manage models &amp; keys
+          </a>{' '}
+          in the gateway’s own UI — add a provider key and name the models it
+          should serve (Anthropic, OpenAI, a local server, …) without touching
+          the ship. Log in as <code>admin</code> with the{' '}
+          <code>LITELLM_MASTER_KEY</code> from <code>.env</code>.
         </p>
+        {gateway.ok && !gateway.models.includes(defaultRef) && (
+          <p className="rounded-md border p-3 text-sm text-muted-foreground">
+            New sessions default to <code>{defaultRef}</code>, but the gateway
+            doesn’t serve it yet — add a model by that name in the gateway UI,
+            or point <code>SKYLARK_DEFAULT_MODEL</code> at one it does serve.
+          </p>
+        )}
         {gateway.ok ? (
           <ul className="flex flex-col divide-y rounded-md border">
             {gateway.models.map((model) => (

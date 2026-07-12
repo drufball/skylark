@@ -1,65 +1,25 @@
 # The ship's LLM gateway (LiteLLM proxy). Every model call the app makes goes
 # through this proxy — the app only ever speaks OpenAI-compatible HTTP to
-# http://localhost:4000/v1 and names a model from this list. Which provider
-# actually serves a name (and with which key) is decided HERE, so swapping
-# providers — hosted or local — never touches app code.
+# http://localhost:4000/v1 and names a model. Which provider actually serves
+# a name (and with which key) is decided in the gateway's admin UI at
+# http://localhost:4000/ui — log in as `admin` with the LITELLM_MASTER_KEY
+# from .env, add a model, pick the provider, paste the key. Entries live
+# encrypted in the gateway's own `litellm` database, so no provider keys in
+# .env, nothing to edit here, and swapping providers never touches app code.
 #
-# Brought up by `docker compose up -d litellm` (hoist does this). Keys are
-# interpolated from .env via docker-compose. Docs: https://docs.litellm.ai
+# A fresh ship needs a model named `claude-sonnet-5` (the app's default) — or
+# SKYLARK_DEFAULT_MODEL in .env set to whatever name you do add. Local
+# servers on the host (Ollama, llama.cpp, LM Studio, …) work from the UI too:
+# add an OpenAI-compatible model with api_base
+# http://host.docker.internal:<port>/v1.
 #
-# To point a name at a different provider, edit its litellm_params. To add a
-# provider, add an entry and put its key in .env (see the examples below).
+# Brought up by `npm run gateway:up` (hoist/serve do this). This file only
+# carries gateway-wide settings. Docs: https://docs.litellm.ai
 
-model_list:
-  # The ship default (SKYLARK_DEFAULT_MODEL falls back to this name).
-  - model_name: claude-sonnet-5
-    litellm_params:
-      model: anthropic/claude-sonnet-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  - model_name: claude-fable-5
-    litellm_params:
-      model: anthropic/claude-fable-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  - model_name: claude-haiku-4-5
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  # Wildcard: any other Anthropic model by its full ref, e.g.
-  # "anthropic/claude-sonnet-4-5". Also keeps pre-gateway session rows (which
-  # stored provider-prefixed refs) working.
-  - model_name: anthropic/*
-    litellm_params:
-      model: anthropic/*
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  # --- Other hosted providers: uncomment, add the key to .env -------------
-  # - model_name: gpt-5
-  #   litellm_params:
-  #     model: openai/gpt-5
-  #     api_key: os.environ/OPENAI_API_KEY
-  #
-  # - model_name: qwen3-coder
-  #   litellm_params:
-  #     model: together_ai/Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8
-  #     api_key: os.environ/TOGETHERAI_API_KEY
-  #
-  # - model_name: kimi-k2
-  #   litellm_params:
-  #     model: fireworks_ai/accounts/fireworks/models/kimi-k2-instruct
-  #     api_key: os.environ/FIREWORKS_AI_API_KEY
-
-  # --- Bring your own local model -----------------------------------------
-  # Anything serving an OpenAI-compatible endpoint on the host (Ollama,
-  # llama.cpp, vLLM, LM Studio, …). host.docker.internal reaches the host
-  # from inside the gateway container.
-  # - model_name: local
-  #   litellm_params:
-  #     model: openai/qwen3-coder:30b
-  #     api_base: http://host.docker.internal:11434/v1
-  #     api_key: none
+general_settings:
+  # Persist UI-added models (and their encrypted keys) to the database and
+  # load them on boot — the whole point; see the header.
+  store_model_in_db: true
 
 litellm_settings:
   # Don't forward provider-specific params the target may reject.

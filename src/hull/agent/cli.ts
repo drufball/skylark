@@ -24,8 +24,8 @@ import {
 // one (queued if it's mid-turn, booted from history if it's idle), list
 // sessions, or cancel a running one. Run it with:
 //   node --env-file=.env --import tsx src/hull/agent/cli.ts <command> …
-// (or `npm run agent -- <command> …`). Needs Postgres up (`npm run db:up`) and
-// ANTHROPIC_API_KEY in .env.
+// (or `npm run agent -- <command> …`). Needs Postgres and the gateway up
+// (`npm run gateway:up`), with a provider key added in the gateway UI.
 
 const DIM = '\x1b[2m'
 const CYAN = '\x1b[36m'

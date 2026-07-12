@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# scripts/configure-env — interactively fills in .env: which LLM provider(s)
-# to use and their API keys, plus the invite code real signups need (see
-# hull/auth/zine.md). Skips entirely in CI or a non-interactive shell — nothing
-# to prompt for. Already-set values are never re-prompted, so running this
-# again (every `hoist` does) is a no-op once you're configured, and safe to
-# run again later to add another provider.
+# scripts/configure-env — mints the machine secrets .env needs, with no
+# prompts: the gateway master key (API auth + UI login), the salt key that
+# encrypts provider keys stored in the gateway's database, and the invite
+# code real signups need (see hull/auth/zine.md). LLM provider keys are NOT
+# gathered here — add those in the gateway's admin UI
+# (http://localhost:4000/ui), which stores them encrypted in Postgres.
+# Already-set values are never touched, so re-running (hoist and serve both
+# do) is a no-op once configured — which matters doubly for the salt key: it
+# MUST never change once provider keys are stored, or they become
+# undecryptable.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ "${CI:-}" = "true" ] || [ ! -t 0 ]; then
-  echo "→ skipping interactive .env setup (non-interactive shell) — see .env.example"
+if [ "${CI:-}" = "true" ]; then
+  echo "→ skipping .env setup (CI)"
   exit 0
 fi
 
@@ -32,74 +36,26 @@ env_has() {
   grep -q "^${1}=.\+" .env 2>/dev/null
 }
 
-# Add a `{prefix}/*` wildcard route to litellm.config.yaml if one isn't there
-# yet — the same pattern the file already uses for Anthropic, so any model
-# name for that provider works without hand-editing YAML afterward.
-add_provider_route() {
-  local prefix="$1" envvar="$2"
-  if grep -q "model_name: ${prefix}/\*" litellm.config.yaml; then
-    return
-  fi
-  local tmp
-  tmp="$(mktemp)"
-  awk -v prefix="$prefix" -v envvar="$envvar" '
-    /^litellm_settings:/ && !done {
-      print "  - model_name: " prefix "/*"
-      print "    litellm_params:"
-      print "      model: " prefix "/*"
-      print "      api_key: os.environ/" envvar
-      print ""
-      done = 1
-    }
-    { print }
-  ' litellm.config.yaml >"$tmp"
-  mv "$tmp" litellm.config.yaml
+# `head -c` closing the pipe early sends tr a SIGPIPE; under this script's
+# `pipefail` that reads as failure and set -e would abort before the value is
+# ever saved. Isolate pipefail to the subshell computing $().
+random_token() {
+  set +o pipefail
+  LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c "$1"
 }
 
-# $1 label, $2 env var, $3 litellm provider prefix (blank if already wired,
-# as Anthropic is).
-configure_provider() {
-  local label="$1" envvar="$2" prefix="$3"
-  if env_has "$envvar"; then
-    echo "  ✓ $label already configured"
-    return
+ensure_secret() {
+  local key="$1" value="$2" label="$3"
+  if env_has "$key"; then
+    echo "  ✓ $label already set"
+  else
+    set_env "$key" "$value"
+    echo "  ✓ $label generated"
   fi
-  read -rp "Configure $label? [y/N] " reply
-  case "$reply" in
-    y | Y | yes | Yes) ;;
-    *) return ;;
-  esac
-  read -rsp "  $label API key: " key
-  echo
-  if [ -z "$key" ]; then
-    echo "  (empty — skipped)"
-    return
-  fi
-  set_env "$envvar" "$key"
-  [ -n "$prefix" ] && add_provider_route "$prefix" "$envvar"
-  echo "  ✓ $label configured"
 }
 
-echo "→ LLM providers (every model call goes through the local gateway — see litellm.config.yaml)"
-configure_provider "Anthropic" ANTHROPIC_API_KEY ""
-configure_provider "OpenAI" OPENAI_API_KEY openai
-configure_provider "Together AI" TOGETHERAI_API_KEY together_ai
-configure_provider "Fireworks AI" FIREWORKS_AI_API_KEY fireworks_ai
-
-echo
-echo "→ invite code (needed for anyone to sign up at /signup)"
-if env_has SKYLARK_INVITE_CODE; then
-  echo "  ✓ already set"
-else
-  read -rp "  Set an invite code now (blank to generate a random one): " code
-  if [ -z "$code" ]; then
-    # `head -c` closing the pipe early sends tr a SIGPIPE; under this script's
-    # `pipefail` that reads as failure and set -e would abort here, before the
-    # code is ever saved. Isolate pipefail to the subshell computing $().
-    code="$(set +o pipefail; LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 12)"
-    echo "  generated: $code"
-  fi
-  set_env SKYLARK_INVITE_CODE "$code"
-fi
-
+echo "→ machine secrets (.env) — LLM provider keys go in the gateway UI, not here"
+ensure_secret LITELLM_MASTER_KEY "sk-$(random_token 40)" "gateway master key (LITELLM_MASTER_KEY)"
+ensure_secret LITELLM_SALT_KEY "sk-$(random_token 40)" "gateway salt key (LITELLM_SALT_KEY)"
+ensure_secret SKYLARK_INVITE_CODE "$(random_token 12)" "invite code (SKYLARK_INVITE_CODE)"
 echo "✓ .env ready"
