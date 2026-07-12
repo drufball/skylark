@@ -16,9 +16,23 @@ if ! command -v brew >/dev/null 2>&1; then
   # Pick up whichever prefix the installer used so the rest of this script
   # (and this shell) can see `brew` without a fresh terminal.
   if [ -x /opt/homebrew/bin/brew ]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
+    BREW_BIN=/opt/homebrew/bin/brew
   elif [ -x /usr/local/bin/brew ]; then
-    eval "$(/usr/local/bin/brew shellenv)"
+    BREW_BIN=/usr/local/bin/brew
+  else
+    echo "  ⚠ Homebrew installed but not found at a known prefix — open a new"
+    echo "    terminal and re-run ./scripts/hoist."
+    exit 1
+  fi
+  eval "$("$BREW_BIN" shellenv)"
+  # The installer only PRINTS the "add brew to your PATH" step — do it, or
+  # every later terminal (and the post-hoist `gh auth login`) starts without
+  # brew's node/gh on PATH. Idempotent: skipped when already present.
+  ZPROFILE="$HOME/.zprofile"
+  SHELLENV_LINE="eval \"\$($BREW_BIN shellenv)\""
+  if ! grep -qsF "$SHELLENV_LINE" "$ZPROFILE"; then
+    printf '\n%s\n' "$SHELLENV_LINE" >>"$ZPROFILE"
+    echo "  ✓ added brew shellenv to ~/.zprofile"
   fi
 fi
 
@@ -27,7 +41,7 @@ install_formula() {
   if brew list --formula "$formula" >/dev/null 2>&1; then
     echo "  ✓ $formula already installed"
   else
-    echo "  installing $formula…"
+    echo "  installing ${formula}…"
     brew install "$formula"
   fi
 }
@@ -37,7 +51,7 @@ install_cask() {
   if brew list --cask "$cask" >/dev/null 2>&1; then
     echo "  ✓ $cask already installed"
   else
-    echo "  installing $cask…"
+    echo "  installing ${cask}…"
     brew install --cask "$cask"
   fi
 }
