@@ -14,6 +14,18 @@ cd "$(dirname "$0")/.."
 
 TUNNEL_NAME="skylark"
 
+# This script's natural habitat is the terminal that JUST ran hoist — a shell
+# older than the Homebrew install, whose PATH lacks brew's prefix (only new
+# terminals pick it up from ~/.zprofile). Grab it before concluding anything
+# is missing.
+if ! command -v cloudflared >/dev/null 2>&1; then
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+fi
+
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "cloudflared isn't installed — run ./scripts/install-system-deps first (or ./scripts/hoist)."
   exit 1
@@ -33,9 +45,17 @@ fi
 
 # Look up an existing tunnel's id by name — node instead of jq, since node's
 # already a hard requirement and jq isn't installed by scripts/install-system-deps.
+# An account with ZERO tunnels lists as JSON `null`, not `[]` (Go nil slice),
+# so anything non-array reads as "no tunnels" rather than crashing.
 tunnel_id_for() {
   cloudflared tunnel list -o json 2>/dev/null | node -e '
-    const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    let data;
+    try {
+      data = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    } catch {
+      data = [];
+    }
+    if (!Array.isArray(data)) data = [];
     const t = data.find((t) => t.name === process.argv[1]);
     if (t) process.stdout.write(t.id);
   ' "$1"
