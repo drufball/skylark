@@ -116,16 +116,45 @@ echo "→ mirroring tunnel config to /etc/cloudflared for the root service (need
 sudo mkdir -p /etc/cloudflared
 sudo cp "$CONFIG_DIR/config.yml" /etc/cloudflared/config.yml
 
-# `service install` refuses to run twice, and re-running THIS script is the
-# documented way to add the gateway hostname later — so on a re-run, restart
-# the existing service to pick up the rewritten config instead.
+# Author the LaunchDaemon ourselves (like install-launchd does for the ship)
+# instead of `sudo cloudflared service install`: cloudflared's own installer
+# writes a plist that execs the BARE binary, which for a locally-managed
+# (config.yml) tunnel just prints "use `cloudflared tunnel run`" and exits 1
+# — a silent crash loop. An explicit `tunnel run` against the root-visible
+# config is what actually serves. bootout+bootstrap (not kickstart) because
+# launchd caches the plist, and re-runs may have rewritten it.
+CLOUDFLARED_BIN="$(command -v cloudflared)"
+PLIST=/Library/LaunchDaemons/com.skylark.cloudflared.plist
+echo "→ installing the tunnel as a system service…"
+sudo tee "$PLIST" >/dev/null <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.skylark.cloudflared</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${CLOUDFLARED_BIN}</string>
+    <string>tunnel</string>
+    <string>--config</string>
+    <string>/etc/cloudflared/config.yml</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Library/Logs/com.skylark.cloudflared.out.log</string>
+  <key>StandardErrorPath</key><string>/Library/Logs/com.skylark.cloudflared.err.log</string>
+</dict>
+</plist>
+EOF
+# Replace any previous incarnation — ours from an earlier run, or the broken
+# one cloudflared's own installer may have left behind.
+sudo launchctl bootout system/com.skylark.cloudflared 2>/dev/null || true
 if [ -f /Library/LaunchDaemons/com.cloudflare.cloudflared.plist ]; then
-  echo "→ tunnel service already installed — restarting it with the new config…"
-  sudo launchctl kickstart -k system/com.cloudflare.cloudflared
-else
-  echo "→ installing the tunnel as a system service…"
-  sudo cloudflared service install
+  sudo launchctl bootout system/com.cloudflare.cloudflared 2>/dev/null || true
+  sudo rm /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
 fi
+sudo launchctl bootstrap system "$PLIST"
 
 if [ -n "$GW_HOSTNAME" ]; then
   # Point the Models page's "manage models & keys" link at the public UI
