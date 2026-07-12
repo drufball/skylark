@@ -13,6 +13,15 @@ beforeAll(() => {
 })
 afterEach(cleanup)
 
+function setWidth(width: number) {
+  window.innerWidth = width
+  window.dispatchEvent(new Event('resize'))
+}
+const originalWidth = window.innerWidth
+afterEach(() => {
+  setWidth(originalWidth)
+})
+
 function renderView(props: Partial<AgentChatViewProps> = {}) {
   const onSend = vi.fn()
   const onCancel = vi.fn()
@@ -149,5 +158,27 @@ describe('AgentChatView', () => {
   it('surfaces an error message', () => {
     renderView({ activeId: 's1', error: 'overloaded' })
     expect(screen.getByText('overloaded')).toBeDefined()
+  })
+
+  it('on mobile, hides the session list behind a trigger, opens it, and closes on select', () => {
+    setWidth(500)
+    const { onSelect } = renderView({
+      sessions: [{ id: 's1', title: 'first mate', status: 'idle' }],
+    })
+    expect(screen.queryByText('first mate')).toBeNull()
+    fireEvent.click(screen.getByLabelText(/open sessions/i))
+    expect(screen.getByText('first mate')).toBeTruthy()
+    fireEvent.click(screen.getByText('first mate'))
+    expect(onSelect).toHaveBeenCalledWith('s1')
+    expect(screen.queryByText('first mate')).toBeNull()
+  })
+
+  it('on desktop, the session list stays docked with no trigger', () => {
+    setWidth(1024)
+    renderView({
+      sessions: [{ id: 's1', title: 'first mate', status: 'idle' }],
+    })
+    expect(screen.getByText('first mate')).toBeTruthy()
+    expect(screen.queryByLabelText(/open sessions/i)).toBeNull()
   })
 })

@@ -6,6 +6,15 @@ import { AUTOSAVE_DEBOUNCE_MS, FilesView, type FilesViewProps } from './files'
 
 afterEach(cleanup)
 
+function setWidth(width: number) {
+  window.innerWidth = width
+  window.dispatchEvent(new Event('resize'))
+}
+const originalWidth = window.innerWidth
+afterEach(() => {
+  setWidth(originalWidth)
+})
+
 function renderView(props: Partial<FilesViewProps> = {}) {
   const onSelect = vi.fn()
   const onSave = vi.fn()
@@ -204,5 +213,23 @@ describe('FilesView', () => {
     fireEvent.click(del)
     expect(onDelete).toHaveBeenCalledWith('a.md')
     confirmSpy.mockRestore()
+  })
+
+  it('on mobile, hides the explorer behind a trigger and closes it on selection', () => {
+    setWidth(500)
+    const { onSelect } = renderView({ files: ['a.md', 'notes/b.md'] })
+    expect(screen.queryByText('notes/b.md')).toBeNull()
+    fireEvent.click(screen.getByLabelText(/open files/i))
+    expect(screen.getByText('notes/b.md')).toBeTruthy()
+    fireEvent.click(screen.getByText('notes/b.md'))
+    expect(onSelect).toHaveBeenCalledWith('notes/b.md')
+    expect(screen.queryByText('notes/b.md')).toBeNull()
+  })
+
+  it('on desktop, the explorer stays docked with no trigger', () => {
+    setWidth(1024)
+    renderView({ files: ['a.md'] })
+    expect(screen.getByText('a.md')).toBeTruthy()
+    expect(screen.queryByLabelText(/open files/i)).toBeNull()
   })
 })

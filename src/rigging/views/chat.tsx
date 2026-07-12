@@ -5,6 +5,7 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Composer } from '@rigging/components/composer'
+import { CollapsibleSidebar } from '@rigging/components/collapsible-sidebar'
 import { inputClass, selectClass } from '@rigging/components/ui/input'
 
 // The front door: chat between the crew — humans and agents. Participant-focused
@@ -71,9 +72,14 @@ export function chatName(item: {
 }
 
 export function ChatView(props: ChatViewProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false)
   return (
     <div className="flex h-full bg-background text-foreground">
-      <ChatList {...props} />
+      <ChatList
+        {...props}
+        drawerOpen={drawerOpen}
+        onDrawerOpenChange={setDrawerOpen}
+      />
       <section className="flex min-w-0 flex-1 flex-col">
         {props.composing ? (
           <NewChat
@@ -97,9 +103,19 @@ function ChatList({
   composing,
   onSelect,
   onNew,
-}: ChatViewProps) {
+  drawerOpen,
+  onDrawerOpenChange,
+}: ChatViewProps & {
+  drawerOpen: boolean
+  onDrawerOpenChange: (open: boolean) => void
+}) {
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r bg-muted/30">
+    <CollapsibleSidebar
+      label="Chats"
+      open={drawerOpen}
+      onOpenChange={onDrawerOpenChange}
+      className="w-72 bg-muted/30"
+    >
       <div className="flex items-center gap-2 p-3">
         <Users className="size-5 text-muted-foreground" />
         <span className="font-semibold">Chats</span>
@@ -127,6 +143,7 @@ function ChatList({
               type="button"
               onClick={() => {
                 onSelect(chat.id)
+                onDrawerOpenChange(false)
               }}
               className={cn(
                 'truncate rounded-md px-3 py-2 text-left text-sm',
@@ -141,7 +158,7 @@ function ChatList({
           ))}
         </nav>
       </ScrollArea>
-    </aside>
+    </CollapsibleSidebar>
   )
 }
 
