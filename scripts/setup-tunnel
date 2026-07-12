@@ -107,14 +107,23 @@ EOF
   echo "  - service: http_status:404"
 } >"$CONFIG_DIR/config.yml"
 
+# The service is a ROOT LaunchDaemon, and cloudflared-as-root never reads
+# this user's ~/.cloudflared/config.yml — its search paths are root's home
+# and /etc/cloudflared. Mirror the config there (every run, so hostname
+# additions propagate); the credentials-file path inside still points into
+# this user's ~/.cloudflared, which root can read.
+echo "→ mirroring tunnel config to /etc/cloudflared for the root service (needs sudo)…"
+sudo mkdir -p /etc/cloudflared
+sudo cp "$CONFIG_DIR/config.yml" /etc/cloudflared/config.yml
+
 # `service install` refuses to run twice, and re-running THIS script is the
 # documented way to add the gateway hostname later — so on a re-run, restart
 # the existing service to pick up the rewritten config instead.
 if [ -f /Library/LaunchDaemons/com.cloudflare.cloudflared.plist ]; then
-  echo "→ tunnel service already installed — restarting it with the new config (needs sudo)…"
+  echo "→ tunnel service already installed — restarting it with the new config…"
   sudo launchctl kickstart -k system/com.cloudflare.cloudflared
 else
-  echo "→ installing the tunnel as a system service (needs sudo)…"
+  echo "→ installing the tunnel as a system service…"
   sudo cloudflared service install
 fi
 
