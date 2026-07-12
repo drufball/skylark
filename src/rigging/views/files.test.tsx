@@ -197,6 +197,18 @@ describe('FilesView', () => {
     expect(screen.queryByText('Edit')).toBeNull()
   })
 
+  it('pins the view to its container height with its own overflow, so the file list and open file each scroll independently instead of the whole row dragging away', () => {
+    const { container } = renderView({
+      files: ['a.md'],
+      selected: 'a.md',
+      content: 'hello',
+    })
+    expect(container.firstElementChild?.className).toContain('h-full')
+    expect(container.firstElementChild?.className).toContain('overflow-hidden')
+    expect(container.querySelector('aside')?.className).toContain('min-h-0')
+    expect(container.querySelector('section')?.className).toContain('min-h-0')
+  })
+
   it('deletes only after confirmation', () => {
     const confirmSpy = vi
       .spyOn(window, 'confirm')

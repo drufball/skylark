@@ -74,13 +74,13 @@ export function chatName(item: {
 export function ChatView(props: ChatViewProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   return (
-    <div className="flex h-full bg-background text-foreground">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
       <ChatList
         {...props}
         drawerOpen={drawerOpen}
         onDrawerOpenChange={setDrawerOpen}
       />
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         {props.composing ? (
           <NewChat
             crew={props.crew}
@@ -114,7 +114,7 @@ function ChatList({
       label="Chats"
       open={drawerOpen}
       onOpenChange={onDrawerOpenChange}
-      className="w-72 bg-muted/30"
+      className="min-h-0 w-72 bg-muted/30"
     >
       <div className="flex items-center gap-2 p-3">
         <Users className="size-5 text-muted-foreground" />
@@ -130,7 +130,7 @@ function ChatList({
           New
         </Button>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <nav className="flex flex-col gap-1 p-2">
           {chats.length === 0 && (
             <p className="px-2 py-4 text-sm text-muted-foreground">
@@ -240,7 +240,7 @@ function Messages({
   working,
 }: Pick<ChatViewProps, 'messages' | 'working'>) {
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 p-6">
         {messages.map((m) => (
           <div

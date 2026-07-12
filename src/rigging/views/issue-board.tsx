@@ -42,14 +42,14 @@ export function IssueBoardView({
   onSelect,
 }: IssueBoardViewProps) {
   return (
-    <main className="flex h-screen flex-col">
+    <main className="flex h-full flex-col overflow-hidden">
       <header className="border-b px-6 py-4">
         <h1 className="text-lg font-semibold">Issues</h1>
         <p className="text-sm text-muted-foreground">
           File work for the crew — or hand it to a building agent.
         </p>
       </header>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto max-w-3xl p-6">
           <NewIssue busy={busy} playbooks={playbooks} onOpen={onOpen} />
           {issues.length === 0 ? (

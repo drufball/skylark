@@ -181,4 +181,12 @@ describe('AgentChatView', () => {
     expect(screen.getByText('first mate')).toBeTruthy()
     expect(screen.queryByLabelText(/open sessions/i)).toBeNull()
   })
+
+  it('pins the view to exactly the viewport height with its own overflow, so the session list and transcript each scroll independently instead of the whole row dragging away', () => {
+    const { container } = renderView()
+    expect(container.firstElementChild?.className).toContain('h-full')
+    expect(container.firstElementChild?.className).toContain('overflow-hidden')
+    expect(container.querySelector('aside')?.className).toContain('min-h-0')
+    expect(container.querySelector('section')?.className).toContain('min-h-0')
+  })
 })

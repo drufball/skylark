@@ -50,7 +50,7 @@ function ThreadRoute() {
   if (!thread) {
     return (
       <Dock active="issues" Link={Link} onLogout={onLogout}>
-        <div className="flex h-screen items-center justify-center p-8 text-center text-sm text-muted-foreground">
+        <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
           <div>
             <p>That issue doesn&apos;t exist.</p>
             <Link to="/issues" className="underline">

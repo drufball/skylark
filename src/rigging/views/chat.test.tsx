@@ -175,6 +175,14 @@ describe('ChatView', () => {
     expect(onCreate).not.toHaveBeenCalled()
   })
 
+  it('pins the view to exactly the viewport height with its own overflow, so the sidebar and content pane each scroll independently instead of the whole row dragging away', () => {
+    const { container } = renderView()
+    expect(container.firstElementChild?.className).toContain('h-full')
+    expect(container.firstElementChild?.className).toContain('overflow-hidden')
+    expect(container.querySelector('aside')?.className).toContain('min-h-0')
+    expect(container.querySelector('section')?.className).toContain('min-h-0')
+  })
+
   it('adds and removes members', () => {
     const { onAddMember, onRemoveMember } = renderView({
       activeId: 'c1',

@@ -43,12 +43,12 @@ export function FilesView({
 }: FilesViewProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   return (
-    <main className="flex h-screen">
+    <main className="flex h-full overflow-hidden">
       <CollapsibleSidebar
         label="Files"
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
-        className="w-64"
+        className="min-h-0 w-64"
       >
         <header className="border-b px-4 py-4">
           <h1 className="text-lg font-semibold">Files</h1>
@@ -56,7 +56,7 @@ export function FilesView({
             Shared docs — everyone edits live.
           </p>
         </header>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-0.5 p-2">
             <NewFile busy={busy} onCreate={onCreate} />
             {files.length === 0 ? (
@@ -138,7 +138,7 @@ function OpenFile({
 
 function MissingFile({ path }: { path: string }) {
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex items-center gap-2 border-b px-6 py-3">
         <h2 className="min-w-0 flex-1 truncate font-mono text-sm">{path}</h2>
       </header>
@@ -197,7 +197,7 @@ function ExistingFile({
   )
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex items-center gap-2 border-b px-6 py-3">
         <h2 className="min-w-0 flex-1 truncate font-mono text-sm">{path}</h2>
         <span className="text-xs text-muted-foreground">
@@ -237,10 +237,10 @@ function ExistingFile({
           onChange={(e) => {
             setDraft(e.target.value)
           }}
-          className="flex-1 resize-none rounded-none border-0 p-6 font-mono text-sm focus-visible:ring-0"
+          className="min-h-0 flex-1 resize-none rounded-none border-0 p-6 font-mono text-sm focus-visible:ring-0"
         />
       ) : (
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <article className="prose prose-sm dark:prose-invert max-w-3xl p-6">
             {content === '' ? (
               <p className="text-muted-foreground">This file is empty.</p>
