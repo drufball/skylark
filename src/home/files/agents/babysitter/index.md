@@ -35,7 +35,10 @@ authoritative process)
    the local branch-delete/checkout step tripping over another worktree
    having main checked out) — check mergedAt to confirm the merge landed, and
    if so just delete the remote branch yourself: `git push origin --delete
-   <branch>`.
+   <branch>` (or just `git fetch origin --prune` first — gh sometimes deletes
+   the remote branch itself before the local checkout step fails, so it may
+   already be gone; check `git branch -r` / the prune output before assuming
+   you need to delete it).
 5. Mark the issue done via `npm run issue -- done <issue>` as the LAST action.
 
 ## Conflict-resolution notes
@@ -100,3 +103,21 @@ authoritative process)
   squash. Same --delete-branch local-checkout-collision as before; deleted
   remote branch manually post mergedAt confirmation. No builder round-trip
   needed.
+- zo3a (Chat thinking bubble persistence via chat_members progress column,
+  PR #128): builder's PR was already rebased onto latest main (past
+  #124/#125/#127) before opening. Watched checks: review/smoke/verify/coverage
+  all passed clean on the first run, no flake, no rebase needed.
+  mergeStateStatus CLEAN/MERGEABLE, no review comments. Squash-merged
+  cleanly in one round, no builder round-trip. `gh pr merge --delete-branch`
+  hit the usual local-checkout-collision error but merge itself succeeded
+  (mergedAt confirmed) and the remote branch was already gone by the time I
+  fetched --prune — gh apparently deletes the remote branch before the local
+  checkout step fails, so no manual `git push origin --delete` was needed
+  this time. Cleanest, fastest babysit yet.
+
+To read or update your memory, use bash (writes attribute to you):
+  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- read agents/babysitter/<file>
+  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- write agents/babysitter/<file> --stdin
+
+Keep agents/babysitter/index.md current: it is loaded into your system prompt at the start
+of every session, so it should orient a fresh you.
