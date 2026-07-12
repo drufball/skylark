@@ -14,6 +14,18 @@ cd "$(dirname "$0")/.."
 
 TUNNEL_NAME="skylark"
 
+# This script's natural habitat is the terminal that JUST ran hoist — a shell
+# older than the Homebrew install, whose PATH lacks brew's prefix (only new
+# terminals pick it up from ~/.zprofile). Grab it before concluding anything
+# is missing.
+if ! command -v cloudflared >/dev/null 2>&1; then
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+fi
+
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "cloudflared isn't installed — run ./scripts/install-system-deps first (or ./scripts/hoist)."
   exit 1
