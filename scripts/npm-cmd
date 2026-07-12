@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# scripts/npm-cmd — decide how to invoke npm so every environment installs
+# through the SAME npm CI uses, without paying a corepack tax when it isn't
+# needed (#iv1t).
+#
+# CI's node (pinned by .nvmrc, via actions/setup-node) bundles a specific npm.
+# A builder's local/sandbox npm can drift from that — upgraded independently
+# of node, a different node install entirely, etc. `npm install`/`npm ci`
+# under a DIFFERENT npm than CI's can write package-lock.json in a subtly
+# different shape for optional/peer deps, which CI's `npm ci` then rejects
+# with `EUSAGE ... Missing: X from lock file` — no app-code problem at all,
+# just a lockfile that doesn't match the npm reading it.
+#
+# package.json's `packageManager` field is the pin (kept in sync with the npm
+# CI's node bundles). When the ambient npm already matches it exactly, print
+# bare `npm` — zero overhead, no network, the common case. When it doesn't,
+# print `npx --yes corepack npm`, which transparently runs the pinned version
+# regardless of what's on PATH (corepack ships with Node >=16.9, or is fetched
+# once by npx on Node versions that dropped the bundle).
+#
+# Usage: scripts/npm-cmd [pinned-version ambient-version]
+# With no args, reads the real pin from ./package.json (the CALLER's cwd —
+# commit-gate runs this from the worktree being committed, setup from its own
+# project root) and ambient from `npm -v`. The two-arg form exists so
+# npm-cmd.test.ts can drive the decision logic without touching this
+# machine's real npm or cwd.
+set -euo pipefail
+
+if [ "$#" -ge 2 ]; then
+  pinned="$1"
+  ambient="$2"
+else
+  pinned="$(node -e "process.stdout.write((require('./package.json').packageManager || '').replace(/^npm@/, ''))")"
+  ambient="$(npm -v)"
+fi
+
+if [ -z "$pinned" ] || [ "$pinned" = "$ambient" ]; then
+  echo "npm"
+else
+  echo "npx --yes corepack npm"
+fi

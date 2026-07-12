@@ -2,6 +2,7 @@
   "name": "skylark",
   "private": true,
   "type": "module",
+  "packageManager": "npm@10.9.8",
   "scripts": {
     "setup": "./scripts/setup",
     "hoist": "./scripts/hoist",
