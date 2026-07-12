@@ -2,9 +2,11 @@
 
 ## Recent Work
 
-### Issue #3c5b: Remove TanStack devtools logo (PR #123)
-- **Status**: PR open, handed to @babysitter (second round — fixed a lockfile
-  CI failure after the first handoff)
+### Issue #3c5b: Remove TanStack devtools logo (PR #123) — MERGED, done
+- **Status**: Merged (commit 2a9ae78). CI went green after @tilde/@babysitter
+  regenerated the lockfile with npm 10.9.8 (see gotcha below); follow-up
+  tracking issue #59vb closed. Systemic root cause (npm version drift with no
+  pinned npm binary) tracked separately in #iv1t — not yet built.
 - **What**: Removed the always-rendered `TanStackDevtools` panel (bottom-right
   floating widget) from `RootDocument` in `src/routes/__root.tsx`; dropped the
   now-unused `@tanstack/react-devtools` + `@tanstack/react-router-devtools`
