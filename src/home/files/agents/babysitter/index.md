@@ -14,11 +14,15 @@ authoritative process)
    (there is no working `background` tool in this environment as of 2026-07 —
    attempts to call a `background` function failed with "Tool background not
    found"). Just run the watch command directly with `bash` and a timeout
-   (e.g. 600s); it blocks until checks settle, which is fine.
+   (e.g. 600-900s); it blocks until checks settle, which is fine. Sometimes it
+   returns "no checks reported" right after a push before GH has registered
+   the new run — wait ~20s and retry rather than treating that as an error.
 2. Once checks are green, confirm `gh pr view <pr> --json
    mergeStateStatus,mergeable` — only merge on CLEAN/UNSTABLE+MERGEABLE.
    BEHIND -> rebase+push. DIRTY/CONFLICTING -> rebase, resolve, re-check.
-   BLOCKED -> escalate to OWNER, don't retry.
+   BLOCKED -> escalate to OWNER, don't retry. Note: right after a push the
+   API can transiently report mergeStateStatus UNKNOWN — wait a few seconds
+   and re-query rather than treating that as blocked.
 3. Check `gh pr view <pr> --comments` for unresolved review feedback before
    merging.
 4. `gh pr merge <pr> --squash --delete-branch`. Note: a PR can end up merged
@@ -44,6 +48,13 @@ authoritative process)
   side wholesale. Read both versions in full before resolving, diff the
   pre-rebase PR branch vs origin/main per file to understand which lines are
   genuinely new vs a superseded copy of the same pattern.
+- Not every CONFLICTING/DIRTY mergeStateStatus means real file conflicts:
+  sometimes `git rebase origin/main` replays cleanly with zero manual
+  resolution (git's own conflict detection vs GitHub's mergeability check can
+  disagree, or the divergence is just unrelated commits landing in between).
+  Don't assume you need to hand-merge content — try the plain rebase first
+  and only dig into per-file diffing if git actually stops with conflict
+  markers.
 - After resolving and committing, if you end up in a detached HEAD (rebase
   auto-committed without an interactive rebase-merge state file, e.g. because
   the git version handles single-commit rebases as a plain replay), just
@@ -78,10 +89,14 @@ authoritative process)
   remote branch manually after confirming mergedAt. No builder round-trip
   needed; handled the conflict myself since it was pure merge mechanics, not
   a code defect.
-
-To read or update your memory, use bash (writes attribute to you):
-  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- read agents/babysitter/<file>
-  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- write agents/babysitter/<file> --stdin
-
-Keep agents/babysitter/index.md current: it is loaded into your system prompt at the start
-of every session, so it should orient a fresh you.
+- iv1t (Pin npm to match CI / npm-cmd auto-routing, PR #127): opened
+  CONFLICTING/DIRTY, but `git rebase origin/main` replayed all 7 commits
+  clean with zero conflict markers (the divergence was just unrelated commits
+  — #124/#125 layout PRs and some agent-memory writes — landing in between,
+  not overlapping file edits). Ran npm run check post-rebase: 834/834 clean
+  on the first try (no flake this time). Force-pushed, watched checks
+  (smoke/verify/coverage all pass), mergeStateStatus went CLEAN/MERGEABLE
+  after a brief UNKNOWN blip right after push, no review comments, merged
+  squash. Same --delete-branch local-checkout-collision as before; deleted
+  remote branch manually post mergedAt confirmation. No builder round-trip
+  needed.
