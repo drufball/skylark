@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import { devtools } from '@tanstack/devtools-vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
@@ -15,20 +15,29 @@ import { nitro } from 'nitro/vite'
 // The serving layer pulls views and services in from any deck and wires them
 // into one running server. Imports flow src → {home, rigging, hull}, and within
 // the decks: home → rigging → hull. Aliases: @/*, @hull/*, @rigging/*, @home/*.
-const config = defineConfig({
-  resolve: { tsconfigPaths: true },
-  plugins: [
-    devtools(),
-    nitro({ rollupConfig: { external: [/^@sentry\//] } }),
-    tailwindcss(),
-    tanstackStart(),
-    viteReact(),
-  ],
-  server: {
-    watch: {
-      ignored: ['**/.claude/**', '**/.stryker-tmp/**', '**/reports/**'],
+const config = defineConfig(({ mode }) => {
+  // The ship's public hostname (e.g. skylark.example.com), written to .env by
+  // scripts/setup-tunnel. Vite only trusts localhost Hosts by default (DNS-
+  // rebinding protection), so requests arriving through the tunnel are
+  // blocked until their hostname is allowed. Per-deployment, so it lives in
+  // .env rather than here.
+  const publicHost = loadEnv(mode, process.cwd(), '').SKYLARK_PUBLIC_HOST
+  return {
+    resolve: { tsconfigPaths: true },
+    plugins: [
+      devtools(),
+      nitro({ rollupConfig: { external: [/^@sentry\//] } }),
+      tailwindcss(),
+      tanstackStart(),
+      viteReact(),
+    ],
+    server: {
+      allowedHosts: publicHost ? [publicHost] : [],
+      watch: {
+        ignored: ['**/.claude/**', '**/.stryker-tmp/**', '**/reports/**'],
+      },
     },
-  },
+  }
 })
 
 export default config

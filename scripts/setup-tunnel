@@ -156,25 +156,36 @@ if [ -f /Library/LaunchDaemons/com.cloudflare.cloudflared.plist ]; then
 fi
 sudo launchctl bootstrap system "$PLIST"
 
-if [ -n "$GW_HOSTNAME" ]; then
-  # Point the Models page's "manage models & keys" link at the public UI
-  # (gatewayUiUrl reads this; without it the link is localhost-only). Same
-  # idempotent upsert configure-env uses.
-  GW_URL="https://${GW_HOSTNAME}/ui"
+# Idempotent .env upsert — same shape configure-env uses.
+set_env() {
+  local key="$1" value="$2"
   [ -f .env ] || touch .env
-  if grep -q '^SKYLARK_GATEWAY_UI_URL=' .env; then
+  if grep -q "^${key}=" .env; then
+    local tmp
     tmp="$(mktemp)"
-    awk -F= -v v="$GW_URL" 'BEGIN{OFS="="} $1=="SKYLARK_GATEWAY_UI_URL"{$0="SKYLARK_GATEWAY_UI_URL="v} {print}' .env >"$tmp"
+    awk -F= -v k="$key" -v v="$value" 'BEGIN{OFS="="} $1==k{$0=k"="v} {print}' .env >"$tmp"
     mv "$tmp" .env
   else
-    printf 'SKYLARK_GATEWAY_UI_URL=%s\n' "$GW_URL" >>.env
+    printf '%s=%s\n' "$key" "$value" >>.env
   fi
-  # The app reads .env at boot, so the running ship won't see the new link
-  # until it restarts — kick the persistent service if it's installed.
-  if launchctl print "gui/$(id -u)/com.skylark.serve" >/dev/null 2>&1; then
-    echo "→ restarting the ship so the Models page picks up the public UI link…"
-    launchctl kickstart -k "gui/$(id -u)/com.skylark.serve"
-  fi
+}
+
+# The app must trust the public hostname: vite.config.ts reads
+# SKYLARK_PUBLIC_HOST into server.allowedHosts, else Vite's DNS-rebinding
+# protection blocks every request arriving through the tunnel.
+set_env SKYLARK_PUBLIC_HOST "$HOSTNAME"
+
+if [ -n "$GW_HOSTNAME" ]; then
+  # Point the Models page's "manage models & keys" link at the public UI
+  # (gatewayUiUrl reads this; without it the link is localhost-only).
+  set_env SKYLARK_GATEWAY_UI_URL "https://${GW_HOSTNAME}/ui"
+fi
+
+# The app reads .env at boot, so the running ship can't see the new host (or
+# the UI link) until it restarts — kick the persistent service if installed.
+if launchctl print "gui/$(id -u)/com.skylark.serve" >/dev/null 2>&1; then
+  echo "→ restarting the ship to pick up the public hostname…"
+  launchctl kickstart -k "gui/$(id -u)/com.skylark.serve"
 fi
 
 echo "✓ tunnel ready — https://${HOSTNAME} should reach this ship."
