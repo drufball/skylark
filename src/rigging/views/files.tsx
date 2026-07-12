@@ -6,6 +6,7 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
+import { CollapsibleSidebar } from '@rigging/components/collapsible-sidebar'
 
 // The files surface: the crew's shared documents. An explorer rail on the left,
 // the selected file on the right — rendered markdown by default, a plain editor
@@ -40,9 +41,15 @@ export function FilesView({
   onCreate,
   onDelete,
 }: FilesViewProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false)
   return (
     <main className="flex h-screen">
-      <aside className="flex w-64 shrink-0 flex-col border-r">
+      <CollapsibleSidebar
+        label="Files"
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        className="w-64"
+      >
         <header className="border-b px-4 py-4">
           <h1 className="text-lg font-semibold">Files</h1>
           <p className="text-sm text-muted-foreground">
@@ -63,6 +70,7 @@ export function FilesView({
                   type="button"
                   onClick={() => {
                     onSelect(path)
+                    setDrawerOpen(false)
                   }}
                   className={cn(
                     'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
@@ -77,7 +85,7 @@ export function FilesView({
             )}
           </div>
         </ScrollArea>
-      </aside>
+      </CollapsibleSidebar>
       {selected === null ? (
         <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
           Select a file — or create one.
