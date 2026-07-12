@@ -58,18 +58,69 @@ fi
 
 cloudflared tunnel route dns "$TUNNEL_NAME" "$HOSTNAME"
 
+# Optionally expose the LLM gateway's admin UI on a second hostname, so keys
+# and models can be managed from a phone or laptop anywhere. Safe to expose:
+# both the UI login and every API route demand LITELLM_MASTER_KEY, which
+# configure-env minted as a real secret before the gateway first booted.
+echo
+read -rp "Hostname for the LLM gateway UI (e.g. llm.yourdomain.com), blank to keep it localhost-only: " GW_HOSTNAME
+if [ -n "$GW_HOSTNAME" ]; then
+  cloudflared tunnel route dns "$TUNNEL_NAME" "$GW_HOSTNAME"
+fi
+
 CONFIG_DIR="$HOME/.cloudflared"
 mkdir -p "$CONFIG_DIR"
-cat >"$CONFIG_DIR/config.yml" <<EOF
+{
+  cat <<EOF
 tunnel: ${TUNNEL_ID}
 credentials-file: ${CONFIG_DIR}/${TUNNEL_ID}.json
 ingress:
   - hostname: ${HOSTNAME}
     service: http://localhost:3000
-  - service: http_status:404
 EOF
+  if [ -n "$GW_HOSTNAME" ]; then
+    cat <<EOF
+  - hostname: ${GW_HOSTNAME}
+    service: http://localhost:4000
+EOF
+  fi
+  echo "  - service: http_status:404"
+} >"$CONFIG_DIR/config.yml"
 
-echo "→ installing the tunnel as a system service (needs sudo)…"
-sudo cloudflared service install
+# `service install` refuses to run twice, and re-running THIS script is the
+# documented way to add the gateway hostname later — so on a re-run, restart
+# the existing service to pick up the rewritten config instead.
+if [ -f /Library/LaunchDaemons/com.cloudflare.cloudflared.plist ]; then
+  echo "→ tunnel service already installed — restarting it with the new config (needs sudo)…"
+  sudo launchctl kickstart -k system/com.cloudflare.cloudflared
+else
+  echo "→ installing the tunnel as a system service (needs sudo)…"
+  sudo cloudflared service install
+fi
+
+if [ -n "$GW_HOSTNAME" ]; then
+  # Point the Models page's "manage models & keys" link at the public UI
+  # (gatewayUiUrl reads this; without it the link is localhost-only). Same
+  # idempotent upsert configure-env uses.
+  GW_URL="https://${GW_HOSTNAME}/ui"
+  [ -f .env ] || touch .env
+  if grep -q '^SKYLARK_GATEWAY_UI_URL=' .env; then
+    tmp="$(mktemp)"
+    awk -F= -v v="$GW_URL" 'BEGIN{OFS="="} $1=="SKYLARK_GATEWAY_UI_URL"{$0="SKYLARK_GATEWAY_UI_URL="v} {print}' .env >"$tmp"
+    mv "$tmp" .env
+  else
+    printf 'SKYLARK_GATEWAY_UI_URL=%s\n' "$GW_URL" >>.env
+  fi
+  # The app reads .env at boot, so the running ship won't see the new link
+  # until it restarts — kick the persistent service if it's installed.
+  if launchctl print "gui/$(id -u)/com.skylark.serve" >/dev/null 2>&1; then
+    echo "→ restarting the ship so the Models page picks up the public UI link…"
+    launchctl kickstart -k "gui/$(id -u)/com.skylark.serve"
+  fi
+fi
 
 echo "✓ tunnel ready — https://${HOSTNAME} should reach this ship."
+if [ -n "$GW_HOSTNAME" ]; then
+  echo "  Gateway UI:  https://${GW_HOSTNAME}/ui — log in as admin with the"
+  echo "               master key (grep LITELLM_MASTER_KEY .env)."
+fi
