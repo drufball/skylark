@@ -62,8 +62,8 @@ export interface DockProps {
 /** The app shell: a slim left rail of sections, with the active surface beside it. */
 export function Dock({ active, Link, onLogout, children }: DockProps) {
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      <nav className="flex w-16 shrink-0 flex-col items-center gap-1 border-r bg-muted/30 py-3">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <nav className="flex w-16 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r bg-muted/30 py-3">
         <Anchor
           className="mb-3 size-6 text-muted-foreground"
           aria-label="Skylark"
@@ -85,7 +85,11 @@ export function Dock({ active, Link, onLogout, children }: DockProps) {
           Log out
         </button>
       </nav>
-      <div className="min-w-0 flex-1">{children}</div>
+      {/* overflow-y-auto is a fallback for a surface that manages no internal
+          scroll of its own (e.g. Models) — a surface that fills this slot
+          exactly (chat/issues/files/inbox, each already h-full + its own
+          ScrollArea) never grows past it, so this never triggers for them. */}
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</div>
     </div>
   )
 }

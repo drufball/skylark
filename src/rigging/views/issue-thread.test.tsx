@@ -151,4 +151,13 @@ describe('IssueThreadView', () => {
     renderView({ watching: true })
     expect(screen.getByText('Unwatch')).toBeTruthy()
   })
+
+  it("pins the view to its container height with its own overflow, so a long thread can't drag the dock away with it", () => {
+    const { container } = renderView()
+    expect(container.firstElementChild?.className).toContain('h-full')
+    expect(container.firstElementChild?.className).toContain('overflow-hidden')
+    expect(
+      container.querySelector('[data-slot="scroll-area"]')?.className,
+    ).toContain('min-h-0')
+  })
 })
