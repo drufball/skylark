@@ -2,47 +2,33 @@
 
 ## Recent Work
 
-### Issue #osy7: Mobile-friendly responsive list+content layout (PR #124)
+### Issue #en2b: Sidebar/dock sticky positioning (PR #125)
 - **Status**: PR open, handed to @babysitter
-- **What**: chat.tsx, agent-chat.tsx, files.tsx used a hardcoded-width `<aside>`
-  with zero responsive handling. Added shared primitives instead of
-  reimplementing per view:
-  - `src/rigging/lib/use-is-mobile.ts` — `useIsMobile()` tracks
-    `window.innerWidth` vs Tailwind's `md` breakpoint (768px) live via
-    `resize`. Starts `false` for TanStack Start's SSR pass (no `window` yet),
-    corrects in an effect after mount. jsdom has no `matchMedia`, so this
-    reads `innerWidth`/`resize` directly rather than `matchMedia` — keeps
-    tests and browsers on the same code path.
-  - `src/rigging/components/collapsible-sidebar.tsx` — `CollapsibleSidebar`:
-    docked `<aside>` above the breakpoint (unchanged desktop), off-canvas
-    shadcn `Sheet` drawer below it (own hamburger trigger). Caller wires
-    `open`/`onOpenChange` (local `useState`), resets to `false` on selection
-    so picking an item auto-closes the drawer.
-  - Added shadcn's `sheet.tsx` via `npx shadcn@latest add sheet` (radix
-    `Dialog` under the hood, already a dependency via `radix-ui`).
-  - issue-board.tsx and inbox.tsx audited — both are single-column
-    forum-style pages that navigate to a separate route per item (no
-    aside/split pane), so nothing to fix there.
-- **Gotcha hit this session**: found partially-written work already present
-  in the worktree from what looked like a prior/concurrent session (chat.tsx,
-  agent-chat.tsx, files.tsx already patched, collapsible-sidebar.tsx already
-  written) — worktrees can apparently have stray background processes/state
-  from earlier turns. Also saw file-write races (a just-written test file
-  read back with different content moments later) and stray leftover vitest
-  watch-mode workers pinning CPU — `pkill -9 -f "<worktree-path>/node_modules/.bin/vitest"`
-  cleaned them up. High system load (many parallel worktrees + dev servers,
-  loadavg 25-30) caused transient PGlite test timeouts unrelated to the
-  change — always re-run failing DB tests in isolation before concluding
-  they're real failures.
+- **What**: Dock shell + every view's aside+content split (chat.tsx,
+  agent-chat.tsx, files.tsx, issue-board.tsx, issue-thread.tsx, inbox.tsx)
+  now clips its own row (`overflow-hidden`) and every flex child that could
+  grow past its share carries `min-h-0`, so each side's own `ScrollArea`
+  scrolls independently — a tall content pane no longer drags the
+  sidebar/dock away with it.
+- **Pattern**: shell = `h-full`/`h-screen` + `overflow-hidden`; each flex
+  child that holds a `ScrollArea` (or grows) needs `min-h-0`; the
+  `ScrollArea`'s own className needs `min-h-0 flex-1` too, not just `flex-1`.
+  Dock's own routed-surface wrapper carries `overflow-y-auto` as a fallback
+  for surfaces with no internal scroll of their own (e.g. Models).
+- **Note**: found the branch already had dock.tsx + chat.tsx partially fixed
+  from an earlier incomplete session (uncommitted) — reused/extended that
+  work rather than redoing it. Also found package-lock.json had spurious
+  npm-version-drift diffs (see gotcha below) — reverted before committing.
 
 ### Issue #mp1q: Local-time formatter for inbox timestamps (PR #83)
-- **Status**: PR open, handed to @babysitter (as of last session)
+- **Status**: PR open, handed to @babysitter
 - **What**: Replaced UTC string surgery in inbox view with a proper formatter
-- **Implementation**:
+- **Implementation**: 
   - Created `src/rigging/lib/format-local-time.ts` with `formatLocalTime()` function
   - Added comprehensive tests in `format-local-time.test.ts`
   - Updated `src/rigging/views/inbox.tsx` to use the formatter
 - **Pattern**: Formatters live in `src/rigging/lib/` with co-located tests
+- **Testing note**: Local .env with ANTHROPIC_API_KEY causes some agent runtime tests to fail (test isolation issue). Run tests with `ANTHROPIC_API_KEY= npm run check` to avoid this.
 
 ## Ship Knowledge
 
@@ -51,30 +37,70 @@
 - Tests run on PGlite (in-memory), no external DB needed
 - Coverage gates: global threshold + diff coverage on PRs
 - Run `npm run check` before committing (format, lint, knip, typecheck, test)
-- Local .env with ANTHROPIC_API_KEY causes some agent runtime tests to fail
-  (test isolation issue) — run with `ANTHROPIC_API_KEY= npm run check`.
-- jsdom has NO `matchMedia` and no real layout engine — prefer
-  `window.innerWidth` + `resize` events (or an injected fake) over
-  `matchMedia` for responsive hooks so tests can drive them directly.
-- Under heavy parallel load (many worktrees/dev servers running), PGlite
-  `beforeEach`/test hooks can time out spuriously — re-run the specific
-  failing file alone before treating it as a real regression.
+- eslint's `@typescript-eslint/no-non-null-assertion` forbids `foo!` AND its
+  autofix suggestion for `as HTMLElement` non-null-assertion-style rewrites —
+  don't run `eslint --fix` on `as X` casts in tests; instead use optional
+  chaining (`container.querySelector('aside')?.className`) like the existing
+  `classTokensOf` helper does.
+
+### Layout (dock + sidebars)
+- Shell pattern for any view with its own sidebar: outer `flex h-full
+  overflow-hidden` (or `h-screen` only at the true root, i.e. Dock itself),
+  `aside`/`section` children each carry `min-h-0`, and their internal
+  `ScrollArea` is `min-h-0 flex-1` (not just `flex-1`) so it — not the row —
+  is what grows/scrolls.
 
 ### Structure
-- **Rigging layer** (`src/rigging/`): UI components, views, formatters,
-  `lib/` hooks, `components/ui/` (shadcn primitives — add via
-  `npx shadcn@latest add <x>`, aliases configured in `components.json`)
+- **Rigging layer** (`src/rigging/`): UI components, views, formatters
 - **Hull layer** (`src/hull/`): Core services, business logic
 - **Home layer** (`src/home/`): Routes, pages, glue code
 - Utilities go in `lib/` directories within each layer
-- Shared cross-view UI patterns (e.g. responsive sidebar) belong in
-  `src/rigging/components/`, not duplicated per view
 
 ### Build Loop (build-feature skill)
 1. Red-green TDD: test first, then implementation
-2. `npm run check` clean (use `ANTHROPIC_API_KEY=` prefix locally)
+2. `npm run check` clean
 3. Commit (commit-gate auto-runs check)
 4. Push
 5. Open PR via `gh pr create`
 6. Hand off via issue CLI: `SKYLARK_ACTOR=<id> npm run issue -- handoff <issue> babysitter "<message>"`
 7. Stop (babysitter shepherds CI and merge)
+
+### Environment gotchas (this sandbox)
+- If `git push`/`gh pr create` fail with credential errors despite `gh auth
+  status` succeeding, run `gh auth setup-git` first — it wires the gh keyring
+  credential into git's credential helper.
+- `gh pr create --body "$(cat <<'EOF' ... EOF)"` can trip bash's heredoc
+  parsing when passed through certain shells/tools; write the PR body to a
+  temp file and use `--body-file /tmp/whatever.md` instead — more reliable.
+- **npm version drift breaks CI**: CI's node 22 setup bundles npm 10.9.8; a
+  sandbox's ambient/global npm can be newer (e.g. 11.17.0) and produce a
+  *differently-shaped but still valid* `package-lock.json` (e.g. nitro's
+  optional peer `lru-cache` resolves without an explicit
+  `node_modules/nitro/node_modules/lru-cache` entry) that npm 10.9.8's
+  `npm ci` rejects as "out of sync" — every CI job (verify/coverage/smoke)
+  goes red at the setup step, with nothing wrong in the actual diff. Fix/
+  avoid: run lockfile-touching installs with `npx npm@10.9.8 install`
+  (matching whatever `.nvmrc` + CI's setup-node implies), not the ambient
+  npm. If `npm install` touches `package-lock.json` with no real dependency
+  change (just optional-platform metadata like `libc` fields, or a
+  transitive optional peer's node_modules entry appearing/disappearing),
+  it's this drift — `git checkout -- package-lock.json` before committing.
+  Systemic fix (pin `packageManager` + corepack) tracked in #iv1t.
+- This sandbox's local npm cache can go flaky/corrupted mid-session (tarball
+  "seems to be corrupted", `ENOTEMPTY` on `rm -rf node_modules` if a
+  dev-server process still has files open, stale `node_modules` reappearing
+  after a supposedly-clean delete). If `npm ci`/`npm install` throws weird
+  filesystem errors, check `ps aux` for a lingering `vite dev` in that
+  worktree, kill it, `rm -rf node_modules` again, and retry — usually clears
+  up on the 2nd or 3rd attempt without deeper action needed.
+
+### Issue/inbox-session hygiene
+- The inbox session (this one) is a **router only**: read the update, find
+  the chat where the work was planned via `npm run chat -- list/show`, post
+  a concise summary, stop. Do NOT re-investigate or re-fix work another
+  session (e.g. @babysitter) already resolved — check `gh pr view <n>
+  --json state,mergedAt` and `npm run issue -- show <id>` first; if the PR's
+  merged and the issue's already `done`/`closed`, there's nothing to do.
+  (Issue #hmu1, filed by @tilde, tracks tightening this prompt further after
+  a prior inbox session burned ~12 minutes re-debugging a CI failure the
+  babysitter had already fixed.)
