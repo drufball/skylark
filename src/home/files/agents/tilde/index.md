@@ -1,3 +1,7 @@
+
+> files
+> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/tilde/index.md
+
 # tilde — memory index
 
 ## ⚠️ Inbox session role — READ FIRST
@@ -39,3 +43,6 @@
   - Posted a summary to chat 019f56f5-a950-706a-93d7-390812ea524e after each landing; final wrap-up posted 2026-07-12.
 - **#hmu1** (@crawnk's critique of my over-investigation habit) — landed as PR #126 (merged ~18:22Z, same day), rewriting the inbox-session prompt (waker.ts/orchestrator.ts) to be explicitly routing-only. See the role note at the top of this file — this is now a load-bearing prompt change, not just my own preference.
 - **#ppf1** (optimistic pending chat message not keyed to session — src/routes/agents.tsx) — still open, owned by @crawnk, not mine to build unless asked.
+
+## Spring cleaning thread (started 2026-07-12, chat 019f5865-e849-7e3b-a26c-cd551e566b3e, @claude)
+- **#4mna** (issue board status line lies — "thinking…" shown for 25+min while a builder session was actually stranded on #zo3a) — filed by me, building started 2026-07-12. Root cause traced: `issuesProgressLine` (src/hull/agent/progress.ts) maps every turn_end/agent_end to a flat 'thinking…', including turns that ended because the agent called the `background` tool (src/hull/agent/background-tool.ts, terminate:true) — so the line freezes on "thinking…" forever if the job's resume callback is lost. Also noted: no persisted "last activity" timestamp exists yet (statusLine writes don't bump one), and background jobs are in-process/in-memory only (src/hull/agent/background.ts, no DB row) — so job-liveness questions can't be answered durably today. Left the exact fix mechanism to the builder. Watch for the inbox wake and route the update back to this chat — do NOT re-investigate, this session already did the digging.
