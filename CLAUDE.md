@@ -131,8 +131,12 @@ disabled. The weekly sweeps and their secrets are documented in
     the process for an ordinary file change.
   - `setup-tunnel` — the only manual, human-run step: logs into Cloudflare
     (`cloudflared tunnel login`), creates a named tunnel, routes DNS to a
-    hostname you choose, and installs `cloudflared` as its own system service.
-    Not part of `hoist` since it needs your own Cloudflare account/domain.
+    hostname you choose (plus an optional second hostname for the LLM gateway's
+    admin UI, wiring `SKYLARK_GATEWAY_UI_URL` so the Models page links to it),
+    and installs `cloudflared` as its own system service. Re-running restarts
+    the service with the rewritten config — that's how a hostname gets added
+    later. Not part of `hoist` since it needs your own Cloudflare
+    account/domain.
 
 ## The crew
 
