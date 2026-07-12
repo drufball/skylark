@@ -31,14 +31,28 @@ describe('wakeBriefing', () => {
     const briefing = wakeBriefing(['@builder moved it: building → done'])
     expect(briefing).toContain('1 update on work')
     expect(briefing).toContain('- @builder moved it: building → done')
-    expect(briefing).toContain('Review what happened')
     expect(wakeBriefing(['a', 'b'])).toContain('2 updates')
   })
 
   it('tells the agent to route the update itself via the chat CLI', () => {
     const briefing = wakeBriefing(['something moved'])
+    expect(briefing).toContain('only job is triage')
     expect(briefing).toContain('chat CLI')
     expect(briefing).toContain('If no chat fits')
+  })
+
+  it('bounds the wake to routing — no doing the work itself', () => {
+    const briefing = wakeBriefing(['something moved'])
+    // The router routes; the crew in the routed-to chat owns any follow-up.
+    expect(briefing).toContain('Do NOT investigate')
+    expect(briefing).toMatch(/another session\s+owns the work/)
+    expect(briefing).toMatch(/end your\s+turn/)
+    // The old do-work instructions must be gone — they sent inbox sessions
+    // rogue (debugging CI, filing issues, polling checks in a loop).
+    expect(briefing).not.toContain('Review what happened')
+    expect(briefing).not.toContain('file follow-up issues')
+    expect(briefing).not.toContain('kick off')
+    expect(briefing).not.toContain('check the result')
   })
 })
 

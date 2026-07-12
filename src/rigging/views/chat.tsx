@@ -5,6 +5,7 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Composer } from '@rigging/components/composer'
+import { CollapsibleSidebar } from '@rigging/components/collapsible-sidebar'
 import { inputClass, selectClass } from '@rigging/components/ui/input'
 
 // The front door: chat between the crew — humans and agents. Participant-focused
@@ -30,6 +31,12 @@ export interface ChatMemberItem {
   userId: string
   handle: string
   type: 'human' | 'agent'
+  /**
+   * The agent's persisted "working…" line, if it's mid-turn right now — the
+   * durable half of the placeholder, so it's still here after a page
+   * navigation reloads the thread instead of catching a live SSE event.
+   */
+  progressLine?: string | null
 }
 
 export interface CrewMember {
@@ -70,11 +77,33 @@ export function chatName(item: {
     : 'New chat'
 }
 
+/**
+ * The working placeholder derived from a chat's own durably-persisted member
+ * data (chat/service.ts's `progressLine`), rather than a live SSE event —
+ * this is what lets the bubble show up on a fresh load (a page navigation
+ * away and back), not only while a tab was open to catch the event live. A
+ * route seeds its live `working` state from this on every activeId change;
+ * pure and exported so the derivation itself is unit-tested directly.
+ */
+export function workingFromMembers(
+  members: ChatMemberItem[],
+): { handle: string; line: string } | null {
+  const inProgress = members.find((m) => m.progressLine)
+  return inProgress?.progressLine
+    ? { handle: inProgress.handle, line: inProgress.progressLine }
+    : null
+}
+
 export function ChatView(props: ChatViewProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false)
   return (
-    <div className="flex h-full bg-background text-foreground">
-      <ChatList {...props} />
-      <section className="flex min-w-0 flex-1 flex-col">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
+      <ChatList
+        {...props}
+        drawerOpen={drawerOpen}
+        onDrawerOpenChange={setDrawerOpen}
+      />
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         {props.composing ? (
           <NewChat
             crew={props.crew}
@@ -97,9 +126,19 @@ function ChatList({
   composing,
   onSelect,
   onNew,
-}: ChatViewProps) {
+  drawerOpen,
+  onDrawerOpenChange,
+}: ChatViewProps & {
+  drawerOpen: boolean
+  onDrawerOpenChange: (open: boolean) => void
+}) {
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r bg-muted/30">
+    <CollapsibleSidebar
+      label="Chats"
+      open={drawerOpen}
+      onOpenChange={onDrawerOpenChange}
+      className="min-h-0 w-72 bg-muted/30"
+    >
       <div className="flex items-center gap-2 p-3">
         <Users className="size-5 text-muted-foreground" />
         <span className="font-semibold">Chats</span>
@@ -114,7 +153,7 @@ function ChatList({
           New
         </Button>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <nav className="flex flex-col gap-1 p-2">
           {chats.length === 0 && (
             <p className="px-2 py-4 text-sm text-muted-foreground">
@@ -127,6 +166,7 @@ function ChatList({
               type="button"
               onClick={() => {
                 onSelect(chat.id)
+                onDrawerOpenChange(false)
               }}
               className={cn(
                 'truncate rounded-md px-3 py-2 text-left text-sm',
@@ -141,7 +181,7 @@ function ChatList({
           ))}
         </nav>
       </ScrollArea>
-    </aside>
+    </CollapsibleSidebar>
   )
 }
 
@@ -223,7 +263,7 @@ function Messages({
   working,
 }: Pick<ChatViewProps, 'messages' | 'working'>) {
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 p-6">
         {messages.map((m) => (
           <div

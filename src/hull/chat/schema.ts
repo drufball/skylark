@@ -53,6 +53,12 @@ export const chatMembers = pgTable(
     sessionId: text('session_id').references(() => agentSessions.id, {
       onDelete: 'set null',
     }),
+    /**
+     * The agent's latest live "working…" line, persisted (not just streamed
+     * over SSE) so the bubble survives a page navigation. Null when the agent
+     * isn't mid-turn.
+     */
+    progressLine: text('progress_line'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

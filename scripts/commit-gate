@@ -40,8 +40,13 @@ fi
 # main checkout like scripts/setup would.
 if [ ! -d node_modules ]; then
   echo "→ commit-gate: node_modules missing, installing deps first..." >&2
+  # Same npm CI uses (package.json's packageManager pin) as scripts/setup —
+  # a mismatched ambient npm can write a lockfile CI's npm ci then rejects
+  # (#iv1t). npm-cmd reads THIS worktree's package.json (we're already cd'd
+  # into it via gate-workdir above).
+  npm_cmd="$(./scripts/npm-cmd)"
   if [ "${CI:-}" = "true" ]; then
-    if ! npm ci >&2 2>&1; then
+    if ! $npm_cmd ci >&2 2>&1; then
       {
         echo ""
         echo "⚠ npm ci failed — this worktree can't run npm commands. Fix it before committing. (commit-gate)"
@@ -49,7 +54,7 @@ if [ ! -d node_modules ]; then
       exit 2
     fi
   else
-    if ! npm install >&2 2>&1; then
+    if ! $npm_cmd install >&2 2>&1; then
       {
         echo ""
         echo "⚠ npm install failed — this worktree can't run npm commands. Fix it before committing. (commit-gate)"

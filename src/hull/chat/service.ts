@@ -133,6 +133,8 @@ export interface ChatMemberView {
   displayName: string
   type: UserRow['type']
   sessionId: string | null
+  /** The agent's latest live progress line, persisted so it survives navigation. */
+  progressLine: string | null
 }
 
 export async function listMembers(
@@ -146,6 +148,7 @@ export async function listMembers(
       displayName: users.displayName,
       type: users.type,
       sessionId: chatMembers.sessionId,
+      progressLine: chatMembers.progressLine,
     })
     .from(chatMembers)
     .innerJoin(users, eq(chatMembers.userId, users.id))
@@ -330,5 +333,23 @@ export async function setMemberSession(
   await db
     .update(chatMembers)
     .set({ sessionId })
+    .where(and(eq(chatMembers.chatId, chatId), eq(chatMembers.userId, userId)))
+}
+
+/**
+ * Write (or clear, with null) an agent member's latest live progress line —
+ * the durable half of the "working…" bubble. Persisted so navigating away from
+ * a chat and back still shows the agent's last status, not just silence;
+ * `driveTurn` clears it back to null once the turn ends.
+ */
+export async function setMemberProgress(
+  db: Database,
+  chatId: string,
+  userId: string,
+  progressLine: string | null,
+): Promise<void> {
+  await db
+    .update(chatMembers)
+    .set({ progressLine })
     .where(and(eq(chatMembers.chatId, chatId), eq(chatMembers.userId, userId)))
 }

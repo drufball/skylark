@@ -1,14 +1,30 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { ChatView, type ChatViewProps, chatName } from './chat'
+import {
+  ChatView,
+  type ChatViewProps,
+  chatName,
+  workingFromMembers,
+} from './chat'
 import { classTokensOf } from './test-support'
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
 })
 afterEach(cleanup)
+
+function setWidth(width: number) {
+  act(() => {
+    window.innerWidth = width
+    window.dispatchEvent(new Event('resize'))
+  })
+}
+const originalWidth = window.innerWidth
+afterEach(() => {
+  setWidth(originalWidth)
+})
 
 describe('chatName', () => {
   it('uses the title, else the members, else a fallback', () => {
@@ -17,6 +33,39 @@ describe('chatName', () => {
       '@tilde, @bix',
     )
     expect(chatName({ title: null, memberHandles: [] })).toBe('New chat')
+  })
+})
+
+describe('workingFromMembers', () => {
+  it('is null when no member has a persisted progress line', () => {
+    expect(
+      workingFromMembers([
+        { userId: 'a', handle: 'tilde', type: 'agent' },
+        { userId: 'b', handle: 'dru', type: 'human' },
+      ]),
+    ).toBeNull()
+  })
+
+  it('is null when progressLine is explicitly null', () => {
+    expect(
+      workingFromMembers([
+        { userId: 'a', handle: 'tilde', type: 'agent', progressLine: null },
+      ]),
+    ).toBeNull()
+  })
+
+  it('surfaces the handle + line of the member mid-turn', () => {
+    expect(
+      workingFromMembers([
+        { userId: 'a', handle: 'tilde', type: 'agent', progressLine: null },
+        {
+          userId: 'b',
+          handle: 'bix',
+          type: 'agent',
+          progressLine: 'using bash…',
+        },
+      ]),
+    ).toEqual({ handle: 'bix', line: 'using bash…' })
   })
 })
 
@@ -164,6 +213,14 @@ describe('ChatView', () => {
     expect(onCreate).not.toHaveBeenCalled()
   })
 
+  it('pins the view to exactly the viewport height with its own overflow, so the sidebar and content pane each scroll independently instead of the whole row dragging away', () => {
+    const { container } = renderView()
+    expect(container.firstElementChild?.className).toContain('h-full')
+    expect(container.firstElementChild?.className).toContain('overflow-hidden')
+    expect(container.querySelector('aside')?.className).toContain('min-h-0')
+    expect(container.querySelector('section')?.className).toContain('min-h-0')
+  })
+
   it('adds and removes members', () => {
     const { onAddMember, onRemoveMember } = renderView({
       activeId: 'c1',
@@ -180,5 +237,35 @@ describe('ChatView', () => {
 
     fireEvent.click(screen.getByLabelText('Remove tilde'))
     expect(onRemoveMember).toHaveBeenCalledWith('a')
+  })
+
+  it('on mobile, hides the chat list behind a trigger and opens it as a drawer', () => {
+    setWidth(500)
+    renderView({
+      chats: [{ id: 'c1', title: null, memberHandles: ['tilde'] }],
+    })
+    expect(screen.queryByText('@tilde')).toBeNull()
+    fireEvent.click(screen.getByLabelText(/open chats/i))
+    expect(screen.getByText('@tilde')).toBeTruthy()
+  })
+
+  it('on mobile, selecting a chat closes the drawer', () => {
+    setWidth(500)
+    const { onSelect } = renderView({
+      chats: [{ id: 'c1', title: null, memberHandles: ['tilde'] }],
+    })
+    fireEvent.click(screen.getByLabelText(/open chats/i))
+    fireEvent.click(screen.getByText('@tilde'))
+    expect(onSelect).toHaveBeenCalledWith('c1')
+    expect(screen.queryByText('@tilde')).toBeNull()
+  })
+
+  it('on desktop, the chat list stays docked with no trigger', () => {
+    setWidth(1024)
+    renderView({
+      chats: [{ id: 'c1', title: null, memberHandles: ['tilde'] }],
+    })
+    expect(screen.getByText('@tilde')).toBeTruthy()
+    expect(screen.queryByLabelText(/open chats/i)).toBeNull()
   })
 })

@@ -6,6 +6,7 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
+import { CollapsibleSidebar } from '@rigging/components/collapsible-sidebar'
 
 // The files surface: the crew's shared documents. An explorer rail on the left,
 // the selected file on the right — rendered markdown by default, a plain editor
@@ -40,16 +41,22 @@ export function FilesView({
   onCreate,
   onDelete,
 }: FilesViewProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false)
   return (
-    <main className="flex h-screen">
-      <aside className="flex w-64 shrink-0 flex-col border-r">
+    <main className="flex h-full overflow-hidden">
+      <CollapsibleSidebar
+        label="Files"
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        className="min-h-0 w-64"
+      >
         <header className="border-b px-4 py-4">
           <h1 className="text-lg font-semibold">Files</h1>
           <p className="text-sm text-muted-foreground">
             Shared docs — everyone edits live.
           </p>
         </header>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-0.5 p-2">
             <NewFile busy={busy} onCreate={onCreate} />
             {files.length === 0 ? (
@@ -63,6 +70,7 @@ export function FilesView({
                   type="button"
                   onClick={() => {
                     onSelect(path)
+                    setDrawerOpen(false)
                   }}
                   className={cn(
                     'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
@@ -77,7 +85,7 @@ export function FilesView({
             )}
           </div>
         </ScrollArea>
-      </aside>
+      </CollapsibleSidebar>
       {selected === null ? (
         <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
           Select a file — or create one.
@@ -130,7 +138,7 @@ function OpenFile({
 
 function MissingFile({ path }: { path: string }) {
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex items-center gap-2 border-b px-6 py-3">
         <h2 className="min-w-0 flex-1 truncate font-mono text-sm">{path}</h2>
       </header>
@@ -189,7 +197,7 @@ function ExistingFile({
   )
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex items-center gap-2 border-b px-6 py-3">
         <h2 className="min-w-0 flex-1 truncate font-mono text-sm">{path}</h2>
         <span className="text-xs text-muted-foreground">
@@ -229,10 +237,10 @@ function ExistingFile({
           onChange={(e) => {
             setDraft(e.target.value)
           }}
-          className="flex-1 resize-none rounded-none border-0 p-6 font-mono text-sm focus-visible:ring-0"
+          className="min-h-0 flex-1 resize-none rounded-none border-0 p-6 font-mono text-sm focus-visible:ring-0"
         />
       ) : (
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <article className="prose prose-sm dark:prose-invert max-w-3xl p-6">
             {content === '' ? (
               <p className="text-muted-foreground">This file is empty.</p>

@@ -7,6 +7,7 @@ import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
+import { CollapsibleSidebar } from '@rigging/components/collapsible-sidebar'
 
 // The agent-session monitor, presentational and routing-agnostic: it takes its
 // data and a set of callbacks, and knows nothing about fetching, polling, or
@@ -50,14 +51,20 @@ export function AgentChatView({
   emptyTitle,
   emptyHint,
 }: AgentChatViewProps) {
+  const [drawerOpen, setDrawerOpen] = useState(false)
   return (
-    <main className="flex h-full bg-background text-foreground">
+    <main className="flex h-full overflow-hidden bg-background text-foreground">
       <SessionList
         sessions={sessions}
         activeId={activeId}
-        onSelect={onSelect}
+        onSelect={(id) => {
+          onSelect(id)
+          setDrawerOpen(false)
+        }}
+        drawerOpen={drawerOpen}
+        onDrawerOpenChange={setDrawerOpen}
       />
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Transcript
           items={items}
           activeId={activeId}
@@ -85,14 +92,24 @@ function SessionList({
   sessions,
   activeId,
   onSelect,
-}: Pick<AgentChatViewProps, 'sessions' | 'activeId' | 'onSelect'>) {
+  drawerOpen,
+  onDrawerOpenChange,
+}: Pick<AgentChatViewProps, 'sessions' | 'activeId' | 'onSelect'> & {
+  drawerOpen: boolean
+  onDrawerOpenChange: (open: boolean) => void
+}) {
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r bg-muted/30">
+    <CollapsibleSidebar
+      label="Sessions"
+      open={drawerOpen}
+      onOpenChange={onDrawerOpenChange}
+      className="min-h-0 w-72 bg-muted/30"
+    >
       <div className="flex items-center gap-2 p-3">
         <Anchor className="size-5 text-muted-foreground" />
         <span className="font-semibold">Skylark</span>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <nav className="flex flex-col gap-1 p-2">
           {sessions.length === 0 && (
             <p className="px-2 py-4 text-sm text-muted-foreground">
@@ -123,7 +140,7 @@ function SessionList({
           ))}
         </nav>
       </ScrollArea>
-    </aside>
+    </CollapsibleSidebar>
   )
 }
 
@@ -155,7 +172,7 @@ function Transcript({
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 p-6">
         {items.map((item, i) => (
           <ChatItemView key={i} item={item} />

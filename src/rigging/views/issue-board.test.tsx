@@ -39,6 +39,15 @@ function renderView(props: Partial<IssueBoardViewProps> = {}) {
 }
 
 describe('IssueBoardView', () => {
+  it("fills its container height with its own clipped scroll, so a tall board can't drag the dock away with it", () => {
+    const { container } = renderView()
+    expect(container.firstElementChild?.className).toContain('h-full')
+    expect(container.firstElementChild?.className).toContain('overflow-hidden')
+    expect(
+      container.querySelector('[data-slot="scroll-area"]')?.className,
+    ).toContain('min-h-0')
+  })
+
   it('invites the first issue when empty', () => {
     renderView()
     expect(screen.getByText(/No issues yet/i)).toBeTruthy()

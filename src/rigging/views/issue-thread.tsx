@@ -34,7 +34,7 @@ export function IssueThreadView({
 }: IssueThreadViewProps) {
   const terminal = thread.status === 'done' || thread.status === 'closed'
   return (
-    <main className="flex h-screen flex-col">
+    <main className="flex h-full flex-col overflow-hidden">
       <header className="flex flex-col gap-2 border-b px-6 py-4">
         <div className="flex items-center gap-2">
           <Button
@@ -88,7 +88,7 @@ export function IssueThreadView({
         />
       </header>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
           {thread.body && (
             <p className="whitespace-pre-wrap rounded-lg border bg-card p-3 leading-relaxed">

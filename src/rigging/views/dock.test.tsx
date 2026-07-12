@@ -87,4 +87,24 @@ describe('Dock', () => {
     fireEvent.click(screen.getByText('Log out'))
     expect(onLogout).toHaveBeenCalledOnce()
   })
+
+  it('pins the shell to exactly the viewport height with no page-level scroll', () => {
+    const { container } = render(
+      <Dock active="issues" Link={FakeLink} onLogout={() => undefined}>
+        <span />
+      </Dock>,
+    )
+    // The outer row is exactly the viewport height (not a min-height), and
+    // clips instead of letting a tall child drag the whole row down the page —
+    // each side is responsible for its own internal scroll instead.
+    const root = container.firstElementChild
+    expect(root?.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['h-screen', 'overflow-hidden']),
+    )
+    // The slot the active surface mounts into can't be pushed taller than the
+    // row by its content — min-h-0 is what makes a flex child's own overflow
+    // stay inside it rather than expanding the row past 100vh.
+    const slot = container.querySelector('nav')?.nextElementSibling
+    expect(slot?.className.split(/\s+/)).toContain('min-h-0')
+  })
 })

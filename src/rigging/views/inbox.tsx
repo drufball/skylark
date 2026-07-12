@@ -29,7 +29,7 @@ export function InboxView({
   onOpenIssue,
 }: InboxViewProps) {
   return (
-    <main className="flex h-screen flex-col">
+    <main className="flex h-full flex-col overflow-hidden">
       <header className="flex items-center gap-3 border-b px-6 py-4">
         <div className="flex-1">
           <h1 className="text-lg font-semibold">Inbox</h1>
@@ -49,7 +49,7 @@ export function InboxView({
           Mark all read
         </Button>
       </header>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto max-w-3xl p-6">
           {entries.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-16 text-sm text-muted-foreground">

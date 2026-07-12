@@ -7,7 +7,8 @@ import { errorMessage } from '@hull/lib/errors'
  * conversation (if any) each update belongs in, and posts there with the chat
  * CLI. This is what closes the planning loop: the chat agent files an issue,
  * the builder moves it, the creator's auto-watch notifies it, and the waker
- * brings the agent back to review and file the next piece.
+ * brings the agent back to route the update to the conversation that planned
+ * the work — routing only, never doing the work itself.
  *
  * Debounced per agent: a flurry of notifications (a build landing touches
  * status + comments in quick succession) becomes ONE wake with the whole batch
@@ -56,11 +57,13 @@ export function wakeBriefing(lines: string[]): string {
   return `${String(lines.length)} ${plural} on work you're watching:
 ${lines.map((l) => `- ${l}`).join('\n')}
 
-Review what happened. If work landed, check the result; file follow-up issues
-for anything wrong, and kick off the next piece if there is one. Then decide
-which conversation this update belongs in: use the chat CLI to find the chat
-where the work was planned and post a concise update there. If no chat fits,
-do nothing.`
+Your only job is triage: for each update, decide which existing conversation
+(if any) needs to know. Use the chat CLI to find the chat where the work was
+planned and post a concise update there. Do NOT investigate, debug, build,
+fix, file issues, kick things off, or watch/poll anything — another session
+owns the work; your update is for awareness only, and if follow-up is needed,
+the crew in that chat decides it. If no chat fits, do nothing and end your
+turn.`
 }
 
 export function createAgentWaker(deps: AgentWakerDeps): {

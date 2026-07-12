@@ -60,9 +60,6 @@
   job's resume seems to go missing, just re-run the same command in the
   foreground rather than re-backgrounding it again.
 
-
-## Recent Work
-
 ### Issue #3c5b: Remove TanStack devtools logo (PR #123)
 - **Status**: PR open, handed to @babysitter (second round — fixed a lockfile
   CI failure after the first handoff)

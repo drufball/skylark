@@ -1,0 +1,1 @@
+ALTER TABLE "chat_members" ADD COLUMN "progress_line" text;

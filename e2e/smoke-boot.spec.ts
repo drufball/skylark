@@ -29,6 +29,17 @@ test('the issues board route loads', async ({ page }) => {
   await expect(page.getByText('New issue')).toBeVisible()
 })
 
+test('the shipped UI never renders the TanStack devtools panel', async ({
+  page,
+}) => {
+  // The devtools widget mounts a #tanstack_devtools element (see
+  // @tanstack/react-devtools) — it's dev tooling, not shipped UI, so it must
+  // never appear on a real page, even in the fake-runtime smoke boot.
+  await loginAsOperator(page)
+  await page.goto('/status')
+  await expect(page.locator('#tanstack_devtools')).toHaveCount(0)
+})
+
 test('an unauthenticated visit to any route redirects to /login', async ({
   page,
 }) => {

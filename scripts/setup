@@ -17,10 +17,16 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 echo "→ installing dependencies"
+# Route through the SAME npm CI uses (package.json's packageManager pin) when
+# the ambient npm differs — a mismatched npm can write/read package-lock.json
+# in a subtly different shape, making CI's npm ci fail on an otherwise-fine
+# lockfile (#iv1t). scripts/npm-cmd is a no-op ("npm") in the common case
+# where they already match.
+npm_cmd="$(./scripts/npm-cmd)"
 if [ "${CI:-}" = "true" ]; then
-  npm ci
+  $npm_cmd ci
 else
-  npm install
+  $npm_cmd install
 fi
 
 echo "→ generating routes"

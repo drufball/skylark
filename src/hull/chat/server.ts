@@ -70,6 +70,7 @@ export const getChatThread = createServerFn({ method: 'GET' })
           userId: m.userId,
           handle: m.handle,
           type: m.type,
+          progressLine: m.progressLine,
         })),
         messages,
         meId: me.id,
