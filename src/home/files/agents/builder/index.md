@@ -2,33 +2,74 @@
 
 ## Recent Work
 
-### Issue #3c5b: Remove TanStack devtools logo (PR #123) — MERGED ✓
-- **Status**: done. PR #123 merged (commit 2a9ae78). CI (verify/coverage/smoke)
-  all green.
-- **What shipped**: Removed the always-rendered `TanStackDevtools` panel
-  (bottom-right floating widget) from `RootDocument` in
-  `src/routes/__root.tsx`; dropped the now-unused `@tanstack/react-devtools`
-  + `@tanstack/react-router-devtools` packages. Kept `@tanstack/devtools-vite`
-  (separate Vite plugin, dev-only by its own default — unrelated to the UI
-  widget).
-- **Red-green test**: Playwright smoke assertion in `e2e/smoke-boot.spec.ts`
-  that `#tanstack_devtools` (the panel's real mount-point id) never appears
-  on a real page.
-- **Post-open hiccup (resolved)**: my committed `package-lock.json` was
-  regenerated with a local npm (11.17.0) newer than what CI's node 22 setup
-  bundles (10.9.8) — nitro's optional peer `lru-cache` resolves differently
-  across npm versions, and 10.9.8's `npm ci` rejected the newer-npm-shaped
-  lockfile as "out of sync" (all 3 CI jobs red). @tilde diagnosed it (issue
-  #59vb) and a fix commit regenerating the lockfile with npm 10.9.8 landed
-  directly on the PR branch (027a1bb) — babysitter shepherded it, all checks
-  went green, PR merged. #59vb closed as resolved. Systemic follow-up (pin
-  npm via `packageManager`/corepack so this can't recur) tracked separately
-  in **#iv1t** (still open, not mine — filed by @tilde, unassigned to me).
-- **New gotcha for next time**: **always use `npx npm@10.9.8` (or whatever
-  version `.nvmrc`'s node bundles) for any `npm install` that touches
-  `package.json`/`package-lock.json`**, not the ambient/global npm — check
-  `.nvmrc` + what CI's `actions/setup-node` step implies before regenerating
-  a lockfile, to avoid this exact CI-red-for-unrelated-reasons trap.
+### Issue #osy7: Mobile-friendly responsive list+content layout (PR #124)
+- **Status**: PR open, handed to @babysitter
+- **What**: chat.tsx, agent-chat.tsx, files.tsx each split the screen with a
+  hardcoded-width `<aside className="w-64|w-72 shrink-0">` and zero responsive
+  handling — squeezed/overflowed on mobile, no way to hide the list.
+- **Shared pieces** (so it's not 3 reimplementations):
+  - `src/rigging/lib/use-is-mobile.ts` — `useIsMobile()` tracks
+    `window.innerWidth` against Tailwind's `md` breakpoint (768px) live via
+    `resize`. Starts `false` during TanStack Start's SSR pass (no `window`
+    yet) and corrects itself in an effect right after mount — reading
+    `window` directly during render would crash SSR.
+  - `src/rigging/components/collapsible-sidebar.tsx` — `CollapsibleSidebar`:
+    docked `<aside>` above the breakpoint (unchanged desktop behaviour);
+    below it, same children render inside an off-canvas shadcn `Sheet`
+    (added via `npx shadcn@latest add sheet` — radix `Dialog` under the
+    hood, already a dependency via the `radix-ui` package). Owns its own
+    hamburger trigger button; caller wires `open`/`onOpenChange` (local
+    `useState`) and resets to `false` on item selection so picking a
+    chat/session/file auto-closes the drawer and lands on content.
+- **Wired into**: chat.tsx (chat list), agent-chat.tsx (session list),
+  files.tsx (file explorer).
+- **Audited, not touched**: issue-board.tsx and inbox.tsx were in the issue's
+  nominal scope but don't have this pattern — both are single-column,
+  forum-style pages where selecting an item navigates to a separate route
+  (`/issues/$id`) rather than splitting a pane in place. Confirmed via
+  `grep -rn aside src/rigging/views` — no other `<aside>` split-pane exists.
+- **Red-green**: `use-is-mobile.test.tsx` / `collapsible-sidebar.test.tsx` are
+  new, pinning the breakpoint/drawer behavior directly. Added mobile-viewport
+  cases to chat/agent-chat/files view tests (trigger absent + list docked at
+  desktop width; list hidden behind trigger, opens as drawer, auto-closes on
+  selection below the breakpoint) — confirmed these fail against the old
+  always-rendered `<aside>` markup and pass after.
+- **shadcn add gotcha**: `npx shadcn@latest add sheet` also touches
+  `package-lock.json` with unrelated metadata churn (npm re-resolving
+  optional-dep `libc` fields) even though no new dependency is added — `git
+  checkout -- package-lock.json` after, no `npm install` needed since Sheet
+  is built entirely on the already-installed `radix-ui` package.
+- **Design note**: chose `window.innerWidth` + `resize` over `matchMedia`
+  for `useIsMobile` — matchMedia's `MediaQueryList` needed an injectable
+  factory (mirroring `useShipLog`'s `EventSourceFactory` pattern) to be
+  testable and to fake in SSR (no `window.matchMedia` at all server-side,
+  not just no match); `innerWidth`+`resize` behaves identically in jsdom and
+  a real browser with no injection needed, so it's less machinery for the
+  same behavior.
+
+### Issue #3c5b: Remove TanStack devtools logo (PR #123)
+- **Status**: PR open, handed to @babysitter
+- **What**: Removed the always-rendered `TanStackDevtools` panel (bottom-right
+  floating widget) from `RootDocument` in `src/routes/__root.tsx`; dropped the
+  now-unused `@tanstack/react-devtools` + `@tanstack/react-router-devtools`
+  packages. Kept `@tanstack/devtools-vite` (separate Vite plugin, dev-only by
+  its own default, wired in `vite.config.ts` — unrelated to the UI widget).
+- **Red-green test**: added a Playwright smoke assertion in
+  `e2e/smoke-boot.spec.ts` that `#tanstack_devtools` (the panel's real mount-
+  point id, found by reading `@tanstack/react-devtools`'s source in
+  node_modules) never appears on a real page. Confirmed it failed against the
+  old code, passed after the fix.
+- **Env/tooling gotcha**: in this sandbox, `git push`/`gh pr create` initially
+  failed ("could not read Username", "not logged into any GitHub hosts") even
+  though a `gh` keyring credential existed (`security dump-keychain` showed
+  `svce="gh:github.com"`, `gh auth status` succeeded). Fix: run
+  `gh auth setup-git` once per session/worktree to wire gh's credential into
+  git's credential helper — then `git push` and `gh pr create` both work.
+  `gh pr create --body "$(cat <<'EOF' ...)"` heredoc-in-substitution can choke
+  bash quoting; write the body to a temp file and use `--body-file` instead.
+- **Playwright note**: smoke tests need browsers installed once per box —
+  `npx playwright install chromium --with-deps` (~170MB download) before
+  `npm run smoke` or `npx playwright test e2e/...` will work.
 
 ### Issue #mp1q: Local-time formatter for inbox timestamps (PR #83)
 - **Status**: PR open, handed to @babysitter
@@ -52,6 +93,11 @@
   (`npx playwright install chromium --with-deps`). Good for red-green testing
   UI-shell-level things (root document, always-on widgets) that don't have a
   natural unit-test home.
+- Under heavy machine load (several worktrees + dev servers + Docker running
+  at once), `npm run check`'s hull DB tests (PGlite `freshDb()`) can fail with
+  "Hook timed out in 10000ms" — flaky from contention, not a real failure.
+  Rerun the specific failing test file(s) alone, or rerun `npm run check`
+  once load drops, before assuming your change broke something in hull.
 
 ### Structure
 - **Rigging layer** (`src/rigging/`): UI components, views, formatters
@@ -61,6 +107,15 @@
 - `src/routes/__root.tsx`'s `RootDocument` is the actual HTML shell
   (`<html>/<head>/<body>`) every route renders into — the right place to
   remove/gate anything "on every page" (widgets, scripts, devtools).
+- Shared cross-view UI components (not single-view-specific) live in
+  `src/rigging/components/` directly (e.g. `composer.tsx`,
+  `collapsible-sidebar.tsx`), with shadcn primitives one level down in
+  `src/rigging/components/ui/` (e.g. `sheet.tsx`, added via
+  `npx shadcn@latest add <name>` — check `components.json` for aliases).
+- Hooks belonging to one deck live in that deck's `lib/` (e.g.
+  `src/rigging/lib/use-is-mobile.ts`, `use-ship-log.ts`) even though
+  `components.json` declares a `@rigging/hooks` alias — no `hooks/` dir
+  exists yet in practice, `lib/` is where they actually land.
 
 ### Build Loop (build-feature skill)
 1. Red-green TDD: test first, then implementation
@@ -78,31 +133,7 @@
 - `gh pr create --body "$(cat <<'EOF' ... EOF)"` can trip bash's heredoc
   parsing when passed through certain shells/tools; write the PR body to a
   temp file and use `--body-file /tmp/whatever.md` instead — more reliable.
-- **npm version drift breaks CI**: CI's node 22 setup bundles npm 10.9.8; a
-  sandbox's ambient/global npm can be newer (e.g. 11.17.0) and produce a
-  *differently-shaped but still valid* `package-lock.json` (e.g. nitro's
-  optional peer `lru-cache` resolves without an explicit
-  `node_modules/nitro/node_modules/lru-cache` entry) that npm 10.9.8's
-  `npm ci` rejects as "out of sync" — every CI job (verify/coverage/smoke)
-  goes red at the setup step, with nothing wrong in the actual diff. Fix/
-  avoid: run lockfile-touching installs with `npx npm@10.9.8 install`
-  (matching whatever `.nvmrc` + CI's setup-node implies), not the ambient
-  npm. Systemic fix (pin `packageManager` + corepack) tracked in #iv1t.
-- This sandbox's local npm cache can go flaky/corrupted mid-session (tarball
-  "seems to be corrupted", `ENOTEMPTY` on `rm -rf node_modules` if a
-  dev-server process still has files open, stale `node_modules` reappearing
-  after a supposedly-clean delete). If `npm ci`/`npm install` throws weird
-  filesystem errors, check `ps aux` for a lingering `vite dev` in that
-  worktree, kill it, `rm -rf node_modules` again, and retry — usually clears
-  up on the 2nd or 3rd attempt without deeper action needed.
-
-### Issue/inbox-session hygiene
-- The inbox session (this one) is a **router only**: read the update, find
-  the chat where the work was planned via `npm run chat -- list/show`, post
-  a concise summary, stop. Do NOT re-investigate or re-fix work another
-  session (e.g. @babysitter) already resolved — check `gh pr view <n>
-  --json state,mergedAt` and `npm run issue -- show <id>` first; if the PR's
-  merged and the issue's already `done`/`closed`, there's nothing to do.
-  (Issue #hmu1, filed by @tilde, tracks tightening this prompt further after
-  a prior inbox session burned ~12 minutes re-debugging a CI failure the
-  babysitter had already fixed.)
+- `npx shadcn@latest add <component>` touches `package-lock.json` with
+  unrelated metadata-only churn (e.g. re-resolved optional-dep `libc`
+  fields) even when no new dependency is actually added — diff it after and
+  `git checkout -- package-lock.json` if it's just noise.
