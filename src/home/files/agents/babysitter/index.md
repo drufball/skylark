@@ -1,44 +1,46 @@
-# babysitter memory
+# Babysitter memory
 
 ## Role
-I shepherd open PRs to merge (babysit-pr skill) and triage inbox updates
-(issue status moves, PR check results) routing them to the chat where the
-work was planned. I never write code — code fixes go to @builder; blocked
-merges (branch protection, required review, or 2nd builder round-trip on
-same PR) go to OWNER.
+I shepherd open PRs to merge for issues handed to me by @builder. I never write
+code — if CI fails or reviews need real changes, hand back to @builder with a
+precise brief; after a second round-trip on the same PR, or if merging is
+blocked by branch protection/required review, hand off to OWNER instead.
 
-## Chat access
-`npm run chat -- list/show/post` is scoped by chat membership (RLS) —
-I (babysitter) am often not a member of the chat where work was originally
-planned (e.g. drufball+tilde chats). If `chat list` shows "No chats" or
-`show` says "not a member of this chat", there's no chat I can post to —
-per instructions that's fine, just do nothing for the routing step.
+## Workflow (see plugins/skylark-builder/skills/babysit-pr/SKILL.md, full text
+below skill dirs under each worktree — read it fresh each time, it's the
+authoritative process)
+1. `gh pr checks <pr>` for a quick peek; use `gh pr checks <pr> --watch
+   --interval 30` in the FOREGROUND via the bash tool with a generous timeout
+   (there is no working `background` tool in this environment as of 2026-07 —
+   attempts to call a `background` function failed with "Tool background not
+   found"). Just run the watch command directly with `bash` and a timeout
+   (e.g. 600s); it blocks until checks settle, which is fine.
+2. Once checks are green, confirm `gh pr view <pr> --json
+   mergeStateStatus,mergeable` — only merge on CLEAN/UNSTABLE+MERGEABLE.
+   BEHIND -> rebase+push. DIRTY/CONFLICTING -> rebase, resolve, re-check.
+   BLOCKED -> escalate to OWNER, don't retry.
+3. Check `gh pr view <pr> --comments` for unresolved review feedback before
+   merging.
+4. `gh pr merge <pr> --squash --delete-branch`. Note: a PR can end up merged
+   already by the time you get here (e.g. checks watch showed CLEAN, another
+   process/auto-merge landed it) — the merge command will error "already
+   merged"; just verify via `gh pr view <pr> --json state,mergedAt` and treat
+   MERGED as success, don't treat that error as a failure to fix.
+5. Mark the issue done via `npm run issue -- done <issue>` as the LAST action.
 
-## Verifying a merge actually landed clean
-- `gh pr view <n> --json state,mergedAt,statusCheckRollup,title,headRefName`
-  — check state == MERGED and every check conclusion == SUCCESS.
-- Cross-check the fix commit is actually in the merged tip:
-  `git log <branch> --oneline` and `git show origin/main:<file> | grep ...`
-  to confirm regenerated files (e.g. package-lock.json) match main post-merge.
-- DB is reachable via `docker exec skylark-db-1 psql -U postgres -d skylark -c "..."`
-  when I need ground truth beyond the CLI doors (e.g. who's a member of what chat).
+## Issue CLI cheat sheet
+- Show thread: `SKYLARK_ACTOR=<actor> npm run issue -- show <id>`
+- Comment: `SKYLARK_ACTOR=<actor> npm run issue -- comment <id> "<text>"`
+- Handoff: `SKYLARK_ACTOR=<actor> npm run issue -- handoff <id> <agent|OWNER> "<msg>"`
+- Done: `SKYLARK_ACTOR=<actor> npm run issue -- done <id>`
+Always pass the SKYLARK_ACTOR prefix exactly as given in the task so
+attribution is correct.
 
-## Issue CLI notes
-- `npm run issue -- done <id>` errors "Illegal issue transition: done → done"
-  if already done — harmless, just confirms it's already closed out. The
-  issue `list` view can show a stale/cached status icon briefly after a
-  move; `issue show <id>` is the source of truth.
-- Comment before transitioning if you want a durable note of what was
-  verified (`npm run issue -- comment <id> "..."`).
-
-## Case log
-- 2026-07-12: PR #123 (remove TanStack devtools logo, issue #3c5b) had CI
-  all-red on a stale package-lock.json (npm version drift: local npm 11.x
-  vs CI's npm 10.9.8 via node 22/.nvmrc). @tilde filed #59vb, diagnosed root
-  cause, regenerated the lockfile with npm 10.9.8, pushed fix commit
-  027a1bb. CI went green (verify/coverage/smoke all SUCCESS), PR merged as
-  2a9ae78. #59vb already correctly marked done by tilde by the time I
-  reviewed — I added a confirming comment. No follow-up needed; #iv1t
-  already tracks the systemic root cause (pin npm via packageManager/corepack).
-  Neither babysitter nor builder were members of the chat where this was
-  planned (drufball+tilde's "Mobile UI" chat) — nothing to post there.
+## History
+- osy7 (Mobile-friendly responsive layout, PR #124): builder's audit was
+  correct — issue-board.tsx/inbox.tsx are single-column nav-per-item pages,
+  nothing to fix there. PR added useIsMobile()+CollapsibleSidebar (shadcn
+  Sheet drawer), wired into chat/agent-chat/files. All CI checks (smoke,
+  verify, review, coverage) passed clean, mergeStateStatus CLEAN, no blocking
+  review comments, merged squash+delete-branch. Straightforward one-round
+  babysit, no builder round-trip needed.
