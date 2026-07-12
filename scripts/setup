@@ -8,6 +8,14 @@ cd "$(dirname "$0")/.."
 
 echo "⚓ Skylark setup"
 
+# Fail with directions, not "npm: command not found" — on a truly fresh
+# machine the system deps (Node included) arrive via hoist, which runs
+# install-system-deps BEFORE this script.
+if ! command -v npm >/dev/null 2>&1; then
+  echo "✗ npm isn't installed — run ./scripts/hoist, which installs system deps first."
+  exit 1
+fi
+
 echo "→ installing dependencies"
 if [ "${CI:-}" = "true" ]; then
   npm ci

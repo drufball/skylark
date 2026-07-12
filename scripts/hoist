@@ -13,11 +13,21 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-./scripts/setup
-
+# System deps FIRST: on a truly fresh machine nothing else can run — setup
+# needs npm, and Node only arrives via install-system-deps (Homebrew).
 if [ "$(uname)" = "Darwin" ]; then
   ./scripts/install-system-deps
+  # install-system-deps is a child process, so a freshly-installed Homebrew
+  # (and its node/gh) isn't on THIS shell's PATH yet — pick up its prefix so
+  # the steps below can see them without a fresh terminal.
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [ -x /usr/local/bin/brew ]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
 fi
+
+./scripts/setup
 
 ./scripts/configure-env
 
