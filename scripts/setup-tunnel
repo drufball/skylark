@@ -154,6 +154,13 @@ if [ -f /Library/LaunchDaemons/com.cloudflare.cloudflared.plist ]; then
   sudo launchctl bootout system/com.cloudflare.cloudflared 2>/dev/null || true
   sudo rm /Library/LaunchDaemons/com.cloudflare.cloudflared.plist
 fi
+# bootout is asynchronous — a KeepAlive daemon takes a beat to fully exit,
+# and bootstrapping while it lingers fails with "5: Input/output error".
+# Wait until launchd has actually let go before bootstrapping.
+for _ in $(seq 1 15); do
+  sudo launchctl print system/com.skylark.cloudflared >/dev/null 2>&1 || break
+  sleep 1
+done
 sudo launchctl bootstrap system "$PLIST"
 
 # Idempotent .env upsert — same shape configure-env uses.
