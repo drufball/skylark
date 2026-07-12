@@ -659,6 +659,14 @@ describe('chat orchestrator', () => {
     expect(prompt).toContain('npm run chat -- show')
     expect(prompt).toContain('npm run chat -- post')
 
+    // The wake turn is routing-ONLY: no issue-filing affordance, no license to
+    // investigate — handing the router a do-work tool is what sent inbox
+    // sessions rogue (debugging CI, filing issues, polling checks in a loop).
+    expect(prompt).toContain('Do not investigate')
+    expect(prompt).toMatch(/If no chat fits, do\s+nothing/)
+    expect(prompt).not.toContain('To file follow-up work')
+    expect(prompt).not.toContain('npm run issue -- new')
+
     // Nothing lands in the chat — routing an update is the agent's own job,
     // done from its bash tool, not something the orchestrator posts for it.
     expect(await listMessages(db, chatId)).toHaveLength(0)
