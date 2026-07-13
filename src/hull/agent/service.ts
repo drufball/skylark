@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, like } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import { firstLine, truncate } from '@hull/lib/text'
@@ -63,6 +63,33 @@ export async function getSession(
     .from(agentSessions)
     .where(eq(agentSessions.id, id))
   return row
+}
+
+/**
+ * Resolve a session from a CLI reference: an exact id, or a unique prefix of
+ * one — the same convenience `resolveIssueRef` gives the issue CLI, so fleet
+ * triage doesn't require copy-pasting a full UUIDv7. Tries the exact id first
+ * (the common case once you've already got one from `agent list`), then falls
+ * back to a prefix match. Throws if the prefix is ambiguous rather than
+ * silently picking one — wrong-session inspection during an incident is worse
+ * than a rerun with more characters.
+ */
+export async function resolveSessionRef(
+  db: Database,
+  ref: string,
+): Promise<AgentSessionRow | undefined> {
+  const exact = await getSession(db, ref)
+  if (exact) return exact
+
+  const matches = await db
+    .select()
+    .from(agentSessions)
+    .where(like(agentSessions.id, `${ref}%`))
+  if (matches.length > 1)
+    throw new Error(
+      `Ambiguous session ref "${ref}" matches ${String(matches.length)} sessions — use more characters.`,
+    )
+  return matches[0]
 }
 
 /**
