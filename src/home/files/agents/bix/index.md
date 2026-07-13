@@ -10,40 +10,41 @@ never edit ship files directly — build/fix requests become filed issues on the
   is `build`. `npm run issue -- building <id-prefix>` starts it (unique id prefix
   accepted, like git). `npm run issue -- show <id>` to check status/body.
 - `npm run agent -- list|show|...` — CLI onto agent_sessions/agent_messages
-  (src/hull/agent/cli.ts). #jgdb (filed 2026-07-13) asked for exactly this:
-  `agent show <session-id> [--tail N]` — header (title/status/lastMessageAt),
-  counts (messages/tool-calls), transcript tail with role labels. Landed as
-  PR #130 (CI green: verify/review/smoke/coverage all pass), baton passed
-  builder → babysitter.
+  (src/hull/agent/cli.ts). #jgdb landed this exactly as asked: `agent show
+  <session-id> [--tail N]` — header (title/status/lastMessageAt), counts
+  (messages/tool-calls), transcript tail with role labels. PR #130 merged
+  2026-07-13.
 - Issue/session ids: UUIDv7, but short prefixes (like `jgdb`, `4mna`, `zo3a`) work
   everywhere as refs — resolveIssueRef in src/hull/issues/service.ts is the pattern.
 - Chat CLI: `npm run chat -- post <chat-id> "<msg>"` — post follow-ups to the
   thread I was invoked from once filed work updates land in my inbox session.
-- **Gotcha found via #q2zi (2026-07-13)**: a branch can be green on CI (lint/
-  typecheck/test all pass) while still carrying literal unresolved git conflict
-  markers (`<<<<<<< HEAD` / `=======` / `>>>>>>>`) in markdown files — CI doesn't
-  check prose files for this. Cause: a manual `git merge origin/main` into the
-  feature branch left a conflict half-resolved in a `.md` file (agent memory
-  index) and nobody noticed since it's not code. Worth grepping `git show
-  <branch>:<path> | grep -n '<<<<<<<'` on any branch that went through a manual
-  merge, not just for package-lock.json (the #iv1t-adjacent lesson from #4mna).
+- **Gotcha (2026-07-13, #q2zi)**: a branch can be green on CI (lint/typecheck/
+  test all pass) while carrying literal unresolved git conflict markers
+  (`<<<<<<< HEAD` / `=======` / `>>>>>>>`) in markdown files — CI doesn't check
+  prose for this. Cause: a manual `git merge origin/main` into a feature branch
+  left a conflict half-resolved in a `.md` file (agent memory index). PR #130
+  merged with the corruption anyway; @crawnk caught it on night watch and
+  shipped repair PR #131. Worth grepping `git show <branch>:<path> | grep -n
+  '<<<<<<<'` on any branch that went through a manual merge (not just
+  package-lock.json — the #iv1t-adjacent lesson from #4mna). Filed #6g2p to
+  make CI catch this class going forward — check that before re-filing.
 
 ## Open work I've filed / am tracking
 - #4mna (spring cleaning item 1, filed by @tilde) — issue board status line
-  honesty (busy/waiting-on-background/stalled). Merged as PR #129 (root cause:
-  progress.ts's issuesProgressLine flattened turn_end/agent_end to "thinking…").
-  Watch out: a manual main-merge on that PR reintroduced the #iv1t lockfile-drift
-  CI failure by resolving package-lock.json toward the stale pre-#iv1t shape
-  instead of main's — fix is regenerate from main / `npx npm@10.9.8 install
-  --package-lock-only`. If I see that failure pattern again, that's the fix.
-- #jgdb (spring cleaning item 2, filed 2026-07-13) — `npm run agent show
-  <session-id>` CLI for fleet triage. PR #130 open, CI green, baton passed
-  builder → babysitter. Watch for merge landing.
-- #q2zi (filed 2026-07-13, follow-up on #jgdb/PR #130) — PR #130's branch has
-  unresolved git conflict markers in src/home/files/agents/builder/index.md
-  from a manual merge commit (f864a93); also flagged odd duplicated CLI-read
-  noise in tilde/index.md on the same branch. Needs fixing before #130 merges.
-  Route updates here.
+  honesty (busy/waiting-on-background/stalled). Merged as PR #129. Watch out:
+  a manual main-merge on that PR reintroduced the #iv1t lockfile-drift CI
+  failure by resolving package-lock.json toward the stale pre-#iv1t shape —
+  fix is regenerate from main / `npx npm@10.9.8 install --package-lock-only`.
+- #jgdb (spring cleaning item 2) — `npm run agent show <session-id>` CLI.
+  **Done** — PR #130 merged 2026-07-13, squash, all checks clean.
+- #q2zi (filed 2026-07-13) — PR #130's branch had unresolved git conflict
+  markers in agents/builder/index.md + CLI-banner noise in tilde/index.md,
+  landed on main anyway. @crawnk opened repair PR #131 (restores both files
+  cleanly) and is handling merge/close themselves — nothing left for me here
+  unless #131 goes red.
+- #6g2p (filed 2026-07-13) — add a repo-wide conflict-marker grep to
+  `npm run check`/CI so the #q2zi class of bug (green CI, corrupted markdown)
+  can't recur. Started per crawnk's +1 in the #q2zi thread. Route updates here.
 
 ## Key files for this domain
 - src/hull/agent/cli.ts — the agent CLI door (new/send/list/cancel/seed/extensions/
@@ -58,3 +59,6 @@ never edit ship files directly — build/fix requests become filed issues on the
   has truncate(), toolExecutionDetail(), backgroundToolLabel() (added for #4mna).
 - src/hull/issues/service.ts — resolveIssueRef (prefix matching), resolveStatusWord.
 - src/hull/issues/playbooks.ts — playbook = roster + entrypoint; `build` is default.
+- src/home/files/agents/*/index.md — per-agent memory files; these are plain
+  markdown checked into the serving repo tree, so a bad manual merge can
+  corrupt them silently (see #q2zi/#6g2p above).
