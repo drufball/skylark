@@ -59,6 +59,41 @@ function contentText(content: unknown): string {
     .join('')
 }
 
+/**
+ * Role/tool-call counts for a session's stored messages — the `agent show`
+ * CLI's "at a glance" health check. `messages` here are the RAW stored rows'
+ * `role` column (not the parsed AgentMessage content), since that's already a
+ * cheap, reliable discriminant (user / assistant / toolResult / custom) without
+ * re-parsing every block — tool CALLS, though, are counted by walking the
+ * assistant messages' content blocks (a toolCall is a block inside an
+ * assistant message, not its own stored row).
+ */
+export interface SessionStats {
+  total: number
+  byRole: Record<string, number>
+  toolCalls: number
+}
+
+export function sessionStats(messages: unknown[]): SessionStats {
+  const byRole: Record<string, number> = {}
+  let toolCalls = 0
+
+  for (const raw of messages) {
+    if (!isObject(raw)) continue
+    const message = raw as RawMessage
+    const role = typeof message.role === 'string' ? message.role : 'unknown'
+    byRole[role] = (byRole[role] ?? 0) + 1
+
+    if (role === 'assistant' && Array.isArray(message.content)) {
+      for (const block of message.content as RawBlock[]) {
+        if (isObject(block) && block.type === 'toolCall') toolCalls++
+      }
+    }
+  }
+
+  return { total: messages.length, byRole, toolCalls }
+}
+
 export function toChatItems(messages: unknown[]): ChatItem[] {
   const items: ChatItem[] = []
 

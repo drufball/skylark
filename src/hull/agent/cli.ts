@@ -15,10 +15,13 @@ import { toolExecutionDetail, truncate } from './progress'
 import { createAgentRuntime, createPiSession, DEFAULT_MODEL } from './runtime'
 import {
   createSession,
+  getMessages,
   getSession,
   listSessions,
+  resolveSessionRef,
   titleFromMessage,
 } from './service'
+import { sessionStats, toChatItems } from './transcript'
 
 // The default door onto the agent service: create a session, send a message to
 // one (queued if it's mid-turn, booted from history if it's idle), list
@@ -147,6 +150,88 @@ async function cmdList(args: string[]): Promise<void> {
   }
 }
 
+const DEFAULT_SHOW_TAIL = 10
+
+/** Parse `show`'s args: a session ref, plus an optional `--tail N`. */
+export function parseShowArgs(args: string[]): {
+  ref?: string
+  tail: number
+} {
+  const rest = [...args]
+  const at = rest.indexOf('--tail')
+  let tail = DEFAULT_SHOW_TAIL
+  if (at !== -1) {
+    const value = rest.at(at + 1)
+    const parsed = value ? Number.parseInt(value, 10) : NaN
+    if (!value || Number.isNaN(parsed) || parsed <= 0)
+      throw new Error('--tail requires a positive number')
+    tail = parsed
+    rest.splice(at, 2)
+  }
+  return { ref: rest.at(0), tail }
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  user: 'user',
+  assistant: 'assistant',
+  toolResult: 'tool',
+}
+
+/** One line per chat item, for the transcript tail. */
+function renderChatItem(item: ReturnType<typeof toChatItems>[number]): string {
+  switch (item.kind) {
+    case 'user':
+      return `user: ${truncate(item.text)}`
+    case 'assistant':
+      return `assistant: ${truncate(item.text)}`
+    case 'thinking':
+      return `${DIM}thinking: ${truncate(item.text)}${RESET}`
+    case 'toolCall':
+      return `${CYAN}tool call: ${item.name}(${truncate(item.args, 80)})${RESET}`
+    case 'toolResult':
+      return `${DIM}tool result (${item.name}${item.isError ? ', error' : ''}): ${truncate(item.text, 200)}${RESET}`
+  }
+}
+
+/**
+ * Inspect a session without hand-writing SQL: header (title/status/last
+ * activity/error), message + tool-call counts, and a transcript tail — the
+ * fleet-triage door issue #4mna's stalled-build tracing had to do by hand.
+ * Read-only: no mutation surface.
+ */
+async function cmdShow(args: string[]): Promise<void> {
+  const { ref, tail } = parseShowArgs(args)
+  if (!ref) throw new Error('usage: agent show <session-id> [--tail N]')
+
+  const { session, messages } = await withCliActor(async (tx) => {
+    const session = await resolveSessionRef(tx, ref)
+    if (!session) throw new Error(`No such session: ${ref}`)
+    const messages = await getMessages(tx, session.id)
+    return { session, messages }
+  })
+
+  const mark =
+    session.status === 'running' ? '●' : session.status === 'error' ? '✗' : '○'
+  process.stdout.write(
+    `${mark} ${session.title ?? '(untitled)'}  ${DIM}${session.id}${RESET}\n` +
+      `  status: ${session.status}  ${DIM}last activity ${session.lastMessageAt.toISOString()}${RESET}\n`,
+  )
+  if (session.error) process.stdout.write(`  error: ${session.error}\n`)
+
+  const stats = sessionStats(messages.map((m) => m.message))
+  const roleCounts = Object.entries(stats.byRole)
+    .map(([role, n]) => `${String(n)} ${ROLE_LABEL[role] ?? role}`)
+    .join(', ')
+  process.stdout.write(
+    `  ${String(stats.total)} messages (${roleCounts || 'none'}) · ${String(stats.toolCalls)} tool calls\n\n`,
+  )
+
+  const items = toChatItems(messages.map((m) => m.message))
+  for (const item of items.slice(-tail)) {
+    process.stdout.write(`${renderChatItem(item)}\n`)
+  }
+}
+
 async function cmdCancel(args: string[]): Promise<void> {
   const [id] = args
   if (!id) throw new Error('usage: agent cancel <session-id>')
@@ -210,6 +295,8 @@ async function main(): Promise<void> {
       return cmdSend(args)
     case 'list':
       return cmdList(args)
+    case 'show':
+      return cmdShow(args)
     case 'cancel':
       return cmdCancel(args)
     case 'seed':
@@ -218,10 +305,11 @@ async function main(): Promise<void> {
       return cmdExtensions(args)
     default:
       process.stdout.write(
-        'usage: agent <new|send|list|cancel|seed|extensions> …\n' +
+        'usage: agent <new|send|list|show|cancel|seed|extensions> …\n' +
           '  new <message> [--model <id>]   start a session and send the first message\n' +
           '  send <session-id> <message>    send a message (queued if mid-turn)\n' +
           '  list [--running] [--since D]   list sessions, newest first\n' +
+          '  show <session-id> [--tail N]   header, counts, and a transcript tail (default 10)\n' +
           '  cancel <session-id>            cancel a running session\n' +
           '  seed                           seed the standard agent config + extensions\n' +
           '  extensions [register …]        list or register extensions\n',

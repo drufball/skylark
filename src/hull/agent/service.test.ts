@@ -11,6 +11,7 @@ import {
   getMessages,
   getSession,
   listSessions,
+  resolveSessionRef,
   runningSessionIds,
   setStatus,
   titleFromMessage,
@@ -213,6 +214,34 @@ describe('agent service persistence', () => {
         'r1',
       ])
       expect(await runningSessionIds(db, [])).toEqual([])
+    })
+  })
+
+  describe('resolveSessionRef', () => {
+    it('resolves a full id', async () => {
+      await createSession(db, { id: '01912345-full', model: 'm' })
+      expect(await resolveSessionRef(db, '01912345-full')).toMatchObject({
+        id: '01912345-full',
+      })
+    })
+
+    it('resolves a unique id prefix', async () => {
+      await createSession(db, { id: '0191abc-session', model: 'm' })
+      expect(await resolveSessionRef(db, '0191abc')).toMatchObject({
+        id: '0191abc-session',
+      })
+    })
+
+    it('returns undefined for no match', async () => {
+      expect(await resolveSessionRef(db, 'nope')).toBeUndefined()
+    })
+
+    it('throws when a prefix matches more than one session', async () => {
+      await createSession(db, { id: '0191dup-one', model: 'm' })
+      await createSession(db, { id: '0191dup-two', model: 'm' })
+      await expect(resolveSessionRef(db, '0191dup')).rejects.toThrow(
+        /ambiguous/i,
+      )
     })
   })
 })

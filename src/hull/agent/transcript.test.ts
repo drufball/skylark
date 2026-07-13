@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { toChatItems } from './transcript'
+import { sessionStats, toChatItems } from './transcript'
 
 describe('toChatItems', () => {
   it('renders a user message from string or block content', () => {
@@ -190,5 +190,49 @@ describe('toChatItems', () => {
     ).toEqual([
       { kind: 'toolResult', name: 'tool', isError: false, text: 'output' },
     ])
+  })
+})
+
+describe('sessionStats', () => {
+  it('counts total messages and a per-role breakdown', () => {
+    const stats = sessionStats([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'toolResult', content: [] },
+      { role: 'toolResult', content: [] },
+    ])
+
+    expect(stats.total).toBe(4)
+    expect(stats.byRole).toEqual({ user: 1, assistant: 1, toolResult: 2 })
+  })
+
+  it('counts tool calls by walking assistant content blocks, not stored rows', () => {
+    const stats = sessionStats([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'looking' },
+          { type: 'toolCall', id: 't1', name: 'read', arguments: {} },
+          { type: 'toolCall', id: 't2', name: 'bash', arguments: {} },
+        ],
+      },
+      { role: 'toolResult', content: [] },
+    ])
+
+    expect(stats.toolCalls).toBe(2)
+  })
+
+  it('is defensive of malformed rows, the same way toChatItems is', () => {
+    // Non-object rows still count toward the total (they're real stored
+    // rows) but contribute nothing to the role breakdown — there's no role to
+    // read off them. A role-bearing row with a non-array content is counted
+    // by role but walked for no tool calls.
+    expect(
+      sessionStats([null, 42, { role: 'assistant', content: 'not an array' }]),
+    ).toEqual({ total: 3, byRole: { assistant: 1 }, toolCalls: 0 })
+  })
+
+  it('returns zeroed stats for an empty session', () => {
+    expect(sessionStats([])).toEqual({ total: 0, byRole: {}, toolCalls: 0 })
   })
 })
