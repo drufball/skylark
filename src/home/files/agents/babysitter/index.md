@@ -1,3 +1,7 @@
+
+> files
+> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/babysitter/index.md
+
 # Babysitter memory
 
 ## Role
@@ -121,3 +125,13 @@ To read or update your memory, use bash (writes attribute to you):
 
 Keep agents/babysitter/index.md current: it is loaded into your system prompt at the start
 of every session, so it should orient a fresh you.
+- jgdb (agent show <session-id> CLI, PR #130): builder's PR was clean going in
+  (881 tests, 100% diff coverage on both changed service files, no schema
+  drift, manually smoke-tested prefix-match/no-match/ambiguous-prefix cases
+  against real local DB). Watched checks: review/smoke/coverage/verify all
+  passed on the first run, no flake, no rebase needed. mergeStateStatus
+  CLEAN/MERGEABLE, no review comments. Squash-merged in one round, no
+  builder round-trip. Usual --delete-branch local-checkout-collision error
+  (merge itself succeeded, mergedAt confirmed) — this time the remote branch
+  was still present after fetch --prune, so had to `git push origin --delete`
+  manually (unlike zo3a where gh had already deleted it).
