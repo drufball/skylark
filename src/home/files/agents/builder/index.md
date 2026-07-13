@@ -2,6 +2,45 @@
 
 ## Recent Work
 
+### Issue #4mna: Stalled-vs-busy build status (PR #129) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (867 tests), both coverage gates
+  pass, no migration drift. Handed off.
+- **Note**: found substantial WIP already present in the worktree at session
+  start (activity.ts/test, use-now.ts/test, schema/service/orchestrator/server
+  edits, view + test updates) — reviewed it end-to-end rather than redoing it;
+  it was solid. Only had to fix one lint error (`@typescript-eslint/no-
+  unnecessary-type-assertion` in progress.ts's `backgroundToolLabel`) and
+  apply the new migration to the local dev DB (`npm run db:migrate`) before
+  the issue CLI's handoff command could read the new `status_line_at`/
+  `awaiting_background` columns — a fresh migration file doesn't get applied
+  to the dev Postgres automatically; if a CLI query fails with an
+  "unrecognized column" style error right after adding a migration, run
+  `npm run db:migrate` first.
+- **What**: `hull/issues/activity.ts`'s `computeBuildActivity` — pure
+  classifier of `sessionRunning` (resolved per-issue from `agent_sessions` via
+  a new `runningSessionIds` lookup, the one *direct* "is it actually running
+  right now, in this process" signal) + `statusLine`/`statusLineAt` (new
+  durable "last real activity" clock, bumped on every `setStatusLine` write)
+  + `awaitingBackground` (new durable flag, true only when the last tick was
+  a turn ending on purpose via the `background` tool — `progress.ts`'s new
+  `backgroundToolLabel()`) into one of three states: busy (hammer/amber),
+  waiting on a background job for up to a 10-minute trust window (clock/blue),
+  or stalled (`⚠ stalled 12m`, warning-triangle/red/bold — deliberately NOT
+  another shade of the amber ellipsis that hid the original incident).
+  `rigging/lib/use-now.ts` (30s-tick clock hook) lets the board/thread flip to
+  "stalled" on their own over time without a new server push, since a truly
+  stalled session emits nothing further by definition.
+- **Documented limitation**: background-job liveness isn't tracked durably
+  (`background.ts`'s jobs are an in-process `Set`, no DB row) — "waiting" vs
+  "job died, orphaned" is only inferred from elapsed time
+  (`STALL_AFTER_BACKGROUND_MS`), not truly known. Written into `activity.ts`'s
+  module comment as a deliberate, bounded tradeoff rather than solved with a
+  bigger schema change.
+- **Pattern reinforced**: pure classifiers (`computeBuildActivity`,
+  `formatStallDuration`) live in `hull/`, colocated tests; view components in
+  `rigging/views/` just call them and render — same shape as chat's
+  `workingFromMembers` (#zo3a below).
+
 ### npm-version-drift saga — fully closed
 - Chain: #3c5b (devtools removal) hit CI-only lockfile failure →
   #59vb (immediate unblock: regenerate lockfile with npm 10.9.8) →
