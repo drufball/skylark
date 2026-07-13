@@ -2,7 +2,6 @@
 
 ## Recent Work
 
-<<<<<<< HEAD
 ### Issue #4mna: Stalled-vs-busy build status (PR #129) — handed to babysitter
 - **Status**: PR open, `npm run check` clean (867 tests), both coverage gates
   pass, no migration drift. Handed off.
@@ -42,8 +41,40 @@
   `rigging/views/` just call them and render — same shape as chat's
   `workingFromMembers` (#zo3a below).
 
-=======
->>>>>>> origin/main
+### Issue #jgdb: agent CLI 'agent show <session-id>' (PR #130) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (881 tests), both coverage gates
+  pass (diff coverage 100% on the two changed service files; cli.ts itself is
+  excluded from the coverage gate like other CLI entrypoints), no schema
+  drift. Manually smoke-tested against the real local DB (prefix match,
+  no-match, ambiguous-prefix all behaved).
+- **What**: `npm run agent -- show <session-id> [--tail N]` — a read-only
+  inspection door for a session, same posture as `npm run issue`, replacing
+  hand-written SQL against `agent_messages`/`agent_sessions` (the exact thing
+  #4mna's stalled-build tracing had to do manually). Prints a header
+  (title/status/last-activity/error), counts (total + per-role message
+  breakdown + tool-call count), and a transcript tail (default 10, `--tail N`).
+- **Implementation**:
+  - `service.ts`: new `resolveSessionRef(db, ref)` — exact id first, then a
+    drizzle `like(agentSessions.id, \`${ref}%\`)` prefix match; throws (rather
+    than silently picking one) if the prefix is ambiguous. Same convenience
+    `resolveIssueRef` gives the issue CLI.
+  - `transcript.ts`: new `sessionStats(messages)` sits next to the existing
+    `toChatItems` — same defensive, opaque-JSON-from-Postgres parsing (walks
+    `role`/`content` blocks without trusting their shape). Tool-call count
+    comes from walking assistant messages' content blocks (a toolCall is a
+    block *inside* an assistant message, not its own stored row) rather than
+    counting stored rows by role.
+  - `cli.ts`: `cmdShow` composes `getMessages` (already existed, fetches
+    everything ascending) + `sessionStats` + `toChatItems`, slicing the
+    rendered items to the tail client-side rather than adding a new
+    DB-side "last N" query — cheap enough given expected session sizes, and
+    keeps one code path for full-session stats and the tail render.
+- **Pattern reinforced**: CLI door conventions (`--flag value` parsing
+  exported as a pure, directly-unit-tested function; `DIM`/`RESET` color
+  helpers; `withCliActor` for RLS-scoped reads) are consistent across
+  `issues/cli.ts`, `chat/cli.ts`, and now `agent/cli.ts` — reach for the
+  sibling CLI as the template before inventing new argument-parsing shape.
+
 ### npm-version-drift saga — fully closed
 - Chain: #3c5b (devtools removal) hit CI-only lockfile failure →
   #59vb (immediate unblock: regenerate lockfile with npm 10.9.8) →
@@ -155,15 +186,10 @@
   (`npm install --package-lock-only`, or verify in a throwaway `/tmp` clone)
   over nuking shared state.
 
-### Issue #mp1q: Local-time formatter for inbox timestamps (PR #83)
-- **Status**: PR open, handed to @babysitter
-- **What**: Replaced UTC string surgery in inbox view with a proper formatter
-- **Implementation**: 
-  - Created `src/rigging/lib/format-local-time.ts` with `formatLocalTime()` function
-  - Added comprehensive tests in `format-local-time.test.ts`
-  - Updated `src/rigging/views/inbox.tsx` to use the formatter
-- **Pattern**: Formatters live in `src/rigging/lib/` with co-located tests
-- **Testing note**: Local .env with ANTHROPIC_API_KEY causes some agent runtime tests to fail (test isolation issue). Run tests with `ANTHROPIC_API_KEY= npm run check` to avoid this.
+### Issue #mp1q: Local-time formatter for inbox timestamps (PR #83) — MERGED
+- Replaced UTC string surgery in the inbox view with `formatLocalTime()` in
+  `src/rigging/lib/format-local-time.ts`. Pattern: formatters live in
+  `lib/` dirs with co-located tests.
 
 ## Ship Knowledge
 
