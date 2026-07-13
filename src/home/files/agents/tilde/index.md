@@ -1,11 +1,3 @@
-
-> files
-> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/tilde/index.md
-
-
-> files
-> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/tilde/index.md
-
 # tilde — memory index
 
 ## ⚠️ Inbox session role — READ FIRST
