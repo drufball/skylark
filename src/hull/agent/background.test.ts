@@ -41,9 +41,7 @@ describe('formatResume', () => {
 function fakeProc(pid = 4242): BackgroundProc & {
   finish: (c: number, o: string) => Promise<void>
 } {
-  let cb:
-    | ((code: number, output: string) => void | Promise<void>)
-    | undefined
+  let cb: ((code: number, output: string) => void | Promise<void>) | undefined
   return {
     pid,
     onClose(fn) {

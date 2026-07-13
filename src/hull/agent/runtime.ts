@@ -507,7 +507,16 @@ export function createAgentRuntime(deps: {
    * the issues/chat orchestrators' own startup `reconcile()`.
    */
   function reconcileJobs(): Promise<void> {
-    return reconcileBackgroundJobs({ db, resume: resumeSession })
+    // Awaited bridge (unlike resumeSession's fire-and-forget): boot
+    // reconciliation resolving means every stranded session actually heard
+    // its "job was lost" message.
+    return reconcileBackgroundJobs({
+      db,
+      resume: (sessionId, message) =>
+        runTurn(sessionId, message).catch((err: unknown) => {
+          console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
+        }),
+    })
   }
 
   return { runTurn, cancel, dispose, disposeAll, reconcileJobs }

@@ -26,8 +26,12 @@ import { clearBackgroundJob, listOutstandingBackgroundJobs } from './service'
  */
 export interface ReconcileBackgroundJobsDeps {
   db: Database
-  /** Re-invoke a session with a message — same shape as BackgroundJobsDeps.resume. */
-  resume: (sessionId: string, message: string) => void
+  /**
+   * Re-invoke a session with a message. Awaited when it returns a promise —
+   * boot reconciliation completing means the resumes actually happened, not
+   * merely that they were fired off.
+   */
+  resume: (sessionId: string, message: string) => void | Promise<void>
 }
 
 /** The message a session is resumed with when its background job's fate is unrecoverable. */
@@ -51,7 +55,7 @@ export async function reconcileBackgroundJobs(
       )
     })
     try {
-      deps.resume(job.sessionId, formatJobLost(job.label, job.command))
+      await deps.resume(job.sessionId, formatJobLost(job.label, job.command))
     } catch (err) {
       console.error(
         `background reconcile ${job.id}: resume failed (continuing): ${errorMessage(err)}`,
