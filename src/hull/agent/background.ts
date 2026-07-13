@@ -111,11 +111,13 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
       // Awaited (not fire-and-forget): a delete still in flight when the db
       // closes wedges PGlite mid-query — and callers observing the resume may
       // reasonably assume the durable row is already settled.
-      await clearBackgroundJob(deps.db, jobId).catch((err: unknown) => {
-        console.error(
-          `background job ${jobId}: clearing durable row failed: ${String(err)}`,
-        )
-      })
+      await clearBackgroundJob(deps.db, jobId).catch(
+        /* v8 ignore next 4 -- log-only error path */ (err: unknown) => {
+          console.error(
+            `background job ${jobId}: clearing durable row failed: ${String(err)}`,
+          )
+        },
+      )
       // A cancelled job's process still closes; don't resume a session that was
       // torn down (issue closed, agent disposed) — that would wake the dead.
       if (!job.cancelled) {
@@ -134,11 +136,13 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
       jobs.delete(job)
       job.proc.kill()
       clears.push(
-        clearBackgroundJob(deps.db, job.id).catch((err: unknown) => {
-          console.error(
-            `background job ${job.id}: clearing durable row failed: ${String(err)}`,
-          )
-        }),
+        clearBackgroundJob(deps.db, job.id).catch(
+          /* v8 ignore next 4 -- log-only error path */ (err: unknown) => {
+            console.error(
+              `background job ${job.id}: clearing durable row failed: ${String(err)}`,
+            )
+          },
+        ),
       )
     }
     await Promise.all(clears)

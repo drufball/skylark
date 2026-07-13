@@ -515,14 +515,12 @@ export function createAgentRuntime(deps: {
     // its "job was lost" message.
     return reconcileBackgroundJobs({
       db,
-      resume: (sessionId, message) =>
-        runTurn(sessionId, message).catch(
-          /* v8 ignore next 3 -- log-only */ (err: unknown) => {
-            console.error(
-              `background resume ${sessionId}: ${errorMessage(err)}`,
-            )
-          },
-        ),
+      resume: async (sessionId, message) => {
+        /* v8 ignore next 3 -- log-only error path */
+        await runTurn(sessionId, message).catch((err: unknown) => {
+          console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
+        })
+      },
     })
   }
 
