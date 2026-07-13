@@ -78,7 +78,8 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
  * reply.
  */
 export type TurnResult =
-  { queued: true } | { queued: false; messages: AgentMessage[] }
+  | { queued: true }
+  | { queued: false; messages: AgentMessage[] }
 
 /**
  * Anything that can run an agent turn — the minimal slice other services drive
