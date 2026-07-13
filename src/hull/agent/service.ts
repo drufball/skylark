@@ -241,10 +241,7 @@ export async function recordBackgroundJob(
 export async function listOutstandingBackgroundJobs(
   db: Database,
 ): Promise<BackgroundJobRow[]> {
-  return db
-    .select()
-    .from(backgroundJobs)
-    .orderBy(asc(backgroundJobs.id))
+  return db.select().from(backgroundJobs).orderBy(asc(backgroundJobs.id))
 }
 
 /**

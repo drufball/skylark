@@ -91,7 +91,12 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
   }): Promise<string> {
     const jobId = uuidv7()
     const proc = deps.spawn(input.command, input.cwd)
-    const job: Job = { id: jobId, sessionId: input.sessionId, proc, cancelled: false }
+    const job: Job = {
+      id: jobId,
+      sessionId: input.sessionId,
+      proc,
+      cancelled: false,
+    }
     jobs.add(job)
     await recordBackgroundJob(deps.db, {
       id: jobId,
