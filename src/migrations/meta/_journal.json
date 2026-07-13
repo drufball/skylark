@@ -169,6 +169,13 @@
       "when": 1783880860832,
       "tag": "0023_abnormal_raza",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783902031014,
+      "tag": "0024_fat_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

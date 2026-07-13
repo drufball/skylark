@@ -2,12 +2,15 @@ import { useState } from 'react'
 import { MessageSquare, Plus } from 'lucide-react'
 
 import type { BoardIssue } from '@hull/issues/server'
+import { computeBuildActivity } from '@hull/issues/activity'
 import { cn } from '@rigging/lib/utils'
+import { useNow } from '@rigging/lib/use-now'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Textarea } from '@rigging/components/ui/textarea'
 import { selectClass } from '@rigging/components/ui/input'
 import {
+  activityTint,
   ISSUE_STATUS_META,
   ISSUE_STATUS_ORDER,
 } from '@rigging/lib/issue-status-meta'
@@ -93,6 +96,17 @@ function IssueCard({
   onSelect: (id: string) => void
 }) {
   const { icon: Icon, tint } = ISSUE_STATUS_META[issue.status]
+  const now = useNow()
+  const activity =
+    issue.status === 'building'
+      ? computeBuildActivity({
+          sessionRunning: issue.sessionRunning,
+          statusLine: issue.statusLine,
+          statusLineAt: issue.statusLineAt,
+          awaitingBackground: issue.awaitingBackground,
+          now,
+        })
+      : null
   return (
     <button
       type="button"
@@ -122,9 +136,14 @@ function IssueCard({
           </span>
         )}
       </div>
-      {issue.status === 'building' && issue.statusLine && (
-        <p className="truncate pl-6 font-mono text-xs text-amber-600">
-          {issue.statusLine}
+      {activity && (
+        <p
+          className={cn(
+            'truncate pl-6 font-mono text-xs',
+            activityTint(activity.state),
+          )}
+        >
+          {activity.label}
         </p>
       )}
     </button>

@@ -2,6 +2,64 @@
 
 ## Recent Work
 
+### npm-version-drift saga — fully closed
+- Chain: #3c5b (devtools removal) hit CI-only lockfile failure →
+  #59vb (immediate unblock: regenerate lockfile with npm 10.9.8) →
+  #iv1t (systemic fix: pin `packageManager: "npm@10.9.8"` in
+  package.json, PR #127, merged c7414e3). All three done. If `npm
+  run check` is clean locally but CI's verify/coverage/smoke all fail
+  identically at the `npm ci`/setup step, this class of bug should now
+  be prevented by the packageManager pin — but if it recurs, check
+  corepack is actually enabled/respected in the environment.
+
+### Issue #zo3a: Chat thinking bubbles lost on page navigation (PR #128) — MERGED
+- **Status**: Merged. CI green, no unresolved review comments.
+- **What**: Chat's live agent "working…" bubble was purely ephemeral —
+  pushed over SSE via `notifyOnly`, never persisted — so navigating away from
+  a chat and back showed nothing even though the agent was still mid-turn.
+  Mirrored the pattern issues already uses (`issues.statusLine`, a durable
+  column updated live and rendered straight from the loader).
+- **Implementation**:
+  - `chat_members` gains a `progressLine` column (migration 0023).
+  - `orchestrator.ts`'s `driveTurn`: new `setProgress` helper writes the line
+    durably (`setMemberProgress`) AND still emits ephemerally (kept, for a tab
+    open live — avoids waiting a round trip). Clears to `null` in a `finally`
+    once the *owning* turn ends (success/silent/thrown) — but a call whose
+    prompt got folded into an already-in-flight turn (`queued: true`) must
+    NOT clear it, since that other turn (not this call) still owns the
+    bubble. Tracked with an `ownsTurn` flag defaulting `true` (so a thrown
+    turn still self-clears) and flipped `false` only on `queued`.
+  - `getChatThread` (server.ts) now returns each member's `progressLine`.
+  - Route (`routes/index.tsx`) seeds its `working` state from the loaded
+    thread's members on every `activeId` change (a `seededFor` render-time
+    comparison, not an effect — avoids `react-hooks/set-state-in-effect` and
+    shows the bubble on the very first paint after a switch). The derivation
+    itself (`workingFromMembers`) is a new pure, exported, unit-tested
+    function in `chat.tsx` — logic lives in the testable view module, not the
+    untested route.
+- **Red-green tests**: `service.test.ts` (persist/clear `setMemberProgress`),
+  `orchestrator.test.ts` (persist-then-clear across success/silent/thrown
+  turns, plus the queued-must-not-clear-another-turn's-bubble edge case),
+  `chat.test.tsx` (`workingFromMembers` directly).
+- **Rebase needed mid-build**: branched off an older `main`; by the time I
+  went to land, `main` had moved (npm-pin fix #127, mobile-collapsible-sidebar
+  #124/#125) and `chat.tsx`/`routes/index.tsx` had diverged upstream. Ran
+  `git stash`, `git rebase origin/main` (one trivial conflict, a shared
+  memory-notes file `agents/tilde/index.md` — resolved `--ours`, unrelated to
+  code), `git stash pop` (auto-merged cleanly, no conflicts) — then re-ran
+  `npm run db:generate` (confirmed no drift) and the full check/coverage
+  gates before committing. Lesson: if a build session runs long, check
+  `git fetch && git log origin/main --oneline` before the final `npm run
+  check`/commit — landing on a stale base risks silent merge damage or a
+  redundant lockfile diff (see #3c5b/#iv1t history below) even when your own
+  diff is clean.
+- **Backgrounding gotcha this session**: the `background` tool for `npm run
+  check`/`coverage:check` reported "backgrounded" but the resume callback was
+  lost twice in a row (per the harness's own message) — ran both in the
+  foreground instead and they completed normally in ~60-75s. If a background
+  job's resume seems to go missing, just re-run the same command in the
+  foreground rather than re-backgrounding it again.
+
 ### Issue #3c5b: Remove TanStack devtools logo (PR #123)
 - **Status**: PR open, handed to @babysitter (second round — fixed a lockfile
   CI failure after the first handoff)
