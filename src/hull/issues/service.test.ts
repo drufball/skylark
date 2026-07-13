@@ -483,6 +483,8 @@ describe('view-data shaping (pure)', () => {
       branchName: 'add-widget-aa11',
       worktreePath: '/wt/add-widget-aa11',
       statusLine: 'on it',
+      statusLineAt: new Date(),
+      awaitingBackground: false,
       createdAt: new Date(),
       updatedAt: new Date(),
       ...over,
@@ -497,7 +499,13 @@ describe('view-data shaping (pure)', () => {
       commentCount: 3,
       statusLine: 'on it',
       status: 'building',
+      sessionRunning: false,
     })
+  })
+
+  it('toBoardCard carries sessionRunning through when passed', () => {
+    const card = toBoardCard(row(), 'drufball', 0, true)
+    expect(card.sessionRunning).toBe(true)
   })
 
   it('assembleThread merges comments + status changes in id (chronological) order', () => {
@@ -535,6 +543,7 @@ describe('view-data shaping (pure)', () => {
       'comment',
     ])
     expect(thread.branchName).toBe('add-widget-aa11')
+    expect(thread.sessionRunning).toBe(false)
   })
 })
 
@@ -552,11 +561,29 @@ describe('setBuildContext + setStatusLine', () => {
     )
   })
 
-  it('writes a status line', async () => {
+  it('writes a status line, bumping statusLineAt and defaulting awaitingBackground false', async () => {
     const issue = await createIssue(db, { title: 'x', authorId })
+    const before = defined(await getIssue(db, issue.id))
+    expect(before.statusLineAt).toBeNull()
+
     await setStatusLine(db, issue.id, 'running npm run check')
     const after = defined(await getIssue(db, issue.id))
     expect(after.statusLine).toBe('running npm run check')
+    expect(after.statusLineAt).not.toBeNull()
+    expect(after.awaitingBackground).toBe(false)
+  })
+
+  it('can mark a line as awaiting a background job, and a later plain write clears it', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    await setStatusLine(db, issue.id, '⏳ waiting on PR #12 CI…', {
+      awaitingBackground: true,
+    })
+    const waiting = defined(await getIssue(db, issue.id))
+    expect(waiting.awaitingBackground).toBe(true)
+
+    await setStatusLine(db, issue.id, '🔧 bash npm run check')
+    const resumed = defined(await getIssue(db, issue.id))
+    expect(resumed.awaitingBackground).toBe(false)
   })
 })
 

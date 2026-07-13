@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   jsonb,
   pgTable,
@@ -114,6 +115,23 @@ export const issues = pgTable(
     worktreePath: text('worktree_path'),
     /** Latest one-line builder progress, shown live on the board/thread. */
     statusLine: text('status_line'),
+    /**
+     * When statusLine was last written — the "last real activity" clock the
+     * board/thread compute a stall duration from (see `computeBuildActivity`
+     * in service.ts). Distinct from `updatedAt`, which only moves on a
+     * transition or build-context write and is far too coarse to catch a
+     * session gone silent mid-turn (see issue #4mna).
+     */
+    statusLineAt: timestamp('status_line_at', { withTimezone: true }),
+    /**
+     * True when the LAST thing the entrypoint/hand's turn did before ending
+     * was call the `background` tool — i.e. the turn ended on purpose to
+     * wait on a long command, not because the agent stopped working. Reset
+     * to false on every other statusLine write, so a stale flag never
+     * survives past the turn that actually resumes (see
+     * `computeBuildActivity`).
+     */
+    awaitingBackground: boolean('awaiting_background').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

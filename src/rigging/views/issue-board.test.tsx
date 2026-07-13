@@ -17,6 +17,9 @@ function issue(over: Partial<BoardIssue> = {}): BoardIssue {
     authorHandle: 'drufball',
     commentCount: 0,
     statusLine: null,
+    statusLineAt: null,
+    awaitingBackground: false,
+    sessionRunning: false,
     updatedAt: new Date().toISOString(),
     ...over,
   }
@@ -83,11 +86,49 @@ describe('IssueBoardView', () => {
           status: 'building',
           title: 'build one',
           statusLine: 'running npm run check',
+          statusLineAt: new Date().toISOString(),
+          sessionRunning: true,
         }),
       ],
     })
     expect(screen.getByText('running npm run check')).toBeTruthy()
     expect(screen.queryByText('stale')).toBeNull()
+  })
+
+  it('shows a waiting line (not a bare status line) when the session paused for a background job', () => {
+    renderView({
+      issues: [
+        issue({
+          id: 'a',
+          status: 'building',
+          title: 'waiting one',
+          statusLine: '⏳ waiting on PR #12 CI…',
+          statusLineAt: new Date().toISOString(),
+          awaitingBackground: true,
+          sessionRunning: false,
+        }),
+      ],
+    })
+    expect(screen.getByText('⏳ waiting on PR #12 CI…')).toBeTruthy()
+  })
+
+  it('shows an alarming "stalled" line — not the raw status line — once a session has gone silent too long', () => {
+    const longAgo = new Date(Date.now() - 25 * 60_000).toISOString()
+    renderView({
+      issues: [
+        issue({
+          id: 'a',
+          status: 'building',
+          title: 'stalled one',
+          statusLine: 'thinking…',
+          statusLineAt: longAgo,
+          awaitingBackground: false,
+          sessionRunning: false,
+        }),
+      ],
+    })
+    expect(screen.getByText(/^⚠ stalled \d+m$/)).toBeTruthy()
+    expect(screen.queryByText('thinking…')).toBeNull()
   })
 
   it('shows a comment count only when there are comments', () => {
