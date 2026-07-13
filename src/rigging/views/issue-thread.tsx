@@ -1,12 +1,22 @@
-import { ArrowLeft, Bell, BellOff, GitBranch, Hammer } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Bell,
+  BellOff,
+  Clock,
+  GitBranch,
+  Hammer,
+} from 'lucide-react'
 
 import type { IssueThread, ThreadEntry } from '@hull/issues/server'
 import type { IssueStatus } from '@hull/issues/schema'
+import { computeBuildActivity } from '@hull/issues/activity'
 import { cn } from '@rigging/lib/utils'
+import { useNow } from '@rigging/lib/use-now'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Composer } from '@rigging/components/composer'
-import { ISSUE_STATUS_META } from '@rigging/lib/issue-status-meta'
+import { activityTint, ISSUE_STATUS_META } from '@rigging/lib/issue-status-meta'
 
 // The issue thread: body, the merged comment + status-change timeline, a
 // composer, and the status controls. Presentational and routing-agnostic; the
@@ -33,6 +43,17 @@ export function IssueThreadView({
   onToggleWatch,
 }: IssueThreadViewProps) {
   const terminal = thread.status === 'done' || thread.status === 'closed'
+  const now = useNow()
+  const activity =
+    thread.status === 'building'
+      ? computeBuildActivity({
+          sessionRunning: thread.sessionRunning,
+          statusLine: thread.statusLine,
+          statusLineAt: thread.statusLineAt,
+          awaitingBackground: thread.awaitingBackground,
+          now,
+        })
+      : null
   return (
     <main className="flex h-full flex-col overflow-hidden">
       <header className="flex flex-col gap-2 border-b px-6 py-4">
@@ -75,10 +96,15 @@ export function IssueThreadView({
             </span>
           )}
         </div>
-        {thread.status === 'building' && thread.statusLine && (
-          <p className="flex items-center gap-2 pl-10 font-mono text-xs text-amber-600">
-            <Hammer className="size-3 animate-pulse" />
-            {thread.statusLine}
+        {activity && (
+          <p
+            className={cn(
+              'flex items-center gap-2 pl-10 font-mono text-xs',
+              activityTint(activity.state),
+            )}
+          >
+            <ActivityIcon state={activity.state} />
+            {activity.label}
           </p>
         )}
         <StatusControls
@@ -110,6 +136,23 @@ export function IssueThreadView({
       )}
     </main>
   )
+}
+
+/**
+ * The icon beside a build-activity line: an animated hammer for "busy" (the
+ * old always-on-while-building look), a static clock for "waiting" (calm, but
+ * distinct from busy), and a warning triangle for "stalled" — the whole point
+ * of this feature is that this one must NOT look like the other two.
+ */
+function ActivityIcon({ state }: { state: 'busy' | 'waiting' | 'stalled' }) {
+  switch (state) {
+    case 'busy':
+      return <Hammer className="size-3 animate-pulse" />
+    case 'waiting':
+      return <Clock className="size-3" />
+    case 'stalled':
+      return <AlertTriangle className="size-3" />
+  }
 }
 
 function StatusBadge({ status }: { status: IssueStatus }) {

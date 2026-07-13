@@ -456,13 +456,30 @@ export async function listIssueSessions(
     .where(eq(issueSessions.issueId, issueId))
 }
 
-/** Write the latest builder progress line shown live on the board/thread. */
+/**
+ * Write the latest builder progress line shown live on the board/thread, and
+ * bump its activity clock (`statusLineAt`) — the "last real activity"
+ * timestamp neither `updatedAt` (only moved by a transition/build-context
+ * write) nor `agent_sessions.lastMessageAt` (only moved at turn boundaries)
+ * can answer (see issue #4mna). `awaitingBackground` records whether THIS
+ * line is a turn ending on purpose to await a `background` job — the
+ * orchestrator sets it true only for that one line and false for every other
+ * write, so a resumed session's next real progress tick clears it.
+ */
 export async function setStatusLine(
   db: Database,
   issueId: string,
   statusLine: string,
+  opts: { awaitingBackground?: boolean } = {},
 ): Promise<void> {
-  await db.update(issues).set({ statusLine }).where(eq(issues.id, issueId))
+  await db
+    .update(issues)
+    .set({
+      statusLine,
+      statusLineAt: new Date(),
+      awaitingBackground: opts.awaitingBackground ?? false,
+    })
+    .where(eq(issues.id, issueId))
 }
 
 // --- View-data shaping (pure, so it's PGlite-testable, not welded to the doors) ---
@@ -476,6 +493,12 @@ export interface BoardIssue {
   authorHandle: string
   commentCount: number
   statusLine: string | null
+  /** When statusLine was last written — null if never (see setStatusLine). */
+  statusLineAt: string | null
+  /** Was the last statusLine write a turn ending to await a background job? */
+  awaitingBackground: boolean
+  /** Is one of this issue's agent sessions mid-turn right now, in THIS process? */
+  sessionRunning: boolean
   updatedAt: string
 }
 
@@ -506,6 +529,12 @@ export interface IssueThread {
   authorHandle: string
   branchName: string | null
   statusLine: string | null
+  /** When statusLine was last written — null if never (see setStatusLine). */
+  statusLineAt: string | null
+  /** Was the last statusLine write a turn ending to await a background job? */
+  awaitingBackground: boolean
+  /** Is one of this issue's agent sessions mid-turn right now, in THIS process? */
+  sessionRunning: boolean
   entries: ThreadEntry[]
 }
 
@@ -518,11 +547,18 @@ export interface StatusChange {
   at: string
 }
 
-/** Shape one issue + its author handle + comment count into a board card. */
+/**
+ * Shape one issue + its author handle + comment count into a board card.
+ * `sessionRunning` (default false) is resolved by the door from the agent
+ * service (`runningSessionIds`) — whether this issue's turn is actively in
+ * flight in THIS process right now, the one direct signal `computeBuildActivity`
+ * (activity.ts) needs to tell "busy" apart from "waiting"/"stalled".
+ */
 export function toBoardCard(
   issue: IssueRow,
   authorHandle: string,
   commentCount: number,
+  sessionRunning = false,
 ): BoardIssue {
   return {
     id: issue.id,
@@ -532,6 +568,9 @@ export function toBoardCard(
     authorHandle,
     commentCount,
     statusLine: issue.statusLine,
+    statusLineAt: issue.statusLineAt?.toISOString() ?? null,
+    awaitingBackground: issue.awaitingBackground,
+    sessionRunning,
     updatedAt: issue.updatedAt.toISOString(),
   }
 }
@@ -541,12 +580,14 @@ export function toBoardCard(
  * id. Both ids are UUIDv7, so a lexical id sort IS a chronological sort — the
  * load-bearing assumption this function exists to make testable. Pure: hand it
  * already-fetched rows (with resolved author handles) and it does the shaping.
+ * `sessionRunning` (default false) mirrors `toBoardCard`'s — see there.
  */
 export function assembleThread(input: {
   issue: IssueRow
   authorHandle: string
   comments: { id: string; authorHandle: string; body: string; at: string }[]
   statusChanges: StatusChange[]
+  sessionRunning?: boolean
 }): IssueThread {
   const entries: ThreadEntry[] = [
     ...input.comments.map(
@@ -579,6 +620,9 @@ export function assembleThread(input: {
     authorHandle: input.authorHandle,
     branchName: input.issue.branchName,
     statusLine: input.issue.statusLine,
+    statusLineAt: input.issue.statusLineAt?.toISOString() ?? null,
+    awaitingBackground: input.issue.awaitingBackground,
+    sessionRunning: input.sessionRunning ?? false,
     entries,
   }
 }

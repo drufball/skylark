@@ -6,6 +6,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { IssueStatus } from '@hull/issues/schema'
+import type { BuildActivity } from '@hull/issues/activity'
 
 /**
  * The canonical metadata for issue statuses: labels, icons, and tint classes.
@@ -44,3 +45,22 @@ export const ISSUE_STATUS_ORDER: IssueStatus[] = [
   'done',
   'closed',
 ]
+
+/**
+ * The text tint for a build-activity state (see `computeBuildActivity`):
+ * busy is the familiar calm amber, waiting is a cooler blue (still normal,
+ * just a different kind of normal), and stalled is loud red — deliberately
+ * NOT another shade of the same amber ellipsis that hid the incident this
+ * feature exists to fix (issue #4mna). Single source so the board and thread
+ * can't drift on what "alarming" looks like.
+ */
+export function activityTint(state: BuildActivity['state']): string {
+  switch (state) {
+    case 'busy':
+      return 'text-amber-600'
+    case 'waiting':
+      return 'text-sky-600'
+    case 'stalled':
+      return 'text-red-600 font-semibold'
+  }
+}

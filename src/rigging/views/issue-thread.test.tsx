@@ -18,6 +18,9 @@ function thread(over: Partial<IssueThread> = {}): IssueThread {
     authorHandle: 'drufball',
     branchName: null,
     statusLine: null,
+    statusLineAt: null,
+    awaitingBackground: false,
+    sessionRunning: false,
     entries: [],
     ...over,
   }
@@ -82,6 +85,8 @@ describe('IssueThreadView', () => {
       thread: thread({
         status: 'building',
         statusLine: '🔧 bash npm run check',
+        statusLineAt: new Date().toISOString(),
+        sessionRunning: true,
         branchName: 'add-widget-aa11',
       }),
     })
@@ -89,6 +94,34 @@ describe('IssueThreadView', () => {
     expect(screen.getByText('add-widget-aa11')).toBeTruthy()
     fireEvent.click(screen.getByText('Pause'))
     expect(onSetStatus).toHaveBeenCalledWith('open')
+  })
+
+  it('shows a waiting line when the session paused for a background job', () => {
+    renderView({
+      thread: thread({
+        status: 'building',
+        statusLine: '⏳ waiting on PR #12 CI…',
+        statusLineAt: new Date().toISOString(),
+        awaitingBackground: true,
+        sessionRunning: false,
+      }),
+    })
+    expect(screen.getByText('⏳ waiting on PR #12 CI…')).toBeTruthy()
+  })
+
+  it('shows an alarming "stalled" line once a session has gone silent too long, not the raw status line', () => {
+    const longAgo = new Date(Date.now() - 25 * 60_000).toISOString()
+    renderView({
+      thread: thread({
+        status: 'building',
+        statusLine: 'thinking…',
+        statusLineAt: longAgo,
+        awaitingBackground: false,
+        sessionRunning: false,
+      }),
+    })
+    expect(screen.getByText(/^⚠ stalled \d+m$/)).toBeTruthy()
+    expect(screen.queryByText('thinking…')).toBeNull()
   })
 
   it('hides the composer and controls for a terminal issue (done or closed)', () => {

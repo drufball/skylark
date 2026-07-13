@@ -39,6 +39,8 @@ describe('buildPrompt', () => {
     branchName: null,
     worktreePath: null,
     statusLine: null,
+    statusLineAt: null,
+    awaitingBackground: false,
     visibility: 'public' as const,
   }
 
@@ -103,6 +105,8 @@ describe('generalPrompt', () => {
     branchName: null,
     worktreePath: null,
     statusLine: null,
+    statusLineAt: null,
+    awaitingBackground: false,
     visibility: 'public' as const,
   }
 
@@ -166,6 +170,8 @@ describe('handoffPrompt', () => {
     branchName: null,
     worktreePath: null,
     statusLine: null,
+    statusLineAt: null,
+    awaitingBackground: false,
     visibility: 'public' as const,
   }
 

@@ -227,9 +227,11 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   function fireTurn(issueId: string, sessionId: string, text: string) {
     void runtime
       .runTurn(sessionId, text, (event) => {
-        const line = issuesProgressLine(event)
-        if (line)
-          void setStatusLine(db, issueId, line).catch(
+        const progress = issuesProgressLine(event)
+        if (progress)
+          void setStatusLine(db, issueId, progress.line, {
+            awaitingBackground: progress.awaitingBackground,
+          }).catch(
             /* v8 ignore next 2 -- defensive: a status-line write failing must never break a build */
             (err: unknown) => {
               console.error(`issue status line failed: ${errorMessage(err)}`)

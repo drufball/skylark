@@ -2,6 +2,7 @@
 
 ## Recent Work
 
+<<<<<<< HEAD
 ### Issue #4mna: Stalled-vs-busy build status (PR #129) — handed to babysitter
 - **Status**: PR open, `npm run check` clean (867 tests), both coverage gates
   pass, no migration drift. Handed off.
@@ -41,6 +42,8 @@
   `rigging/views/` just call them and render — same shape as chat's
   `workingFromMembers` (#zo3a below).
 
+=======
+>>>>>>> origin/main
 ### npm-version-drift saga — fully closed
 - Chain: #3c5b (devtools removal) hit CI-only lockfile failure →
   #59vb (immediate unblock: regenerate lockfile with npm 10.9.8) →

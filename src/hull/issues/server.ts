@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import { db } from '@hull/db/client'
+import { runningSessionIds } from '@hull/agent/service'
 import { listEventsSince, PUBLIC_AUDIENCE } from '@hull/events/service'
 import { currentActor } from '@hull/users/actor'
 import { handleOf } from '@hull/users/service'
@@ -21,6 +22,7 @@ import {
   issueTopic,
   listComments,
   listIssues,
+  listIssueSessions,
   toBoardCard,
   transitionIssue,
   validateCommentInput,
@@ -53,6 +55,22 @@ async function bootOrchestrator(): Promise<void> {
   })
 }
 
+/**
+ * Is one of this issue's agent sessions mid-turn right now, in THIS process?
+ * The one direct "actually busy" signal `computeBuildActivity` needs —
+ * everything else (statusLine, statusLineAt, awaitingBackground) is durable
+ * state that can just as well describe a session that stopped ticking.
+ */
+async function issueSessionRunning(issueId: string): Promise<boolean> {
+  const hands = await listIssueSessions(db, issueId)
+  if (hands.length === 0) return false
+  const running = await runningSessionIds(
+    db,
+    hands.map((h) => h.sessionId),
+  )
+  return running.length > 0
+}
+
 /** All issues as board cards, newest first. The board groups by status itself. */
 export const listBoard = createServerFn({ method: 'GET' }).handler(async () => {
   await bootOrchestrator()
@@ -63,6 +81,9 @@ export const listBoard = createServerFn({ method: 'GET' }).handler(async () => {
         issue,
         await handleOf(db, issue.authorId),
         (await listComments(db, issue.id)).length,
+        issue.status === 'building'
+          ? await issueSessionRunning(issue.id)
+          : false,
       ),
     ),
   )
@@ -114,6 +135,10 @@ export const getThread = createServerFn({ method: 'GET' })
       authorHandle: await handleOf(db, issue.authorId),
       comments,
       statusChanges,
+      sessionRunning:
+        issue.status === 'building'
+          ? await issueSessionRunning(issue.id)
+          : false,
     })
   })
 

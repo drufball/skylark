@@ -641,6 +641,28 @@ describe('orchestrator status line', () => {
 
     const after = defined(await getIssue(db, issue.id))
     expect(after.statusLine).toMatch(/bash/)
+    expect(after.statusLineAt).not.toBeNull()
+    expect(after.awaitingBackground).toBe(false)
+  })
+
+  it('marks the status line as awaiting a background job when the agent calls `background`', async () => {
+    const { deps } = makeDeps()
+    const runtime = deps.runtime as FakeRuntime
+    runtime.onTurn = (_sessionId, _text, onEvent) => {
+      onEvent?.({
+        type: 'tool_execution_start',
+        toolName: 'background',
+        args: { command: 'gh pr checks --watch', label: 'PR #12 CI' },
+      } as unknown as AgentSessionEvent)
+    }
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ii98' })
+
+    await drive(orch, issue.id, 'building')
+
+    const after = defined(await getIssue(db, issue.id))
+    expect(after.statusLine).toMatch(/PR #12 CI/)
+    expect(after.awaitingBackground).toBe(true)
   })
 })
 
