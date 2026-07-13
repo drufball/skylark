@@ -242,11 +242,14 @@ export function createAgentRuntime(deps: {
   // Named (not inline) because `reconcileJobs` (issue #v6ft) reuses this exact
   // bridge for jobs a PRIOR process started and lost — same "re-invoke and log,
   // never throw" contract either way.
+  /* v8 ignore start -- thin fire-and-forget bridge over runTurn (which is
+     tested directly); the catch only logs, never throws */
   function resumeSession(sessionId: string, message: string): void {
     void runTurn(sessionId, message).catch((err: unknown) => {
       console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
     })
   }
+  /* v8 ignore stop */
 
   const jobs = createBackgroundJobs({
     db,
@@ -513,9 +516,13 @@ export function createAgentRuntime(deps: {
     return reconcileBackgroundJobs({
       db,
       resume: (sessionId, message) =>
-        runTurn(sessionId, message).catch((err: unknown) => {
-          console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
-        }),
+        runTurn(sessionId, message).catch(
+          /* v8 ignore next 3 -- log-only */ (err: unknown) => {
+            console.error(
+              `background resume ${sessionId}: ${errorMessage(err)}`,
+            )
+          },
+        ),
     })
   }
 

@@ -164,7 +164,7 @@ export const defaultSpawn: SpawnFn = (command, cwd) => {
     pid: child.pid ?? -1,
     onClose(cb) {
       child.on('close', (code) => {
-        cb(code ?? -1, output)
+        void cb(code ?? -1, output)
       })
     },
     kill() {
