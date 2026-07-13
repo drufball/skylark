@@ -6,8 +6,10 @@ import { firstLine, truncate } from '@hull/lib/text'
 import {
   agentMessages,
   agentSessions,
+  backgroundJobs,
   type AgentMessageRow,
   type AgentSessionRow,
+  type BackgroundJobRow,
 } from './schema'
 
 /**
@@ -199,6 +201,62 @@ export async function appendMessage(
       .where(eq(agentSessions.id, input.sessionId))
     return row
   })
+}
+
+/**
+ * Record a background job's durable row — written when `start()` fires
+ * (background.ts), before the child even has a chance to close, so a reload
+ * mid-command never loses the fact that it was launched (issue #v6ft).
+ */
+export async function recordBackgroundJob(
+  db: Database,
+  input: {
+    id: string
+    sessionId: string
+    command: string
+    label: string
+    cwd: string
+    pid: number
+  },
+): Promise<BackgroundJobRow> {
+  const [row] = await db
+    .insert(backgroundJobs)
+    .values({
+      id: input.id,
+      sessionId: input.sessionId,
+      command: input.command,
+      label: input.label,
+      cwd: input.cwd,
+      pid: input.pid,
+    })
+    .returning()
+  return row
+}
+
+/**
+ * Every background job still outstanding — a row exists only until it's
+ * cleared, so this is simply every row, oldest first (ids are UUIDv7). The
+ * boot-time reconciler (reconcile.ts) sweeps this list.
+ */
+export async function listOutstandingBackgroundJobs(
+  db: Database,
+): Promise<BackgroundJobRow[]> {
+  return db
+    .select()
+    .from(backgroundJobs)
+    .orderBy(asc(backgroundJobs.id))
+}
+
+/**
+ * Clear a job's row — called by the real `onClose` once a live process
+ * observes the job end, or by the reconciler once it's claimed a stranded row
+ * at boot. A no-op if the row is already gone (double-clear is harmless).
+ */
+export async function clearBackgroundJob(
+  db: Database,
+  id: string,
+): Promise<void> {
+  await db.delete(backgroundJobs).where(eq(backgroundJobs.id, id))
 }
 
 /** Every stored message for a session, in turn order. */

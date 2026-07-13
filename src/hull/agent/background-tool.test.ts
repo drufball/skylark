@@ -10,7 +10,7 @@ function fakeJobs(): BackgroundJobs & { calls: unknown[] } {
     calls,
     start: (input) => {
       calls.push(input)
-      return 'job-1'
+      return Promise.resolve('job-1')
     },
     cancelForSession: vi.fn(),
   }

@@ -40,14 +40,14 @@ export function createBackgroundTool(
       'To wait on anything slow (CI checks, a long build), call `background` with the command and a label, then STOP — do not poll, sleep-loop, or block a turn. You will be re-invoked automatically with the result.',
     ],
     parameters: PARAMS,
-    execute: (_toolCallId, params) => {
-      const jobId = jobs.start({
+    execute: async (_toolCallId, params) => {
+      const jobId = await jobs.start({
         sessionId,
         command: params.command,
         label: params.label,
         cwd,
       })
-      return Promise.resolve({
+      return {
         content: [
           {
             type: 'text' as const,
@@ -56,7 +56,7 @@ export function createBackgroundTool(
         ],
         details: { jobId },
         terminate: true,
-      })
+      }
     },
   })
 }
