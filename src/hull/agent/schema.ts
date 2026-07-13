@@ -106,6 +106,44 @@ export const agentMessages = pgTable(
   (table) => [index('agent_messages_session_idx').on(table.sessionId)],
 )
 
+/**
+ * A background job an agent handed off (the `background` tool) — the durable
+ * record `background.ts`'s in-process `Set<Job>` never had, which is the whole
+ * reason a reload used to strand a session forever (issue #v6ft). A row exists
+ * from `start()` until the job is accounted for — either its real `onClose`
+ * fires in the process that spawned it, or the boot-time reconciler
+ * (`reconcile.ts`) claims it because that process is gone. There is no status
+ * column: every row in this table IS an outstanding job by definition, so
+ * "list outstanding jobs" is just "every row".
+ *
+ * `pid` is carried for completeness/observability (which OS process this was)
+ * but is NOT used to re-attach across a reload: a fresh process has no handle
+ * on the old child's stdout/stderr pipes even if the OS process happens to
+ * still be alive, so there is no way to recover its output honestly. The
+ * reconciler therefore always treats a row it finds at boot as "the job's
+ * fate is unknown" and resumes the session with an explicit message to redo
+ * the command — see reconcile.ts for the rationale (a documented, deliberate
+ * v1 scope: no re-attach).
+ */
+export const backgroundJobs = pgTable('background_jobs', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id')
+    .notNull()
+    .references(() => agentSessions.id, { onDelete: 'cascade' }),
+  /** The shell command that was backgrounded. */
+  command: text('command').notNull(),
+  /** Short label the agent gave it ("PR #12 CI") — echoed in the resume. */
+  label: text('label').notNull(),
+  /** Working directory the command ran in. */
+  cwd: text('cwd').notNull(),
+  /** The OS pid of the spawned child, for observability — see doc comment. */
+  pid: bigint('pid', { mode: 'number' }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
 export type AgentSessionRow = typeof agentSessions.$inferSelect
 export type AgentMessageRow = typeof agentMessages.$inferSelect
 export type ExtensionRow = typeof extensions.$inferSelect
+export type BackgroundJobRow = typeof backgroundJobs.$inferSelect

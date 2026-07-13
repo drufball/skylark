@@ -6,11 +6,14 @@ import { defined, freshDb } from '@hull/db/test-db'
 
 import {
   appendMessage,
+  clearBackgroundJob,
   createSession,
   findAgentSessionByTitle,
   getMessages,
   getSession,
+  listOutstandingBackgroundJobs,
   listSessions,
+  recordBackgroundJob,
   resolveSessionRef,
   runningSessionIds,
   setStatus,
@@ -243,6 +246,78 @@ describe('agent service persistence', () => {
         /ambiguous/i,
       )
     })
+  })
+})
+
+describe('background jobs persistence', () => {
+  let db: Database
+  let close: () => Promise<void>
+
+  beforeEach(async () => {
+    ;({ db, close } = await freshDb())
+    await createSession(db, { id: 's1', model: 'm' })
+  })
+  afterEach(() => close())
+
+  it('records a job and lists it as outstanding', async () => {
+    await recordBackgroundJob(db, {
+      id: 'job-1',
+      sessionId: 's1',
+      command: 'gh pr checks 12 --watch',
+      label: 'PR #12 CI',
+      cwd: '/wt',
+      pid: 4242,
+    })
+
+    const outstanding = await listOutstandingBackgroundJobs(db)
+    expect(outstanding).toHaveLength(1)
+    expect(outstanding[0]).toMatchObject({
+      id: 'job-1',
+      sessionId: 's1',
+      command: 'gh pr checks 12 --watch',
+      label: 'PR #12 CI',
+      cwd: '/wt',
+      pid: 4242,
+    })
+  })
+
+  it('clears a job so it no longer lists as outstanding', async () => {
+    await recordBackgroundJob(db, {
+      id: 'job-1',
+      sessionId: 's1',
+      command: 'echo hi',
+      label: 'x',
+      cwd: '/wt',
+      pid: 1,
+    })
+    await clearBackgroundJob(db, 'job-1')
+    expect(await listOutstandingBackgroundJobs(db)).toEqual([])
+  })
+
+  it('clearing a job that does not exist is a no-op', async () => {
+    await expect(clearBackgroundJob(db, 'ghost')).resolves.toBeUndefined()
+  })
+
+  it('lists jobs for multiple sessions, oldest first', async () => {
+    await createSession(db, { id: 's2', model: 'm' })
+    await recordBackgroundJob(db, {
+      id: 'job-1',
+      sessionId: 's1',
+      command: 'a',
+      label: 'a',
+      cwd: '/',
+      pid: 1,
+    })
+    await recordBackgroundJob(db, {
+      id: 'job-2',
+      sessionId: 's2',
+      command: 'b',
+      label: 'b',
+      cwd: '/',
+      pid: 2,
+    })
+    const outstanding = await listOutstandingBackgroundJobs(db)
+    expect(outstanding.map((j) => j.id)).toEqual(['job-1', 'job-2'])
   })
 })
 

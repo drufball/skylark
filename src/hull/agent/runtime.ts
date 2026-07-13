@@ -16,6 +16,7 @@ import { errorMessage } from '@hull/lib/errors'
 
 import { createBackgroundJobs, defaultSpawn, type SpawnFn } from './background'
 import { createBackgroundTool } from './background-tool'
+import { reconcileBackgroundJobs } from './reconcile'
 import { getUserById } from '@hull/users/service'
 
 import { withAgentMemory, type AgentMemoryLoader } from './memory'
@@ -235,18 +236,25 @@ export function createAgentRuntime(deps: {
   // Background jobs let an agent hand off a long wait (CI, a slow build) and end
   // its turn; when the job finishes we re-invoke the session with the result.
   // `runTurn` is referenced before its declaration but only CALLED later (on a
-  // job's completion), by which point the agent has ended its turn and the
-  // session is idle, so the resume prompts cleanly.
+  // job's completion, or a boot-time reconcile), by which point the agent has
+  // ended its turn and the session is idle, so the resume prompts cleanly.
+  //
+  // Named (not inline) because `reconcileJobs` (issue #v6ft) reuses this exact
+  // bridge for jobs a PRIOR process started and lost — same "re-invoke and log,
+  // never throw" contract either way.
+  /* v8 ignore start -- thin fire-and-forget bridge over runTurn (which is
+     tested directly); the catch only logs, never throws */
+  function resumeSession(sessionId: string, message: string): void {
+    void runTurn(sessionId, message).catch((err: unknown) => {
+      console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
+    })
+  }
+  /* v8 ignore stop */
+
   const jobs = createBackgroundJobs({
+    db,
     spawn: deps.spawn ?? defaultSpawn,
-    /* v8 ignore start -- live bridge: fires only when a real background job
-       completes through a real session; runTurn itself is unit-tested */
-    resume: (sessionId, message) => {
-      void runTurn(sessionId, message).catch((err: unknown) => {
-        console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
-      })
-    },
-    /* v8 ignore stop */
+    resume: resumeSession,
   })
   const emit: AgentEmitter = deps.emit ?? ((event) => emitEvent(db, event))
   const registry = new Map<string, Entry>()
@@ -472,7 +480,7 @@ export function createAgentRuntime(deps: {
    * crash in another process is recoverable from anywhere).
    */
   async function cancel(sessionId: string): Promise<void> {
-    jobs.cancelForSession(sessionId)
+    void jobs.cancelForSession(sessionId)
     const entry = registry.get(sessionId)
     if (entry) {
       await entry.session.abort()
@@ -483,7 +491,7 @@ export function createAgentRuntime(deps: {
 
   /** Drop a live session, releasing it from the registry. */
   function dispose(sessionId: string): void {
-    jobs.cancelForSession(sessionId)
+    void jobs.cancelForSession(sessionId)
     const entry = registry.get(sessionId)
     if (!entry) return
     entry.session.dispose()
@@ -494,7 +502,29 @@ export function createAgentRuntime(deps: {
     for (const id of [...registry.keys()]) dispose(id)
   }
 
-  return { runTurn, cancel, dispose, disposeAll }
+  /**
+   * Sweep every background job left outstanding by a PRIOR process (issue
+   * #v6ft): a server reload wipes `jobs`'s in-process registry clean, but a
+   * durable row survives in `background_jobs` for exactly this reason. Call
+   * once at boot, before anything else touches the runtime -- same posture as
+   * the issues/chat orchestrators' own startup `reconcile()`.
+   */
+  function reconcileJobs(): Promise<void> {
+    // Awaited bridge (unlike resumeSession's fire-and-forget): boot
+    // reconciliation resolving means every stranded session actually heard
+    // its "job was lost" message.
+    return reconcileBackgroundJobs({
+      db,
+      resume: async (sessionId, message) => {
+        /* v8 ignore next 3 -- log-only error path */
+        await runTurn(sessionId, message).catch((err: unknown) => {
+          console.error(`background resume ${sessionId}: ${errorMessage(err)}`)
+        })
+      },
+    })
+  }
+
+  return { runTurn, cancel, dispose, disposeAll, reconcileJobs }
 }
 
 export type AgentRuntime = ReturnType<typeof createAgentRuntime>
