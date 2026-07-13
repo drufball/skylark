@@ -86,7 +86,7 @@ describe('reconcileBackgroundJobs', () => {
       cwd: '/',
       pid: 2,
     })
-    const resume = vi.fn()
+    const resume = vi.fn<(sessionId: string, message: string) => void>()
 
     await reconcileBackgroundJobs({ db, resume })
 
