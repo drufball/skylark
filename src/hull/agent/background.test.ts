@@ -39,17 +39,19 @@ describe('formatResume', () => {
 
 /** A fake process whose completion the test triggers manually. */
 function fakeProc(pid = 4242): BackgroundProc & {
-  finish: (c: number, o: string) => void
+  finish: (c: number, o: string) => Promise<void>
 } {
-  let cb: ((code: number, output: string) => void) | undefined
+  let cb:
+    | ((code: number, output: string) => void | Promise<void>)
+    | undefined
   return {
     pid,
     onClose(fn) {
       cb = fn
     },
     kill: vi.fn(),
-    finish(code, output) {
-      cb?.(code, output)
+    async finish(code, output) {
+      await cb?.(code, output)
     },
   }
 }
@@ -80,7 +82,7 @@ describe('createBackgroundJobs', () => {
     expect(id).toBeTruthy()
     expect(resume).not.toHaveBeenCalled() // not until it finishes
 
-    proc.finish(0, 'all green')
+    await proc.finish(0, 'all green')
     expect(resume).toHaveBeenCalledTimes(1)
     expect(resume).toHaveBeenCalledWith(
       's1',
@@ -111,11 +113,11 @@ describe('createBackgroundJobs', () => {
       label: 'x',
       cwd: '/wt',
     })
-    jobs.cancelForSession('s1')
+    await jobs.cancelForSession('s1')
     expect(proc.kill).toHaveBeenCalled()
 
     // Even if the killed process later reports closed, no resume fires.
-    proc.finish(143, 'killed')
+    await proc.finish(143, 'killed')
     expect(resume).not.toHaveBeenCalled()
   })
 
@@ -129,9 +131,9 @@ describe('createBackgroundJobs', () => {
 
     await jobs.start({ sessionId: 's1', command: 'a', label: 'a', cwd: '/' })
     await jobs.start({ sessionId: 's2', command: 'b', label: 'b', cwd: '/' })
-    jobs.cancelForSession('s1')
+    await jobs.cancelForSession('s1')
 
-    p2.finish(0, 'ok') // s2 still resumes
+    await p2.finish(0, 'ok') // s2 still resumes
     expect(resume).toHaveBeenCalledTimes(1)
     expect(resume).toHaveBeenCalledWith('s2', expect.any(String))
   })
@@ -173,7 +175,7 @@ describe('createBackgroundJobs', () => {
     await jobs.start({ sessionId: 's1', command: 'a', label: 'a', cwd: '/' })
     expect(await listOutstandingBackgroundJobs(db)).toHaveLength(1)
 
-    proc.finish(0, 'done')
+    await proc.finish(0, 'done')
     // The row-clear is fire-and-forget off onClose; flush microtasks.
     await Promise.resolve()
     await Promise.resolve()
@@ -188,7 +190,7 @@ describe('createBackgroundJobs', () => {
       resume: vi.fn(),
     })
     await jobs.start({ sessionId: 's1', command: 'a', label: 'a', cwd: '/' })
-    jobs.cancelForSession('s1')
+    await jobs.cancelForSession('s1')
     await Promise.resolve()
     await Promise.resolve()
     expect(await listOutstandingBackgroundJobs(db)).toHaveLength(0)

@@ -27,7 +27,7 @@ export interface BackgroundProc {
   /** The OS pid of the spawned child, for the durable row (observability). */
   pid: number
   /** Register the completion callback (exit code + combined output). */
-  onClose: (cb: (code: number, output: string) => void) => void
+  onClose: (cb: (code: number, output: string) => void | Promise<void>) => void
   /** Terminate the process (used when a session is cancelled/disposed). */
   kill: () => void
 }
@@ -106,9 +106,12 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
       cwd: input.cwd,
       pid: proc.pid,
     })
-    proc.onClose((code, output) => {
+    proc.onClose(async (code, output) => {
       jobs.delete(job)
-      void clearBackgroundJob(deps.db, jobId).catch((err: unknown) => {
+      // Awaited (not fire-and-forget): a delete still in flight when the db
+      // closes wedges PGlite mid-query — and callers observing the resume may
+      // reasonably assume the durable row is already settled.
+      await clearBackgroundJob(deps.db, jobId).catch((err: unknown) => {
         console.error(
           `background job ${jobId}: clearing durable row failed: ${String(err)}`,
         )
@@ -123,18 +126,22 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
   }
 
   /** Kill any background jobs for a session (on cancel/dispose); no resume. */
-  function cancelForSession(sessionId: string): void {
+  async function cancelForSession(sessionId: string): Promise<void> {
+    const clears: Promise<void>[] = []
     for (const job of [...jobs]) {
       if (job.sessionId !== sessionId) continue
       job.cancelled = true
       jobs.delete(job)
       job.proc.kill()
-      void clearBackgroundJob(deps.db, job.id).catch((err: unknown) => {
-        console.error(
-          `background job ${job.id}: clearing durable row failed: ${String(err)}`,
-        )
-      })
+      clears.push(
+        clearBackgroundJob(deps.db, job.id).catch((err: unknown) => {
+          console.error(
+            `background job ${job.id}: clearing durable row failed: ${String(err)}`,
+          )
+        }),
+      )
     }
+    await Promise.all(clears)
   }
 
   return { start, cancelForSession }

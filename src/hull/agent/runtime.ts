@@ -477,7 +477,7 @@ export function createAgentRuntime(deps: {
    * crash in another process is recoverable from anywhere).
    */
   async function cancel(sessionId: string): Promise<void> {
-    jobs.cancelForSession(sessionId)
+    void jobs.cancelForSession(sessionId)
     const entry = registry.get(sessionId)
     if (entry) {
       await entry.session.abort()
@@ -488,7 +488,7 @@ export function createAgentRuntime(deps: {
 
   /** Drop a live session, releasing it from the registry. */
   function dispose(sessionId: string): void {
-    jobs.cancelForSession(sessionId)
+    void jobs.cancelForSession(sessionId)
     const entry = registry.get(sessionId)
     if (!entry) return
     entry.session.dispose()
