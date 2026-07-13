@@ -176,6 +176,13 @@
       "when": 1783902031014,
       "tag": "0024_fat_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783920399421,
+      "tag": "0025_futuristic_xorn",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,10 @@ import { spawn as nodeSpawn } from 'node:child_process'
 
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 
+import type { Database } from '@hull/db/client'
+
+import { clearBackgroundJob, recordBackgroundJob } from './service'
+
 // Background jobs for agents: an agent can hand a long-running command (waiting
 // on CI, a slow build) to this manager, END ITS TURN, and be automatically
 // resumed with the result when the command finishes — instead of blocking a
@@ -10,11 +14,20 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 // This is the server-side half; the agent-facing half is the `background` tool
 // (background-tool.ts). The manager is pure of process/agent wiring by injection
 // (`spawn` + `resume`), so the lifecycle is unit-tested with fakes.
+//
+// A job is durable from the moment it starts (issue #v6ft): `start()` writes a
+// `background_jobs` row BEFORE returning, so a reload that wipes this
+// in-process `Set` clean still leaves a durable trail the boot-time reconciler
+// (reconcile.ts) can find and act on. The row is cleared the instant a real
+// close is observed — by THIS process if it's still around, or never (it's the
+// reconciler's job then) if it isn't.
 
 /** A running background process the manager can watch and kill. */
 export interface BackgroundProc {
+  /** The OS pid of the spawned child, for the durable row (observability). */
+  pid: number
   /** Register the completion callback (exit code + combined output). */
-  onClose: (cb: (code: number, output: string) => void) => void
+  onClose: (cb: (code: number, output: string) => void | Promise<void>) => void
   /** Terminate the process (used when a session is cancelled/disposed). */
   kill: () => void
 }
@@ -23,6 +36,7 @@ export interface BackgroundProc {
 export type SpawnFn = (command: string, cwd: string) => BackgroundProc
 
 export interface BackgroundJobsDeps {
+  db: Database
   spawn: SpawnFn
   /** Re-invoke the agent session with a message when a job finishes. */
   resume: (sessionId: string, message: string) => void
@@ -53,6 +67,7 @@ export function formatResume(
 }
 
 interface Job {
+  id: string
   sessionId: string
   proc: BackgroundProc
   cancelled: boolean
@@ -61,19 +76,48 @@ interface Job {
 export function createBackgroundJobs(deps: BackgroundJobsDeps) {
   const jobs = new Set<Job>()
 
-  /** Start a command in the background; the session is resumed when it ends. */
-  function start(input: {
+  /**
+   * Start a command in the background; the session is resumed when it ends.
+   * The durable row is written before this resolves, so a process that dies
+   * the instant after start() returns still leaves a row the reconciler can
+   * find — the tool call that triggered this has already ended the agent's
+   * turn by the time it matters.
+   */
+  async function start(input: {
     sessionId: string
     command: string
     label: string
     cwd: string
-  }): string {
+  }): Promise<string> {
     const jobId = uuidv7()
     const proc = deps.spawn(input.command, input.cwd)
-    const job: Job = { sessionId: input.sessionId, proc, cancelled: false }
+    const job: Job = {
+      id: jobId,
+      sessionId: input.sessionId,
+      proc,
+      cancelled: false,
+    }
     jobs.add(job)
-    proc.onClose((code, output) => {
+    await recordBackgroundJob(deps.db, {
+      id: jobId,
+      sessionId: input.sessionId,
+      command: input.command,
+      label: input.label,
+      cwd: input.cwd,
+      pid: proc.pid,
+    })
+    proc.onClose(async (code, output) => {
       jobs.delete(job)
+      // Awaited (not fire-and-forget): a delete still in flight when the db
+      // closes wedges PGlite mid-query — and callers observing the resume may
+      // reasonably assume the durable row is already settled.
+      await clearBackgroundJob(deps.db, jobId).catch(
+        /* v8 ignore next 4 -- log-only error path */ (err: unknown) => {
+          console.error(
+            `background job ${jobId}: clearing durable row failed: ${String(err)}`,
+          )
+        },
+      )
       // A cancelled job's process still closes; don't resume a session that was
       // torn down (issue closed, agent disposed) — that would wake the dead.
       if (!job.cancelled) {
@@ -84,13 +128,24 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
   }
 
   /** Kill any background jobs for a session (on cancel/dispose); no resume. */
-  function cancelForSession(sessionId: string): void {
+  async function cancelForSession(sessionId: string): Promise<void> {
+    const clears: Promise<void>[] = []
     for (const job of [...jobs]) {
       if (job.sessionId !== sessionId) continue
       job.cancelled = true
       jobs.delete(job)
       job.proc.kill()
+      clears.push(
+        clearBackgroundJob(deps.db, job.id).catch(
+          /* v8 ignore next 4 -- log-only error path */ (err: unknown) => {
+            console.error(
+              `background job ${job.id}: clearing durable row failed: ${String(err)}`,
+            )
+          },
+        ),
+      )
     }
+    await Promise.all(clears)
   }
 
   return { start, cancelForSession }
@@ -110,9 +165,10 @@ export const defaultSpawn: SpawnFn = (command, cwd) => {
     output += d.toString()
   })
   return {
+    pid: child.pid ?? -1,
     onClose(cb) {
       child.on('close', (code) => {
-        cb(code ?? -1, output)
+        void cb(code ?? -1, output)
       })
     },
     kill() {

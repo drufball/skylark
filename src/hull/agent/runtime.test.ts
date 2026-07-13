@@ -17,6 +17,8 @@ import {
   createSession,
   getMessages,
   getSession,
+  listOutstandingBackgroundJobs,
+  recordBackgroundJob,
   setStatus,
 } from './service'
 
@@ -697,5 +699,35 @@ describe('agent runtime', () => {
     expect(() => {
       runtime.dispose('never-existed')
     }).not.toThrow()
+  })
+
+  it('reconcileJobs resumes a session with a background job stranded by a prior process', async () => {
+    // Simulate what a reload leaves behind: a durable row with no in-process
+    // Job to match it (this runtime's `jobs` Set is fresh) -- the exact gap
+    // issue #v6ft closes.
+    await createSession(db, { id: 's1', model: 'm' })
+    await recordBackgroundJob(db, {
+      id: 'job-1',
+      sessionId: 's1',
+      command: 'gh pr checks 12 --watch',
+      label: 'PR #12 CI',
+      cwd: '/wt',
+      pid: 4242,
+    })
+
+    await runtime.reconcileJobs()
+
+    // The row is claimed (cleared) and the session was resumed through the
+    // real runTurn bridge -- provable by it now holding a completed turn.
+    expect(await listOutstandingBackgroundJobs(db)).toEqual([])
+    expect(fake.promptCalls).toHaveLength(1)
+    expect(fake.promptCalls[0]).toContain('PR #12 CI')
+    expect(fake.promptCalls[0]).toMatch(/lost/i)
+  })
+
+  it('reconcileJobs is a no-op when nothing was left outstanding', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    await runtime.reconcileJobs()
+    expect(fake.promptCalls).toEqual([])
   })
 })
