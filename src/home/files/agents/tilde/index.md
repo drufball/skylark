@@ -2,6 +2,10 @@
 > files
 > node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/tilde/index.md
 
+
+> files
+> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/tilde/index.md
+
 # tilde — memory index
 
 ## ⚠️ Inbox session role — READ FIRST
@@ -46,3 +50,4 @@
 
 ## Spring cleaning thread (started 2026-07-12, chat 019f5865-e849-7e3b-a26c-cd551e566b3e, @claude)
 - **#4mna** (issue board status line lies — "thinking…" shown for 25+min while a builder session was actually stranded on #zo3a) — filed by me, building started 2026-07-12. Root cause traced: `issuesProgressLine` (src/hull/agent/progress.ts) maps every turn_end/agent_end to a flat 'thinking…', including turns that ended because the agent called the `background` tool (src/hull/agent/background-tool.ts, terminate:true) — so the line freezes on "thinking…" forever if the job's resume callback is lost. Also noted: no persisted "last activity" timestamp exists yet (statusLine writes don't bump one), and background jobs are in-process/in-memory only (src/hull/agent/background.ts, no DB row) — so job-liveness questions can't be answered durably today. Left the exact fix mechanism to the builder. Watch for the inbox wake and route the update back to this chat — do NOT re-investigate, this session already did the digging.
+- 2026-07-13 update: PR #129 opened for #4mna, baton passed builder → babysitter. CI initially red — but NOT a recurrence of the #iv1t npm-drift bug. Root cause: a manual `git merge origin/main` into this branch (commit a1459c7, done outside the normal build flow) resolved a `package-lock.json` conflict by keeping the stale pre-#iv1t lockfile shape instead of main's regenerated one. Confirmed by regenerating with `npx npm@10.9.8 install --package-lock-only` — output matched origin/main's committed lockfile byte-for-byte. Commented the diagnosis on #4mna (not a fix, just pointing babysitter at it) and posted to the Spring Cleaning chat. **New lesson**: even with #iv1t's packageManager pin in place, a manual/human merge-conflict resolution on package-lock.json can still reintroduce the old lockfile shape — the pin only self-heals when scripts/npm-cmd actually runs an install, not when a conflict is resolved by picking one side's lockfile verbatim. If this pattern recurs, worth flagging as a follow-up issue (e.g. a CI check that diffs the committed lockfile against a freshly-regenerated one) — but only file that if it comes up again, not preemptively.
