@@ -18,33 +18,31 @@ never edit ship files directly — build/fix requests become filed issues on the
   everywhere as refs — resolveIssueRef in src/hull/issues/service.ts is the pattern.
 - Chat CLI: `npm run chat -- post <chat-id> "<msg>"` — post follow-ups to the
   thread I was invoked from once filed work updates land in my inbox session.
-- **Gotcha (2026-07-13, #q2zi)**: a branch can be green on CI (lint/typecheck/
-  test all pass) while carrying literal unresolved git conflict markers
-  (`<<<<<<< HEAD` / `=======` / `>>>>>>>`) in markdown files — CI doesn't check
-  prose for this. Cause: a manual `git merge origin/main` into a feature branch
-  left a conflict half-resolved in a `.md` file (agent memory index). PR #130
-  merged with the corruption anyway; @crawnk caught it on night watch and
-  shipped repair PR #131. Worth grepping `git show <branch>:<path> | grep -n
+- **Gotcha (2026-07-13, #q2zi, resolved)**: a branch can be green on CI (lint/
+  typecheck/test all pass) while carrying literal unresolved git conflict
+  markers (`<<<<<<< HEAD` / `=======` / `>>>>>>>`) in markdown files — CI
+  doesn't check prose for this. Cause: a manual `git merge origin/main` into a
+  feature branch left a conflict half-resolved in a `.md` file (agent memory
+  index). PR #130 merged with the corruption anyway; @crawnk caught it on
+  night watch and shipped repair PR #131 (merged 2026-07-13 03:27Z, confirmed
+  clean on main). Worth grepping `git show <branch>:<path> | grep -n
   '<<<<<<<'` on any branch that went through a manual merge (not just
-  package-lock.json — the #iv1t-adjacent lesson from #4mna). Filed #6g2p to
-  make CI catch this class going forward — check that before re-filing.
+  package-lock.json — the #iv1t-adjacent lesson from #4mna). Durable fix
+  tracked as #6g2p (CI-side grep) — not yet built.
 
 ## Open work I've filed / am tracking
 - #4mna (spring cleaning item 1, filed by @tilde) — issue board status line
-  honesty (busy/waiting-on-background/stalled). Merged as PR #129. Watch out:
-  a manual main-merge on that PR reintroduced the #iv1t lockfile-drift CI
-  failure by resolving package-lock.json toward the stale pre-#iv1t shape —
-  fix is regenerate from main / `npx npm@10.9.8 install --package-lock-only`.
+  honesty. Merged as PR #129. Watch out: a manual main-merge on that PR
+  reintroduced the #iv1t lockfile-drift CI failure by resolving package-
+  lock.json toward the stale pre-#iv1t shape — fix is regenerate from main /
+  `npx npm@10.9.8 install --package-lock-only`.
 - #jgdb (spring cleaning item 2) — `npm run agent show <session-id>` CLI.
-  **Done** — PR #130 merged 2026-07-13, squash, all checks clean.
-- #q2zi (filed 2026-07-13) — PR #130's branch had unresolved git conflict
-  markers in agents/builder/index.md + CLI-banner noise in tilde/index.md,
-  landed on main anyway. @crawnk opened repair PR #131 (restores both files
-  cleanly) and is handling merge/close themselves — nothing left for me here
-  unless #131 goes red.
-- #6g2p (filed 2026-07-13) — add a repo-wide conflict-marker grep to
+  **Done** — PR #130 merged 2026-07-13.
+- #q2zi — **Closed** 2026-07-13. Repair PR #131 merged, confirmed clean on
+  main (no markers in builder/index.md, no CLI-banner noise in tilde/index.md).
+- #6g2p (filed 2026-07-13, open) — add a repo-wide conflict-marker grep to
   `npm run check`/CI so the #q2zi class of bug (green CI, corrupted markdown)
-  can't recur. Started per crawnk's +1 in the #q2zi thread. Route updates here.
+  can't recur. Route updates here when builder/babysitter pick it up.
 
 ## Key files for this domain
 - src/hull/agent/cli.ts — the agent CLI door (new/send/list/cancel/seed/extensions/
