@@ -51,23 +51,32 @@ class FakeGit implements GitOps {
   worktrees = new Set<string>()
   added: { path: string; branch: string }[] = []
   removed: string[] = []
-  pulls = 0
+  fetches = 0
+  merges = 0
+  installs = 0
   migrations = 0
   copied: { from: string; to: string; patterns: string[] }[] = []
+  /** Every call in arrival order — ordering assertions read this. */
+  ops: string[] = []
   /** Pretend these worktree paths already exist on disk (idempotency tests). */
   existing = new Set<string>()
   /** What branchMerged returns — true by default (the happy merged case). */
   merged = true
+  /** What lockfileChanged returns — false by default (no install needed). */
+  lockfileDiff = false
 
   worktreeExists(path: string): Promise<boolean> {
+    this.ops.push('worktreeExists')
     return Promise.resolve(this.existing.has(path) || this.worktrees.has(path))
   }
   addWorktree(path: string, branch: string): Promise<void> {
+    this.ops.push('addWorktree')
     this.worktrees.add(path)
     this.added.push({ path, branch })
     return Promise.resolve()
   }
   removeWorktree(path: string): Promise<void> {
+    this.ops.push('removeWorktree')
     this.worktrees.delete(path)
     this.removed.push(path)
     return Promise.resolve()
@@ -77,21 +86,40 @@ class FakeGit implements GitOps {
     to: string,
     patterns: string[],
   ): Promise<void> {
+    this.ops.push('copyWorktreeIncludes')
     this.copied.push({ from, to, patterns })
     return Promise.resolve()
   }
-  pullMain(): Promise<void> {
-    this.pulls++
+  fetchMain(): Promise<void> {
+    this.ops.push('fetchMain')
+    this.fetches++
+    return Promise.resolve()
+  }
+  lockfileChanged(): Promise<boolean> {
+    this.ops.push('lockfileChanged')
+    return Promise.resolve(this.lockfileDiff)
+  }
+  mergeMain(): Promise<void> {
+    this.ops.push('mergeMain')
+    this.merges++
+    return Promise.resolve()
+  }
+  installDeps(): Promise<void> {
+    this.ops.push('installDeps')
+    this.installs++
     return Promise.resolve()
   }
   runMigrations(): Promise<void> {
+    this.ops.push('runMigrations')
     this.migrations++
     return Promise.resolve()
   }
   readWorktreeIncludes(): Promise<string[]> {
+    this.ops.push('readWorktreeIncludes')
     return Promise.resolve(['.env'])
   }
   branchMerged(): Promise<boolean> {
+    this.ops.push('branchMerged')
     return Promise.resolve(this.merged)
   }
 }
@@ -525,7 +553,7 @@ describe('orchestrator → open (agent paused)', () => {
 })
 
 describe('orchestrator → done (agent merged)', () => {
-  it('pulls main, migrates, removes the worktree, and disposes the session', async () => {
+  it('fetches, ff-merges main, migrates, removes the worktree, and disposes the session', async () => {
     const { deps, git, runtime } = makeDeps()
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'ee55' })
@@ -534,10 +562,68 @@ describe('orchestrator → done (agent merged)', () => {
 
     await drive(orch, issue.id, 'done')
 
-    expect(git.pulls).toBe(1)
+    expect(git.fetches).toBe(1)
+    expect(git.merges).toBe(1)
     expect(git.migrations).toBe(1)
     expect(git.removed).toEqual([defined(built.worktreePath)])
     expect(runtime.disposed).toContain(await builderSessionId(issue.id))
+  })
+
+  it('refreshes in order — fetch, lockfile check (before HEAD moves), merge, migrate — then checks the merge and tears down', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'or11' })
+    await drive(orch, issue.id, 'building')
+    git.ops = [] // drop the build-phase calls; assert the done path alone
+
+    await drive(orch, issue.id, 'done')
+
+    // The lockfile diff MUST be read before mergeMain moves HEAD (after the
+    // ff-merge, HEAD == origin/main and the diff is always empty) — and the
+    // refresh must complete before the merged-check gates teardown.
+    expect(git.ops).toEqual([
+      'fetchMain',
+      'lockfileChanged',
+      'mergeMain',
+      'runMigrations',
+      'branchMerged',
+      'worktreeExists',
+      'removeWorktree',
+    ])
+  })
+
+  it('installs dependencies (pinned npm) when the lockfile changed on origin/main', async () => {
+    const { deps, git } = makeDeps()
+    git.lockfileDiff = true
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'lf11' })
+    await drive(orch, issue.id, 'building')
+
+    await drive(orch, issue.id, 'done')
+
+    expect(git.installs).toBe(1)
+    // The install lands after the merge brought the new lockfile in, and
+    // before migrations run on the fresh dependency tree.
+    expect(git.ops.slice(git.ops.indexOf('mergeMain'))).toEqual([
+      'mergeMain',
+      'installDeps',
+      'runMigrations',
+      'branchMerged',
+      'worktreeExists',
+      'removeWorktree',
+    ])
+  })
+
+  it('skips the install when the lockfile did not change', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'lf22' })
+    await drive(orch, issue.id, 'building')
+
+    await drive(orch, issue.id, 'done')
+
+    expect(git.installs).toBe(0)
+    expect(git.migrations).toBe(1)
   })
 
   it('leaves the worktree standing if the branch is not actually merged', async () => {
@@ -566,9 +652,9 @@ describe('orchestrator → done (agent merged)', () => {
     expect(git.removed).toEqual([])
   })
 
-  it('never crashes if the self-pull fails — logs and continues', async () => {
+  it('never crashes if the self-merge fails — logs, comments on the issue, and continues', async () => {
     const { deps, git, runtime } = makeDeps()
-    git.pullMain = () => Promise.reject(new Error('diverged'))
+    git.mergeMain = () => Promise.reject(new Error('diverged'))
     const orch = createOrchestrator(deps)
     const issue = await createIssue(db, { title: 'X', authorId, nano: 'ff66' })
     await drive(orch, issue.id, 'building')
@@ -583,9 +669,70 @@ describe('orchestrator → done (agent merged)', () => {
     await expect(
       orch.onStatusChanged(issue.id, 'done'),
     ).resolves.toBeUndefined()
-    // Teardown still happened despite the pull failure.
+    // Teardown still happened despite the merge failure — the branch IS in
+    // main; only the serving checkout is stale.
     expect(git.removed).toEqual([defined(built.worktreePath)])
     expect(runtime.disposed).toContain(await builderSessionId(issue.id))
+    // The failure is loud: a comment on the issue (authored as the builder)
+    // fans out to watchers — not just a console only the host laptop sees.
+    const comments = await listComments(db, issue.id)
+    const warning = defined(comments.at(-1))
+    expect(warning.authorId).toBe(builderId)
+    expect(warning.body).toContain('Auto-deploy failed')
+    expect(warning.body).toContain('serving stale code')
+    expect(warning.body).toContain('diverged')
+    expect(warning.body).toContain('manual sync')
+  })
+
+  it('a failed install is loud too — the comment carries the install error', async () => {
+    const { deps, git } = makeDeps()
+    git.lockfileDiff = true
+    git.installDeps = () => Promise.reject(new Error('npm exploded'))
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ff67' })
+    await drive(orch, issue.id, 'building')
+
+    await drive(orch, issue.id, 'done')
+
+    // Migrations were never reached; the failure landed on the thread.
+    expect(git.migrations).toBe(0)
+    const comments = await listComments(db, issue.id)
+    expect(defined(comments.at(-1)).body).toContain('npm exploded')
+  })
+
+  it('a failing failure-comment is caught and logged — the refresh still never throws', async () => {
+    const { deps, git } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'ff68' })
+    await drive(orch, issue.id, 'building')
+
+    // The refresh fails AND the comment write fails (the author id isn't a
+    // real user, so the FK rejects the insert) — both must be swallowed.
+    git.mergeMain = () => Promise.reject(new Error('diverged'))
+    const badOrch = createOrchestrator({ ...deps, builderUserId: uuidv7() })
+    const errSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    try {
+      await transitionIssue(db, {
+        issueId: issue.id,
+        to: 'done',
+        actorId: authorId,
+      })
+      await expect(
+        badOrch.onStatusChanged(issue.id, 'done'),
+      ).resolves.toBeUndefined()
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining('done-refresh failed'),
+      )
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining('auto-deploy failure comment failed'),
+      )
+    } finally {
+      errSpy.mockRestore()
+    }
+    // No comment landed — but nothing crashed either.
+    expect(await listComments(db, issue.id)).toEqual([])
   })
 })
 

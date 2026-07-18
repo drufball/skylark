@@ -150,7 +150,11 @@ function isStatus(value: unknown): value is IssueStatus {
 export interface GitOps {
   /** Does a worktree already exist at this path? (idempotency check.) */
   worktreeExists(path: string): Promise<boolean>
-  /** `git worktree add <path> -b <branch>` (creates the branch + checkout). */
+  /**
+   * Fetch origin main, then `git worktree add <path> -b <branch> origin/main`:
+   * the branch starts from origin/main, NOT local HEAD, so an issue branch
+   * never inherits local-main noise (agent memory commits, a stale checkout).
+   */
   addWorktree(path: string, branch: string): Promise<void>
   /** `git worktree remove --force <path>`. */
   removeWorktree(path: string): Promise<void>
@@ -160,8 +164,14 @@ export interface GitOps {
     to: string,
     patterns: string[],
   ): Promise<void>
-  /** `git pull --ff-only` in the server's own checkout (the done refresh). */
-  pullMain(): Promise<void>
+  /** `git fetch origin main` in the server's own checkout (the done refresh). */
+  fetchMain(): Promise<void>
+  /** Does `package-lock.json` differ between HEAD and origin/main? */
+  lockfileChanged(): Promise<boolean>
+  /** `git merge --ff-only origin/main` in the server's own checkout. */
+  mergeMain(): Promise<void>
+  /** Install dependencies via the PINNED npm (`scripts/npm-cmd`), never ambient npm. */
+  installDeps(): Promise<void>
   /** `npm run db:migrate` in the server's checkout (merged work may add migrations). */
   runMigrations(): Promise<void>
   /** Read + parse the repo's `.worktreeinclude` (the gitignored files to copy in). */
@@ -481,10 +491,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         break
       case 'done': {
         // Agent says merged. Refresh the server's own checkout from main
-        // (defensive: ff-only, log failures, never crash), apply any new
-        // migrations — then tear the build down. Vite HMR reloads the server on
-        // the pulled files.
-        await refreshFromMain()
+        // (defensive: ff-only, log failures, never crash), install if the
+        // lockfile changed, apply any new migrations — then tear the build
+        // down. Vite HMR reloads the server on the pulled files. The refresh
+        // runs BEFORE teardown, and a refresh failure must not prevent
+        // teardown of a genuinely-merged branch.
+        await refreshFromMain(issue)
         // The prompt asks the agent to set `done` only after a real merge, but a
         // prompt isn't a contract. Don't tear down a worktree whose branch isn't
         // actually in main yet — that would orphan an in-flight PR with no
@@ -598,18 +610,44 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /**
-   * The self-modifying refresh: pull main into the running server's checkout
-   * and migrate. This is a known sharp edge (a process updating its own code),
-   * so it's deliberately defensive — ff-only, every failure logged, NEVER
-   * thrown. A failed self-update must not sink the server; the merged work is
-   * already safe in main and the next deploy/restart picks it up.
+   * The self-modifying refresh: bring origin/main into the running server's
+   * checkout, install if the lockfile changed, and migrate. This is a known
+   * sharp edge (a process updating its own code), so it's deliberately
+   * defensive — ff-only, every failure logged, NEVER thrown. A failed
+   * self-update must not sink the server; the merged work is already safe in
+   * main and the next deploy/restart picks it up. But it must not fail
+   * SILENTLY either (usability/01: six merged PRs served stale for hours), so
+   * a failure is also posted on the issue being deployed — issue comments fan
+   * out to watchers via the notifications service, so that's the ping.
+   *
+   * The lockfile check reads the diff BEFORE mergeMain moves HEAD — after the
+   * ff-merge, HEAD == origin/main and the diff is always empty.
    */
-  async function refreshFromMain(): Promise<void> {
+  async function refreshFromMain(issue: IssueRow): Promise<void> {
     try {
-      await git.pullMain()
+      await git.fetchMain()
+      const needsInstall = await git.lockfileChanged()
+      await git.mergeMain()
+      if (needsInstall) await git.installDeps()
       await git.runMigrations()
     } catch (err) {
       console.error(`done-refresh failed (continuing): ${errorMessage(err)}`)
+      // Loud failure: a console line only the host laptop sees isn't enough.
+      // The comment write is itself failure-proof — a broken thread must not
+      // turn a stale-code warning into a sunk done-handler.
+      try {
+        await addComment(db, {
+          issueId: issue.id,
+          authorId: builderUserId,
+          body:
+            `⚠ Auto-deploy failed — the ship is serving stale code: ${errorMessage(err)}. ` +
+            `The merge is safe on origin/main; the serving checkout needs a manual sync.`,
+        })
+      } catch (commentErr) {
+        console.error(
+          `auto-deploy failure comment failed: ${errorMessage(commentErr)}`,
+        )
+      }
     }
   }
 
