@@ -60,7 +60,11 @@ export const nodeGitOps: GitOps = {
   },
   async addWorktree(path, branch) {
     await mkdir(dirname(path), { recursive: true })
-    await run(`git worktree add ${shq(path)} -b ${shq(branch)}`)
+    // Branch from origin/main, not local HEAD: the serving checkout's local
+    // main accumulates noise (agent memory commits, a stale or diverged
+    // checkout), and an issue branch must start from what's actually merged.
+    await run('git fetch origin main')
+    await run(`git worktree add ${shq(path)} -b ${shq(branch)} origin/main`)
   },
   async removeWorktree(path) {
     await run(`git worktree remove --force ${shq(path)}`)
@@ -83,8 +87,30 @@ export const nodeGitOps: GitOps = {
       }
     }
   },
-  async pullMain() {
-    await run('git pull --ff-only')
+  async fetchMain() {
+    await run('git fetch origin main')
+  },
+  async lockfileChanged() {
+    // Read the diff against the just-fetched origin/main BEFORE the ff-merge
+    // moves HEAD (afterward the diff is always empty). --name-only over
+    // --quiet so a real git error throws instead of reading as "changed".
+    const { stdout } = await run(
+      'git diff --name-only HEAD origin/main -- package-lock.json',
+    )
+    return stdout.trim().length > 0
+  },
+  async mergeMain() {
+    await run('git merge --ff-only origin/main')
+  },
+  async installDeps() {
+    // MUST install through the PINNED npm (scripts/npm-cmd), NEVER plain
+    // `npm install`: an ambient npm that drifted from CI's (e.g. npm 11 vs
+    // the packageManager pin) rewrites package-lock.json in a shape CI's
+    // `npm ci` rejects, breaking the NEXT PR's CI — the exact contamination
+    // usability/07 documents. Shell out so the `$(…)` substitution resolves
+    // the pin at run time; unquoted (like scripts/setup's `$npm_cmd install`)
+    // so a multi-word answer (`npx --yes corepack npm`) word-splits.
+    await run('$(./scripts/npm-cmd) install')
   },
   async runMigrations() {
     await run('npm run db:migrate')
