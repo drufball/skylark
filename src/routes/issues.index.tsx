@@ -6,6 +6,7 @@ import { Dock } from '@rigging/views/dock'
 import { IssueBoardView } from '@rigging/views/issue-board'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
 
 // The board route: a thin mount binding /issues to the board view and the issues
@@ -41,8 +42,14 @@ function BoardRoute() {
   }
 
   const onLogout = useLogout()
+  const behindOrigin = useBehindOrigin()
   return (
-    <Dock active="issues" Link={Link} onLogout={onLogout}>
+    <Dock
+      active="issues"
+      Link={Link}
+      onLogout={onLogout}
+      behindOrigin={behindOrigin}
+    >
       <IssueBoardView
         issues={issues}
         playbooks={playbooks.map((p) => ({

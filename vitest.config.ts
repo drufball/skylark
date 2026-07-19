@@ -12,6 +12,14 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}'],
+    // PGlite spins up a fresh WASM Postgres (+ migrations) in each DB test's
+    // setup hook. That's ~1-2s idle, but on a busy shared machine — several
+    // worktrees running their suites at once — CPU contention pushes it well
+    // past vitest's 5s/10s defaults, so honest tests flake on timeout alone.
+    // Generous ceilings absorb that contention while still catching a genuine
+    // hang.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     coverage: {
       provider: 'v8',
       // text for the terminal, lcov for diff-cover (the PR diff gate),
