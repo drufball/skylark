@@ -20,6 +20,7 @@ function issue(over: Partial<BoardIssue> = {}): BoardIssue {
     statusLineAt: null,
     awaitingBackground: false,
     sessionRunning: false,
+    batonHolder: null,
     updatedAt: new Date().toISOString(),
     ...over,
   }
@@ -141,6 +142,26 @@ describe('IssueBoardView', () => {
     expect(screen.getByText('3')).toBeTruthy()
     // A zero-comment issue shows no count badge.
     expect(screen.queryByText('0')).toBeNull()
+  })
+
+  it('surfaces the baton holder, distinguishing a human (waiting) from an agent', () => {
+    renderView({
+      issues: [
+        issue({
+          id: 'h',
+          title: 'awaiting the owner',
+          batonHolder: { handle: 'dru', isHuman: true },
+        }),
+        issue({
+          id: 'a',
+          title: 'agent on it',
+          batonHolder: { handle: 'builder', isHuman: false },
+        }),
+      ],
+    })
+    // A human holder reads as "waiting for input"; an agent holder is a bare @.
+    expect(screen.getByText('waiting on @dru')).toBeTruthy()
+    expect(screen.getByText('@builder')).toBeTruthy()
   })
 
   it('selects an issue on click', () => {

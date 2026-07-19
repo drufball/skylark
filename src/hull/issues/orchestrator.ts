@@ -20,6 +20,7 @@ import {
   listComments,
   listIssues,
   listIssueSessions,
+  setBatonHolder,
   setBuildContext,
   setStatusLine,
 } from './service'
@@ -495,6 +496,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         // seed/resume the turn with the latest thread — the build-feature
         // contract for the build playbook, the plain brief for anything else.
         const entry = await ensureEntrypoint(issue)
+        // The baton starts (and, on a resume, returns) with the entrypoint —
+        // the hand this transition seeds a turn for. This is the → building SET
+        // point, riding the same handling that fires that turn; the terminal
+        // clears live in transitionIssue, and a handoff moves it in
+        // requestHandoff.
+        await setBatonHolder(db, issueId, entry.entryUserId)
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
         const prompt = entry.build

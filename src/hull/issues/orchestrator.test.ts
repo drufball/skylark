@@ -402,6 +402,18 @@ describe('orchestrator → building (from open)', () => {
     expect(runtime.turns[0].text).toContain(`SKYLARK_ACTOR=${builderId}`)
   })
 
+  it('hands the baton to the entrypoint agent on → building', async () => {
+    const { deps } = makeDeps()
+    const orch = createOrchestrator(deps)
+    const issue = await createIssue(db, { title: 'Baton', authorId })
+
+    await drive(orch, issue.id, 'building')
+
+    // With no playbook seeded the entrypoint is the legacy builder — the hand
+    // this transition seeds a turn for, and so the baton holder.
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBe(builderId)
+  })
+
   it('is idempotent: a second → building reuses branch, worktree, and session', async () => {
     const { deps, git } = makeDeps()
     const orch = createOrchestrator(deps)
@@ -589,6 +601,9 @@ describe('orchestrator → done (agent merged)', () => {
     expect(git.migrations).toBe(1)
     expect(git.removed).toEqual([defined(built.worktreePath)])
     expect(runtime.disposed).toContain(await builderSessionId(issue.id))
+    // The baton the → building set is cleared on the terminal move.
+    expect(built.batonHolderId).toBe(builderId)
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBeNull()
   })
 
   it('leaves the worktree standing if the branch is not actually merged', async () => {

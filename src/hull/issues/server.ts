@@ -4,7 +4,7 @@ import { db } from '@hull/db/client'
 import { runningSessionIds } from '@hull/agent/service'
 import { listEventsSince, PUBLIC_AUDIENCE } from '@hull/events/service'
 import { currentActor } from '@hull/users/actor'
-import { handleOf } from '@hull/users/service'
+import { getUserById, handleOf } from '@hull/users/service'
 import {
   BUILD_PLAYBOOK_NAME,
   listPlaybooks,
@@ -28,6 +28,7 @@ import {
   validateCommentInput,
   validateOpenIssueInput,
   validateTransitionInput,
+  type BatonHolder,
   type IssueStatusChangedPayload,
   type IssueThread,
   type StatusChange,
@@ -44,7 +45,12 @@ import {
 // bus. That's deliberate: the same path serves an agent's CLI transition from a
 // separate process. These doors only ensure the subscription is live.
 
-export type { BoardIssue, IssueThread, ThreadEntry } from './service'
+export type {
+  BatonHolder,
+  BoardIssue,
+  IssueThread,
+  ThreadEntry,
+} from './service'
 
 /** Ensure the orchestrator is booted + subscribed in this server process. */
 async function bootOrchestrator(): Promise<void> {
@@ -71,6 +77,21 @@ async function issueSessionRunning(issueId: string): Promise<boolean> {
   return running.length > 0
 }
 
+/**
+ * Resolve the baton holder for display — a single users join, done in the door
+ * (not the pure shapers, which never read the users table). Null when no one
+ * holds it, or when the holder id points at a user that's gone. `isHuman` is
+ * the one distinction the night watch and the views care about.
+ */
+async function resolveBatonHolder(
+  holderId: string | null,
+): Promise<BatonHolder | null> {
+  if (!holderId) return null
+  const holder = await getUserById(db, holderId)
+  if (!holder) return null
+  return { handle: holder.handle, isHuman: holder.type === 'human' }
+}
+
 /** All issues as board cards, newest first. The board groups by status itself. */
 export const listBoard = createServerFn({ method: 'GET' }).handler(async () => {
   await bootOrchestrator()
@@ -84,6 +105,7 @@ export const listBoard = createServerFn({ method: 'GET' }).handler(async () => {
         issue.status === 'building'
           ? await issueSessionRunning(issue.id)
           : false,
+        await resolveBatonHolder(issue.batonHolderId),
       ),
     ),
   )
@@ -139,6 +161,7 @@ export const getThread = createServerFn({ method: 'GET' })
         issue.status === 'building'
           ? await issueSessionRunning(issue.id)
           : false,
+      batonHolder: await resolveBatonHolder(issue.batonHolderId),
     })
   })
 
