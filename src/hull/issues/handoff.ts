@@ -11,7 +11,7 @@ import { getUserByHandle, handleOf } from '@hull/users/service'
 import { issueSessions, type IssueRow } from './schema'
 import { issueTopic } from './topic'
 import { playbookFor } from './playbooks'
-import { resolveIssueRef } from './service'
+import { resolveIssueRef, setBatonHolder } from './service'
 
 /**
  * The baton: how one agent hands an issue's work to another. A handoff is a
@@ -196,6 +196,13 @@ export async function requestHandoff(
 
   const actorHandle = await handleOf(db, input.actorId)
   const brief = truncate(firstLine(message), 160)
+
+  // The baton moves to whoever the pass names — the target agent, or the issue
+  // OWNER on an owner-ping (the "waiting for input" case). This rides the same
+  // validated pass that emits the event below, so the explicit column and the
+  // handoff/owner_ping event never disagree; a forged bus event never reaches
+  // here, so it can never move the baton.
+  await setBatonHolder(db, issue.id, toUserId)
 
   if (toOwner) {
     const metadata: NotificationMetadata = {

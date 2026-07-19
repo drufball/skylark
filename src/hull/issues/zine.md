@@ -37,7 +37,8 @@ app-shell nav).
   (`open|building|done|closed`), `authorId` (→ users.id), `ownerId` (→ users.id
   — who answers for it, the creator unless set otherwise), `playbookId` (→
   playbooks.id; null = the `build` default), `visibility` (`public` for now —
-  room to grow), and the build context filled in on the first build:
+  room to grow), `batonHolderId` (→ users.id, nullable — whose turn it is right
+  now; see **The baton**), and the build context filled in on the first build:
   `branchName`, `worktreePath`, and `statusLine` (the latest agent progress).
   Issues carry no notion of where they were filed from — an agent that wants to
   report back on one finds the right conversation itself (see
@@ -73,7 +74,25 @@ app-shell nav).
   through [notifications](../notifications/zine.md) (an inbox row for a human,
   an agent wake for an agent) with no worktree turn. One baton per issue: a pass
   is refused while another agent's session on the issue is mid-turn (the caller
-  being mid-turn is expected — handing off is a turn's last action).
+  being mid-turn is expected — handing off is a turn's last action). On a
+  validated pass `requestHandoff` also moves `batonHolderId` (to the target
+  agent, or the OWNER on an owner-ping) on the same write that emits the event —
+  see **The baton**.
+- **The baton** (`batonHolderId` + `setBatonHolder`) — whose turn it is, as an
+  explicit column rather than something re-derived from running-hands checks and
+  handoff events. It moves at exactly the points the baton actually moves,
+  riding the SAME write that emits each event: to the playbook entrypoint agent
+  on → building (the orchestrator, which alone resolves the entrypoint), to the
+  target agent on an `issue.handoff` and to the issue OWNER on an
+  `issue.owner_ping` (`requestHandoff`), and cleared to null on → done / →
+  closed (inline in `transitionIssue`, so a terminal move can't miss it).
+  `assertTransition` stays the single state authority — the column only records
+  who holds the baton after a move, never decides legality. The load-bearing
+  distinction downstream is **human vs agent**: a HUMAN holder is the universal
+  "waiting for input" signal the night watch (#q9d9) reads to decide whether to
+  nudge; an agent holder means work is (or should be) in flight. The board card
+  and thread view surface it (handle + human/agent) via a single users join in
+  the door, shown as a modest `BatonChip` ("waiting on @dru" vs "@builder").
 - **The state machine** — `assertTransition(from, to)` in `service.ts`: the
   pure, exhaustively-tested heart. Legal moves are `open↔building`,
   `building→done`, `open|building→closed`; `done` and `closed` are terminal; a
@@ -243,6 +262,22 @@ their public functions, not their tables.
   finishing while the target's boots) accepted on the same grounds as
   `SKYLARK_ACTOR`'s honesty: the contract says don't touch files after handing
   off.
+- **The baton is an explicit column, moved on the writes that emit its events —
+  not re-derived.** Whose turn it is used to be inferred at read time from
+  running-hands checks plus the handoff event stream. `batonHolderId` makes it a
+  fact, set at the three points it moves (→ building: the entrypoint, in the
+  orchestrator, which alone resolves it; `issue.handoff`/`issue.owner_ping`: the
+  target/owner, in `requestHandoff`) and cleared on the terminal transitions
+  (inline in `transitionIssue`, so a done/closed move can't forget it). Each SET
+  rides the SAME durable write that emits the event, so the column and the log
+  can't drift; a forged bus event, which never passes through `requestHandoff`,
+  can never move the baton. This does NOT add a second state machine —
+  `assertTransition` stays the only place legality lives; the column just
+  records the holder after a move already made. The one distinction downstream
+  reads is human-vs-agent: a human holder is "waiting for input" (the night
+  watch, #q9d9, suppresses stall nudges on it), an agent holder is work in
+  flight. Backfill is deliberately skipped — a pre-column building issue starts
+  with a null holder, which the watch handles conservatively.
 - **The event consumer re-validates; the emitter's checks are courtesy.**
   `applyHandoff` re-checks the target is a crew **agent** (a forged or replayed
   event must never boot a session that acts as a human) and only honors an event
@@ -317,6 +352,16 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **#5vp3** — The baton is now an explicit column, not a re-derivation.
+  `issues.batonHolderId` (→ users.id, nullable) + `setBatonHolder`; set to the
+  playbook entrypoint on → building (orchestrator), to the target agent on
+  `issue.handoff` and to the issue OWNER on `issue.owner_ping`
+  (`requestHandoff`, on the same write that emits), and cleared on → done / →
+  closed (inline in `transitionIssue`). `assertTransition` stays the single
+  state authority. The board card + thread expose the holder (handle +
+  human/agent) via one users join in the door, rendered as a modest `BatonChip`.
+  This is the "waiting for input" signal the night watch (#q9d9) will read; no
+  history backfill — existing building issues start null.
 - **#f5io** — Session spawn is idempotent under concurrency, enforced by the
   database: `claimIssueSession` (insert `.onConflictDoNothing().returning()` on
   the `issue_sessions` composite PK) replaces the swallowed-conflict

@@ -22,6 +22,7 @@ import {
   resolveIssueRef,
   resolveStatusWord,
   setBuildContext,
+  setBatonHolder,
   claimIssueSession,
   setStatusLine,
   toBoardCard,
@@ -466,6 +467,49 @@ describe('transitionIssue', () => {
     expect(err?.from).toBe('open')
     expect(err?.to).toBe('done')
   })
+
+  it('clears the baton on → done (a terminal issue has no whose-turn)', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await setBatonHolder(db, issue.id, authorId)
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'done',
+      actorId: authorId,
+    })
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBeNull()
+  })
+
+  it('clears the baton on → closed', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    await setBatonHolder(db, issue.id, authorId)
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'closed',
+      actorId: authorId,
+    })
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBeNull()
+  })
+
+  it('leaves the baton untouched on a non-terminal move (→ open pause)', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await setBatonHolder(db, issue.id, authorId)
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'open',
+      actorId: authorId,
+    })
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBe(authorId)
+  })
 })
 
 describe('view-data shaping (pure)', () => {
@@ -481,6 +525,7 @@ describe('view-data shaping (pure)', () => {
       ownerId: 'u1',
       playbookId: null,
       visibility: 'public',
+      batonHolderId: null,
       branchName: 'add-widget-aa11',
       worktreePath: '/wt/add-widget-aa11',
       statusLine: 'on it',
@@ -507,6 +552,33 @@ describe('view-data shaping (pure)', () => {
   it('toBoardCard carries sessionRunning through when passed', () => {
     const card = toBoardCard(row(), 'drufball', 0, true)
     expect(card.sessionRunning).toBe(true)
+  })
+
+  it('toBoardCard defaults batonHolder to null and carries a passed holder', () => {
+    expect(toBoardCard(row(), 'drufball', 0).batonHolder).toBeNull()
+    const held = toBoardCard(row(), 'drufball', 0, false, {
+      handle: 'drufball',
+      isHuman: true,
+    })
+    expect(held.batonHolder).toEqual({ handle: 'drufball', isHuman: true })
+  })
+
+  it('assembleThread defaults batonHolder to null and carries a passed holder', () => {
+    const none = assembleThread({
+      issue: row(),
+      authorHandle: 'drufball',
+      comments: [],
+      statusChanges: [],
+    })
+    expect(none.batonHolder).toBeNull()
+    const held = assembleThread({
+      issue: row(),
+      authorHandle: 'drufball',
+      comments: [],
+      statusChanges: [],
+      batonHolder: { handle: 'builder', isHuman: false },
+    })
+    expect(held.batonHolder).toEqual({ handle: 'builder', isHuman: false })
   })
 
   it('assembleThread merges comments + status changes in id (chronological) order', () => {

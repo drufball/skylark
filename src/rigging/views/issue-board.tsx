@@ -4,6 +4,7 @@ import { MessageSquare, Plus } from 'lucide-react'
 import type { BoardIssue } from '@hull/issues/server'
 import { computeBuildActivity } from '@hull/issues/activity'
 import { cn } from '@rigging/lib/utils'
+import { BatonChip } from '@rigging/components/baton-chip'
 import { useNow } from '@rigging/lib/use-now'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
@@ -135,6 +136,7 @@ function IssueCard({
             {issue.commentCount}
           </span>
         )}
+        {issue.batonHolder && <BatonChip holder={issue.batonHolder} />}
       </div>
       {activity && (
         <p
