@@ -69,6 +69,28 @@ export interface FilesRepo {
    * branches as they were.
    */
   mergeStaging(): Promise<'merged' | 'conflict'>
+  /** Is there an `origin` remote to sync with? Without one, main is local-only. */
+  hasOrigin(): Promise<boolean>
+  /** Fetch origin's main, updating the remote-tracking ref the sync reads. */
+  fetchOrigin(): Promise<void>
+  /**
+   * How many commits local main carries that origin/main (as of the last
+   * fetch) does not — the leftovers of a push a previous sweep couldn't land.
+   * Local refs only, no network; 0 when origin was never fetched.
+   */
+  aheadOfOrigin(): Promise<number>
+  /**
+   * Bring local main up to date with the fetched origin/main: fast-forward
+   * when strictly behind; when local main has commits of its own, rebase them
+   * on top. Updates the working tree, so only call on a clean, main-checked-out
+   * repo. A conflict aborts the rebase and leaves main as it was.
+   */
+  syncWithOrigin(): Promise<'synced' | 'conflict'>
+  /**
+   * Push local main to origin — never forced. 'rejected' when origin moved
+   * since the fetch (the next sweep's sync handles the new divergence).
+   */
+  pushMain(): Promise<'pushed' | 'rejected'>
 }
 
 /** Run git in a repo, optionally feeding stdin; rejects with stderr on failure. */
@@ -99,8 +121,12 @@ function runGit(
 /** The commits the service itself makes are committed by the service. */
 const COMMITTER = { name: 'skylark-files', email: 'files@skylark.local' }
 
+/** The one remote the sweep syncs with — the convention, not a config knob. */
+const ORIGIN = 'origin'
+
 export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
   const { repoRoot, filesDir, mainBranch, stagingBranch } = config
+  const originMainRef = `refs/remotes/${ORIGIN}/${mainBranch}`
   const git = (
     args: string[],
     opts?: { input?: string; env?: Record<string, string> },
@@ -304,6 +330,63 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
       }
       await git(['branch', '-D', stagingBranch])
       return 'merged'
+    },
+
+    async hasOrigin() {
+      try {
+        await git(['remote', 'get-url', ORIGIN])
+        return true
+      } catch {
+        return false
+      }
+    },
+
+    async fetchOrigin() {
+      await git(['fetch', ORIGIN, mainBranch])
+    },
+
+    async aheadOfOrigin() {
+      try {
+        const out = await git([
+          'rev-list',
+          '--count',
+          `${originMainRef}..refs/heads/${mainBranch}`,
+        ])
+        return Number.parseInt(out.trim(), 10)
+      } catch {
+        // No origin/main ref yet — nothing a past sweep could have left behind.
+        return 0
+      }
+    },
+
+    async syncWithOrigin() {
+      await assertOwnRepo()
+      try {
+        // One move covers every shape: strictly behind fast-forwards, local-only
+        // commits replay on top, already-in-sync is a no-op.
+        await git(['rebase', originMainRef, mainBranch], {
+          env: {
+            GIT_COMMITTER_NAME: COMMITTER.name,
+            GIT_COMMITTER_EMAIL: COMMITTER.email,
+          },
+        })
+      } catch {
+        // Leave nothing mid-rebase; a failed abort means there was no rebase
+        // to abort (it failed before starting), which is already clean.
+        await git(['rebase', '--abort']).catch(() => undefined)
+        return 'conflict'
+      }
+      return 'synced'
+    },
+
+    async pushMain() {
+      await assertOwnRepo()
+      try {
+        await git(['push', ORIGIN, mainBranch])
+      } catch {
+        return 'rejected'
+      }
+      return 'pushed'
     },
   }
 }

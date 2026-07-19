@@ -64,13 +64,19 @@ export function shouldMergeStaging(input: {
   return input.now - input.stagedAt >= FILES_IDLE_MS
 }
 
-/** What one sweep did — 'postponed' retries next tick, 'conflict' needs a human. */
+/**
+ * What one sweep did — 'postponed' and 'push-rejected' retry next tick,
+ * 'conflict' needs a human. 'pushed' is a sweep that had no staging to merge
+ * but landed a push a previous sweep couldn't.
+ */
 export type SweepOutcome =
   | 'no-staging'
   | 'waiting'
   | 'postponed'
   | 'merged'
+  | 'pushed'
   | 'conflict'
+  | 'push-rejected'
 
 export interface FilesServiceDeps {
   db: Database
@@ -106,6 +112,23 @@ export function createFilesService({
     const next = chain.then(fn, fn)
     chain = next.catch(() => undefined)
     return next
+  }
+
+  /**
+   * Nothing staged, so the only work a sweep could owe is a push a previous
+   * sweep couldn't land (origin moved between its fetch and its push): local
+   * main still carries commits origin lacks. Sync with the moved origin and
+   * push, under the same clean-main guard as a merge. When nothing is ahead —
+   * the steady state — this touches no git at all.
+   */
+  async function retryPendingPush(): Promise<SweepOutcome> {
+    if (!(await repo.hasOrigin())) return 'no-staging'
+    if ((await repo.aheadOfOrigin()) === 0) return 'no-staging'
+    if ((await repo.mergeReadiness()) !== 'ready') return 'postponed'
+    await repo.fetchOrigin()
+    if ((await repo.syncWithOrigin()) === 'conflict') return 'conflict'
+    if ((await repo.pushMain()) === 'rejected') return 'push-rejected'
+    return 'pushed'
   }
 
   async function change(
@@ -154,21 +177,30 @@ export function createFilesService({
 
     sweep(now) {
       return locked(async (): Promise<SweepOutcome> => {
-        if (!(await repo.stagingExists())) return 'no-staging'
+        if (!(await repo.stagingExists())) return retryPendingPush()
         const stagedAt = await repo.stagedAt()
         if (!shouldMergeStaging({ stagedAt, now })) return 'waiting'
         if ((await repo.mergeReadiness()) !== 'ready') return 'postponed'
-        const outcome = await repo.mergeStaging()
-        if (outcome === 'merged') {
-          await emitEvent(db, {
-            type: FILES_MERGED,
-            source: 'files',
-            topic: FILES_MERGE_TOPIC,
-            audience: PUBLIC_AUDIENCE,
-            payload: {},
-          })
+        // Sync BEFORE merging, so the docs land on a main that already carries
+        // origin's latest — and the push afterwards fast-forwards.
+        const origin = await repo.hasOrigin()
+        if (origin) {
+          await repo.fetchOrigin()
+          if ((await repo.syncWithOrigin()) === 'conflict') return 'conflict'
         }
-        return outcome
+        const outcome = await repo.mergeStaging()
+        if (outcome === 'conflict') return 'conflict'
+        await emitEvent(db, {
+          type: FILES_MERGED,
+          source: 'files',
+          topic: FILES_MERGE_TOPIC,
+          audience: PUBLIC_AUDIENCE,
+          payload: {},
+        })
+        if (origin && (await repo.pushMain()) === 'rejected') {
+          return 'push-rejected'
+        }
+        return 'merged'
       })
     },
   }
