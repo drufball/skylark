@@ -19,7 +19,7 @@ import {
 import {
   createIssue,
   setBuildContext,
-  recordIssueSession,
+  claimIssueSession,
   transitionIssue,
 } from './service'
 import { upsertPlaybook } from './playbooks'
@@ -197,7 +197,7 @@ describe('requestHandoff — agent to agent', () => {
       model: 'claude-sonnet-5',
       agentUserId: babysitter.id,
     })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: babysitter.id,
       sessionId: session.id,
@@ -220,7 +220,7 @@ describe('requestHandoff — agent to agent', () => {
       model: 'claude-sonnet-5',
       agentUserId: builder.id,
     })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: builder.id,
       sessionId: session.id,

@@ -98,15 +98,19 @@ export async function resolveSessionRef(
  * List sessions, newest activity first. Filters compose:
  * - `running`: only sessions with a turn in flight.
  * - `since`: only sessions whose last message is at or after this time.
+ * - `cwdUnder`: only sessions whose cwd starts with this path prefix (how the
+ *   issues orchestrator finds worktree sessions without reading this table).
  */
 export async function listSessions(
   db: Database,
-  filters: { running?: true; since?: Date } = {},
+  filters: { running?: true; since?: Date; cwdUnder?: string } = {},
 ): Promise<AgentSessionRow[]> {
   const conditions = []
   if (filters.running) conditions.push(eq(agentSessions.status, 'running'))
   if (filters.since)
     conditions.push(gte(agentSessions.lastMessageAt, filters.since))
+  if (filters.cwdUnder)
+    conditions.push(like(agentSessions.cwd, `${filters.cwdUnder}%`))
 
   return db
     .select()

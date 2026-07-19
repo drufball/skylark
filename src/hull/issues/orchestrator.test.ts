@@ -39,7 +39,7 @@ import {
   listComments,
   listIssueSessions,
   setBuildContext,
-  recordIssueSession,
+  claimIssueSession,
   transitionIssue,
 } from './service'
 import { ISSUE_HANDOFF, ISSUE_OWNER_PING, requestHandoff } from './handoff'
@@ -452,6 +452,45 @@ describe('orchestrator → building (from open)', () => {
     expect(git.added).toHaveLength(1)
     const sessions = await listSessions(db)
     expect(sessions).toHaveLength(1)
+  })
+
+  it('two orchestrators racing the same → building converge on ONE session (cross-process race)', async () => {
+    // The real incident shape (#f5io): two processes (a reload window, a
+    // reconcile racing a live event in another process) both handle → building
+    // for the same issue. The in-process per-issue chain can't serialize across
+    // processes — two separate orchestrator instances on one database model it.
+    // Without database arbitration both miss the link check, both create a
+    // session, and the loser's orphan twin gets fired a turn in the SAME
+    // worktree.
+    const a = makeDeps()
+    const b = makeDeps()
+    const orchA = createOrchestrator(a.deps)
+    const orchB = createOrchestrator(b.deps)
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'rc01' })
+
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await Promise.all([
+      orchA.onStatusChanged(issue.id, 'building'),
+      orchB.onStatusChanged(issue.id, 'building'),
+    ])
+
+    // Exactly one live session per (issue, agent) — enforced by the database,
+    // not by in-process discipline. The loser's session row must not survive.
+    const sessions = await listSessions(db)
+    expect(sessions).toHaveLength(1)
+
+    // Every fired turn landed on the ONE linked session — never on an orphan.
+    const linked = await builderSessionId(issue.id)
+    expect(linked).toBe(sessions[0].id)
+    const fired = [...a.runtime.turns, ...b.runtime.turns].map(
+      (t) => t.sessionId,
+    )
+    expect(fired.length).toBeGreaterThan(0)
+    for (const id of fired) expect(id).toBe(linked)
   })
 
   it('does not regenerate the slug once a branch exists (resume keeps the branch)', async () => {
@@ -981,7 +1020,7 @@ describe('orchestrator startup reconciliation', () => {
       branchName: 'x-kk11',
       worktreePath: '/wt/x-kk11',
     })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: builderId,
       sessionId,
@@ -1034,7 +1073,7 @@ describe('orchestrator startup reconciliation', () => {
       cwd: '/wt/x-kk12',
       agentUserId: reviewer.id,
     })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: reviewer.id,
       sessionId: stranded,
@@ -1045,6 +1084,114 @@ describe('orchestrator startup reconciliation', () => {
     await orch.reconcile()
 
     expect(runtime.cancelled).toContain(stranded)
+  })
+
+  it('cancels orphan worktree sessions no link points at, and never resumes them', async () => {
+    const { deps, runtime } = makeDeps()
+    // Pre-fix duplicate-spawn incidents (#f5io) left orphan twins: agent
+    // sessions with an issue-worktree cwd that no issue_sessions row points
+    // at. Reconcile follows links, so it must never resume one — but an
+    // orphan left stuck on 'running' by a crash sits "mid-turn" forever;
+    // sweep it back to idle. Its row stays: it is a durable transcript.
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'kk13' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await setBuildContext(db, issue.id, {
+      branchName: 'x-kk13',
+      worktreePath: '/wt/x-kk13',
+    })
+    const linked = uuidv7()
+    await createSession(db, {
+      id: linked,
+      model: 'claude-sonnet-4-5',
+      title: issue.title,
+      cwd: '/wt/x-kk13',
+      agentUserId: builderId,
+    })
+    await claimIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: builderId,
+      sessionId: linked,
+    })
+    // The orphan twin: same worktree, no link, stranded on 'running'.
+    const orphan = uuidv7()
+    await createSession(db, {
+      id: orphan,
+      model: 'claude-sonnet-4-5',
+      title: issue.title,
+      cwd: '/wt/x-kk13',
+      agentUserId: builderId,
+    })
+    await setStatus(db, orphan, 'running')
+    // An idle orphan is inert — nothing to sweep.
+    const idleOrphan = uuidv7()
+    await createSession(db, {
+      id: idleOrphan,
+      model: 'claude-sonnet-4-5',
+      title: issue.title,
+      cwd: '/wt/x-kk13',
+      agentUserId: builderId,
+    })
+    // A running session OUTSIDE the worktree root (a chat session) is not
+    // this sweep's business.
+    const chatSession = uuidv7()
+    await createSession(db, {
+      id: chatSession,
+      model: 'claude-sonnet-4-5',
+      title: 'a chat',
+      agentUserId: builderId,
+    })
+    await setStatus(db, chatSession, 'running')
+
+    const orch = createOrchestrator(deps)
+    await orch.reconcile()
+
+    expect(runtime.cancelled).toContain(orphan)
+    expect(runtime.cancelled).not.toContain(idleOrphan)
+    expect(runtime.cancelled).not.toContain(chatSession)
+    // Resumed turns went only to the linked session — never to an orphan.
+    for (const turn of runtime.turns) {
+      expect(turn.sessionId).toBe(linked)
+    }
+    // Data safety: every row is still there — cancelled, not deleted.
+    expect(await getSession(db, orphan)).toBeDefined()
+    expect(defined(await getSession(db, idleOrphan)).status).toBe('idle')
+  })
+
+  it('an orphan whose cancel fails is logged and does not sink the sweep', async () => {
+    const { deps, runtime } = makeDeps()
+    const errorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    const doomed = uuidv7()
+    const sweepable = uuidv7()
+    for (const id of [doomed, sweepable]) {
+      await createSession(db, {
+        id,
+        model: 'claude-sonnet-4-5',
+        title: 'orphan',
+        cwd: '/wt/x-kk14',
+        agentUserId: builderId,
+      })
+      await setStatus(db, id, 'running')
+    }
+    const realCancel = runtime.cancel.bind(runtime)
+    runtime.cancel = (sessionId: string) =>
+      sessionId === doomed
+        ? Promise.reject(new Error('boom'))
+        : realCancel(sessionId)
+
+    const orch = createOrchestrator(deps)
+    await orch.reconcile()
+
+    expect(runtime.cancelled).toContain(sweepable)
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('cancelling orphan session'),
+    )
+    errorSpy.mockRestore()
   })
 })
 

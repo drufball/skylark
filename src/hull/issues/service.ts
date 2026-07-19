@@ -415,16 +415,32 @@ export async function setBuildContext(
 // --- Issue sessions: which agents have a hand on an issue ---------------------
 
 /**
- * Record an agent's session on an issue. One session per (issue, agent), for
- * the issue's whole life: a duplicate set (a resume, a replayed event racing a
- * live one) is a no-op that keeps the first session — the transcript an agent
- * already has is worth more than a fresh one.
+ * Claim the (issue, agent) slot for a session — the link row's composite PK is
+ * the arbiter of "one live session per (issue, agent)", enforced by the
+ * database, not by in-process discipline. Returns the sessionId that actually
+ * holds the slot: the caller's own on a win, the incumbent's when another path
+ * (a concurrent event, another process, a resume) got there first. A losing
+ * caller must use the returned winner and never fire its own candidate — the
+ * transcript an agent already has is worth more than a fresh one.
  */
-export async function recordIssueSession(
+export async function claimIssueSession(
   db: Database,
   input: { issueId: string; agentUserId: string; sessionId: string },
-): Promise<void> {
-  await db.insert(issueSessions).values(input).onConflictDoNothing()
+): Promise<string> {
+  const won = (
+    await db
+      .insert(issueSessions)
+      .values(input)
+      .onConflictDoNothing()
+      .returning({ sessionId: issueSessions.sessionId })
+  ).at(0)
+  if (won) return won.sessionId
+  const incumbent = await getIssueSession(db, input.issueId, input.agentUserId)
+  if (!incumbent)
+    throw new Error(
+      `issue session claim conflicted but no winner row exists (issue ${input.issueId})`,
+    )
+  return incumbent.sessionId
 }
 
 /** The session an agent holds on an issue, if it has one. */
@@ -454,6 +470,18 @@ export async function listIssueSessions(
     .select()
     .from(issueSessions)
     .where(eq(issueSessions.issueId, issueId))
+}
+
+/**
+ * Every session id any issue link points at — the reconcile sweep's "these
+ * are legitimate" set. A worktree session NOT in here is an orphan (a
+ * pre-arbitration duplicate spawn) and must never be resumed.
+ */
+export async function linkedSessionIds(db: Database): Promise<string[]> {
+  const rows = await db
+    .select({ sessionId: issueSessions.sessionId })
+    .from(issueSessions)
+  return rows.map((r) => r.sessionId)
 }
 
 /**
