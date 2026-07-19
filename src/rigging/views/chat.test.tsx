@@ -6,6 +6,7 @@ import {
   ChatView,
   type ChatViewProps,
   chatName,
+  scheduleSummary,
   workingFromMembers,
 } from './chat'
 import { classTokensOf } from './test-support'
@@ -267,5 +268,135 @@ describe('ChatView', () => {
     })
     expect(screen.getByText('@tilde')).toBeTruthy()
     expect(screen.queryByLabelText(/open chats/i)).toBeNull()
+  })
+
+  it('shows no Schedules affordance without the schedule callbacks', () => {
+    renderView({ activeId: 'c1' })
+    expect(screen.queryByLabelText('Schedules')).toBeNull()
+  })
+
+  it('toggles the schedules panel and creates a recurring schedule', () => {
+    const onCreateSchedule = vi.fn()
+    renderView({
+      activeId: 'c1',
+      schedules: [],
+      onCreateSchedule,
+      onToggleSchedule: vi.fn(),
+      onDeleteSchedule: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Schedules'))
+    fireEvent.change(screen.getByPlaceholderText('Message to schedule…'), {
+      target: { value: 'stand up' },
+    })
+    fireEvent.change(screen.getByLabelText('Schedule mode'), {
+      target: { value: 'repeat' },
+    })
+    fireEvent.change(screen.getByLabelText('Interval minutes'), {
+      target: { value: '15' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /add/i }))
+    expect(onCreateSchedule).toHaveBeenCalledWith({
+      body: 'stand up',
+      intervalMinutes: 15,
+    })
+  })
+
+  it('creates a one-shot schedule from a fire time', () => {
+    const onCreateSchedule = vi.fn()
+    renderView({
+      activeId: 'c1',
+      schedules: [],
+      onCreateSchedule,
+      onToggleSchedule: vi.fn(),
+      onDeleteSchedule: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Schedules'))
+    fireEvent.change(screen.getByPlaceholderText('Message to schedule…'), {
+      target: { value: 'launch' },
+    })
+    // Default mode is 'once'; give it a fire time and add.
+    fireEvent.change(screen.getByLabelText('Fire time'), {
+      target: { value: '2026-07-20T09:00' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /add/i }))
+    expect(onCreateSchedule).toHaveBeenCalledTimes(1)
+    const arg = onCreateSchedule.mock.calls[0][0] as {
+      body: string
+      fireAt?: string
+      intervalMinutes?: number
+    }
+    expect(arg.body).toBe('launch')
+    expect(arg.intervalMinutes).toBeUndefined()
+    expect(new Date(arg.fireAt ?? '').getMinutes()).toBe(0)
+  })
+
+  it('deletes a schedule from the panel', () => {
+    const onDeleteSchedule = vi.fn()
+    renderView({
+      activeId: 'c1',
+      schedules: [
+        {
+          id: 's1',
+          authorHandle: 'dru',
+          body: 'ping',
+          enabled: true,
+          intervalMinutes: 30,
+          fireAt: null,
+          nextFireAt: '2026-07-18T13:00:00.000Z',
+        },
+      ],
+      onCreateSchedule: vi.fn(),
+      onToggleSchedule: vi.fn(),
+      onDeleteSchedule,
+    })
+    fireEvent.click(screen.getByLabelText('Schedules'))
+    fireEvent.click(screen.getByLabelText('Delete schedule s1'))
+    expect(onDeleteSchedule).toHaveBeenCalledWith('s1')
+  })
+
+  it('toggles a schedule on/off from the panel', () => {
+    const onToggleSchedule = vi.fn()
+    renderView({
+      activeId: 'c1',
+      schedules: [
+        {
+          id: 's1',
+          authorHandle: 'dru',
+          body: 'ping',
+          enabled: true,
+          intervalMinutes: 30,
+          fireAt: null,
+          nextFireAt: '2026-07-18T13:00:00.000Z',
+        },
+      ],
+      onCreateSchedule: vi.fn(),
+      onToggleSchedule,
+      onDeleteSchedule: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Schedules'))
+    fireEvent.click(screen.getByLabelText('Disable schedule s1'))
+    expect(onToggleSchedule).toHaveBeenCalledWith('s1', false)
+  })
+})
+
+describe('scheduleSummary', () => {
+  it('summarizes a recurring schedule with its cadence', () => {
+    expect(
+      scheduleSummary({
+        intervalMinutes: 30,
+        fireAt: null,
+        nextFireAt: '2026-07-18T13:00:00.000Z',
+      }),
+    ).toContain('every 30 min')
+  })
+
+  it('summarizes a one-shot schedule', () => {
+    expect(
+      scheduleSummary({
+        intervalMinutes: null,
+        fireAt: '2026-07-18T13:00:00.000Z',
+        nextFireAt: null,
+      }),
+    ).toContain('once')
   })
 })
