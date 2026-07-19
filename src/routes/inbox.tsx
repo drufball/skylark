@@ -6,6 +6,7 @@ import { Dock } from '@rigging/views/dock'
 import { InboxView } from '@rigging/views/inbox'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
 
 // The inbox route: a thin mount binding /inbox to the notifications service.
@@ -30,8 +31,14 @@ function InboxRoute() {
   }
 
   const onLogout = useLogout()
+  const behindOrigin = useBehindOrigin()
   return (
-    <Dock active="inbox" Link={Link} onLogout={onLogout}>
+    <Dock
+      active="inbox"
+      Link={Link}
+      onLogout={onLogout}
+      behindOrigin={behindOrigin}
+    >
       <InboxView
         entries={items}
         unread={unread}

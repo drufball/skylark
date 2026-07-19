@@ -31,6 +31,7 @@ import { Dock } from '@rigging/views/dock'
 import { cn } from '@rigging/lib/utils'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
 
 // The Agents surface: the dedicated agent-management view. Three sub-tabs —
@@ -196,8 +197,14 @@ function AgentsRoute() {
   }))
 
   const onLogout = useLogout()
+  const behindOrigin = useBehindOrigin()
   return (
-    <Dock active="agents" Link={Link} onLogout={onLogout}>
+    <Dock
+      active="agents"
+      Link={Link}
+      onLogout={onLogout}
+      behindOrigin={behindOrigin}
+    >
       <div className="flex h-full flex-col">
         <TabBar
           tab={tab}
