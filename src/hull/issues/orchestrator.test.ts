@@ -101,12 +101,17 @@ class FakeRuntime {
   turns: { sessionId: string; text: string }[] = []
   cancelled: string[] = []
   disposed: string[] = []
+  jobSweeps = 0
+  /** Every runtime call in arrival order — for reconcile ordering assertions. */
+  order: string[] = []
   /** Optional hook to drive onEvent during a turn (status-line tests). */
   onTurn?: (
     sessionId: string,
     text: string,
     onEvent?: (e: AgentSessionEvent) => void,
   ) => void
+  /** Optional override for what the job sweep does (failure tests). */
+  onJobSweep?: () => Promise<void>
 
   runTurn(
     sessionId: string,
@@ -114,15 +119,22 @@ class FakeRuntime {
     onEvent?: (e: AgentSessionEvent) => void,
   ): Promise<TurnResult> {
     this.turns.push({ sessionId, text })
+    this.order.push(`turn:${sessionId}`)
     this.onTurn?.(sessionId, text, onEvent)
     return Promise.resolve({ queued: false, messages: [] })
   }
   cancel(sessionId: string): Promise<void> {
     this.cancelled.push(sessionId)
+    this.order.push(`cancel:${sessionId}`)
     return Promise.resolve()
   }
   dispose(sessionId: string): void {
     this.disposed.push(sessionId)
+  }
+  reconcileJobs(): Promise<void> {
+    this.jobSweeps++
+    this.order.push('jobs')
+    return this.onJobSweep?.() ?? Promise.resolve()
   }
 }
 
@@ -1192,6 +1204,84 @@ describe('orchestrator startup reconciliation', () => {
       expect.stringContaining('cancelling orphan session'),
     )
     errorSpy.mockRestore()
+  })
+
+  it('sweeps lost background jobs LAST — after stranded cancels and re-seeded turns', async () => {
+    // The ordering is the decision under test (#69iz): reconcileJobs clears
+    // each durable row and resumes its session with "job lost". Run BEFORE
+    // the issue sweep, a job-lost turn could mark its session `running` and
+    // the sweep's cancel would abort it mid-message; run AFTER, the cancels
+    // are done and a job-lost resume landing on a streaming re-seeded turn
+    // just queues as a followUp on the same runtime.
+    const { deps, runtime } = makeDeps()
+    const issue = await createIssue(db, { title: 'X', authorId, nano: 'kk15' })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    const stranded = uuidv7()
+    await createSession(db, {
+      id: stranded,
+      model: 'claude-sonnet-4-5',
+      cwd: '/wt/x-kk15',
+      agentUserId: builderId,
+    })
+    await claimIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: builderId,
+      sessionId: stranded,
+    })
+    await setStatus(db, stranded, 'running')
+
+    const orch = createOrchestrator(deps)
+    await orch.reconcile()
+
+    // Exactly one sweep, strictly after everything the issue sweep did.
+    expect(runtime.jobSweeps).toBe(1)
+    expect(runtime.order).toContain(`cancel:${stranded}`)
+    expect(runtime.order.at(-1)).toBe('jobs')
+  })
+
+  it('still sweeps lost background jobs when the issue sweep itself fails', async () => {
+    // listIssues blowing up (db asleep at boot) must not strand the job
+    // sweep — a session that lost its background job would otherwise wait
+    // forever for a message that never comes.
+    const errSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    try {
+      const broken = new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('db down')
+          },
+        },
+      ) as unknown as Database
+      const { deps, runtime } = makeDeps({ db: broken })
+      const orch = createOrchestrator(deps)
+      await expect(orch.reconcile()).resolves.toBeUndefined()
+      expect(runtime.jobSweeps).toBe(1)
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('db down'))
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('a failing job sweep is logged, never thrown — boot must not sink', async () => {
+    const errSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+    try {
+      const { deps, runtime } = makeDeps()
+      runtime.onJobSweep = () => Promise.reject(new Error('sweep boom'))
+      const orch = createOrchestrator(deps)
+      await expect(orch.reconcile()).resolves.toBeUndefined()
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('sweep boom'))
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 })
 

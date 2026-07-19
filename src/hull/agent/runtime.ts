@@ -241,6 +241,18 @@ interface Entry {
    * of each turn; returned at the end.
    */
   currentTurnMessages: AgentMessage[]
+  /**
+   * Set synchronously the instant a `runTurn` commits to STARTING a fresh turn,
+   * and resolved the instant that turn's `prompt()` has hit the wire (the
+   * session is streaming). It closes the gap between the `isStreaming` check
+   * and `prompt()`: a second `runTurn` sharing a freshly-booted entry (the
+   * boot-time issue reconcile's fire-and-forget turn and the job sweep resuming
+   * the SAME session, #69iz) would otherwise ALSO read `isStreaming === false`
+   * across that gap and prompt the one live session twice — double-driving the
+   * transcript. With the gate, the loser waits for the prompt to go live, then
+   * queues as a `followUp`. Undefined whenever no turn is mid-start.
+   */
+  startGate?: Promise<void>
 }
 
 /**
@@ -292,6 +304,8 @@ export function createAgentRuntime(deps: {
   })
   const emit: AgentEmitter = deps.emit ?? ((event) => emitEvent(db, event))
   const registry = new Map<string, Entry>()
+  /** In-flight boots, keyed by session — ensureEntry's single-flight guard. */
+  const booting = new Map<string, Promise<Entry>>()
 
   /**
    * Announce something on the ship's log, scoped to the session. Emission is
@@ -388,6 +402,22 @@ export function createAgentRuntime(deps: {
     const existing = registry.get(sessionId)
     if (existing) return existing
 
+    // Single-flight per session: two turns racing a COLD session (the boot-time
+    // job sweep resuming a session the issues reconcile just re-seeded, or two
+    // rapid door sends) must share ONE boot. A bare check-then-act would let
+    // each racer boot its own live session — the second clobbering the first in
+    // the registry and the conversation getting driven twice. The loser awaits
+    // the winner's boot and then behaves like any mid-turn arrival (runTurn
+    // queues a followUp onto a streaming turn). A FAILED boot is evicted so the
+    // next turn retries from scratch instead of awaiting a dead promise.
+    const inFlight = booting.get(sessionId)
+    if (inFlight) return inFlight
+    const boot = bootEntry(sessionId).finally(() => booting.delete(sessionId))
+    booting.set(sessionId, boot)
+    return boot
+  }
+
+  async function bootEntry(sessionId: string): Promise<Entry> {
     const row = await getSession(db, sessionId)
     if (!row) throw new Error(`No such session: ${sessionId}`)
 
@@ -478,20 +508,40 @@ export function createAgentRuntime(deps: {
     const unsub = onEvent ? entry.session.subscribe(onEvent) : undefined
 
     try {
+      // Another caller sharing this entry has committed to a turn but its
+      // prompt() hasn't gone live yet (the cold-boot race, #69iz): wait for
+      // that prompt to start so the isStreaming check below is decisive, then
+      // fall into the followUp path instead of racing a second prompt().
+      if (entry.startGate) await entry.startGate
       if (entry.session.isStreaming) {
         await entry.session.followUp(text)
         return { queued: true }
       }
+      // Commit to a fresh turn. Arm the start-gate SYNCHRONOUSLY, before the
+      // first await, so a concurrent runTurn on this same entry observes it
+      // above and queues rather than prompting in parallel.
+      let openGate!: () => void
+      entry.startGate = new Promise<void>((resolve) => (openGate = resolve))
       // Reset the accumulator for this turn.
       entry.currentTurnMessages = []
-      await announceStatus(sessionId, 'running')
       try {
-        await entry.session.prompt(text)
+        await announceStatus(sessionId, 'running')
+        const streaming = entry.session.prompt(text)
+        // prompt() has hit the wire — the session is streaming. Release the
+        // gate so a waiting caller takes the followUp path above.
+        entry.startGate = undefined
+        openGate()
+        await streaming
         await entry.persistChain
         await announceStatus(sessionId, 'idle')
         // Return a copy so callers can't mutate the runtime's internal state.
         return { queued: false, messages: [...entry.currentTurnMessages] }
       } catch (err) {
+        // Open the gate even on failure, so a caller waiting on it doesn't hang
+        // (it will find the session not streaming — or disposed — and log/act
+        // accordingly rather than block forever).
+        entry.startGate = undefined
+        openGate()
         // A turn (or a flush on its persistChain) failed. Drop the live entry:
         // its persistChain may now be permanently rejected, and reusing it would
         // wedge the session forever in a long-lived host (the next runTurn would
@@ -539,9 +589,12 @@ export function createAgentRuntime(deps: {
   /**
    * Sweep every background job left outstanding by a PRIOR process (issue
    * #v6ft): a server reload wipes `jobs`'s in-process registry clean, but a
-   * durable row survives in `background_jobs` for exactly this reason. Call
-   * once at boot, before anything else touches the runtime -- same posture as
-   * the issues/chat orchestrators' own startup `reconcile()`.
+   * durable row survives in `background_jobs` for exactly this reason. Called
+   * once per boot by the issues orchestrator, at the TAIL of its own
+   * `reconcile()` (#69iz) — after its stranded-'running' cancels, so a
+   * job-lost resume can't be swept back to idle mid-message, and on the same
+   * runtime instance, so a resume hitting a session whose re-seeded turn is
+   * streaming queues as a followUp instead of double-driving it.
    */
   function reconcileJobs(): Promise<void> {
     // Awaited bridge (unlike resumeSession's fire-and-forget): boot
