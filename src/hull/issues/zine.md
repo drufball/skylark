@@ -151,17 +151,27 @@ row + a notify; the in-process call that started the build is long gone. The
 orchestrator hears the agent because it subscribes to the log, the same way it
 hears the browser. This is the bus earning its keep.
 
-**Idempotent side-effects, serialized per issue.** A worktree or session may
-already exist — a duplicate event, a resume from `open`, a reconcile racing a
-live bus note. `ensureBuild` checks-then-acts: it generates the branch only when
-`branchName` is unset, creates the worktree only when absent, and reuses the
-existing session. But check-then-act is a race if two events for the same issue
-run concurrently, so `onStatusChanged` is **serialized per issue id** (a
-per-issue promise chain); different issues still run in parallel. The branch +
-worktree are persisted the moment the worktree exists on disk — _before_ the
-session is created — so a DB failure mid-build can't strand a worktree with no
-branch recorded (which would re-slug and leak a second one). `teardown` removes
-only what's there.
+**Idempotent side-effects, serialized per issue — and session spawn arbitrated
+by the database.** A worktree or session may already exist — a duplicate event,
+a resume from `open`, a reconcile racing a live bus note. `ensureBuild`
+checks-then-acts: it generates the branch only when `branchName` is unset,
+creates the worktree only when absent, and reuses the existing session. But
+check-then-act is a race if two events for the same issue run concurrently, so
+`onStatusChanged` is **serialized per issue id** (a per-issue promise chain);
+different issues still run in parallel. The chain only guards ONE process,
+though — a reload window or a second process re-raced it and spawned twin
+sessions into the same worktree (#f5io) — so session spawn does not trust the
+chain: `ensureAgentSession` creates the session row and claims the
+`issue_sessions` link **in one transaction**, and the link's composite PK
+`(issueId, agentUserId)` is the arbiter. Losing the claim rolls the candidate
+session back (never durable, never fired) and adopts the winner's session.
+`reconcile` also sweeps orphans this race left before the fix: a worktree-`cwd`
+session no link points at is never resumed (resume only follows links) and, if
+stuck `running`, is cancelled — never deleted; session rows are durable
+transcripts. The branch + worktree are persisted the moment the worktree exists
+on disk — _before_ the session is created — so a DB failure mid-build can't
+strand a worktree with no branch recorded (which would re-slug and leak a second
+one). `teardown` removes only what's there.
 
 **`.worktreeinclude`.** `git worktree add` does **not** carry gitignored files,
 so a fresh worktree has no `.env` and can't reach Postgres. The orchestrator
@@ -307,6 +317,14 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **#f5io** — Session spawn is idempotent under concurrency, enforced by the
+  database: `claimIssueSession` (insert `.onConflictDoNothing().returning()` on
+  the `issue_sessions` composite PK) replaces the swallowed-conflict
+  `recordIssueSession`; `ensureAgentSession` wraps create-session + claim in one
+  transaction and adopts the winner on a lost claim, so a concurrent spawner can
+  never fire a turn on an orphan twin. `reconcile` gained an orphan sweep:
+  unlinked worktree sessions left by pre-fix duplicate spawns are cancelled if
+  `running` (clearing their background jobs too), never resumed, never deleted.
 - **Playbooks carry optional per-member instructions, reusable across every
   issue that picks the strategy.** `playbooks.memberInstructions` is a
   user-id-keyed map of role briefs; `instructionsFor` resolves one, and

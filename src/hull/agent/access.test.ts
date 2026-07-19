@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '@hull/db/client'
 import { asActor, freshDb } from '@hull/db/test-db'
 import { createChat, setMemberSession } from '@hull/chat/service'
-import { createIssue, recordIssueSession } from '@hull/issues/service'
+import { createIssue, claimIssueSession } from '@hull/issues/service'
 import { createUser } from '@hull/users/service'
 
 import {
@@ -59,7 +59,7 @@ describe('agent session access (RLS)', () => {
     // An issue's agent session → public (link it via issue_sessions).
     await createSession(db, { id: sIssue, model: 'm' })
     const issue = await createIssue(db, { title: 'build', authorId: alice })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: alice,
       sessionId: sIssue,
@@ -117,7 +117,7 @@ describe('agent session access (RLS)', () => {
     const issue = await createIssue(db, { title: 'plant', authorId: bob })
     await expect(
       asActor(db, bob, (tx) =>
-        recordIssueSession(tx, {
+        claimIssueSession(tx, {
           issueId: issue.id,
           agentUserId: bob,
           sessionId: sChat,
