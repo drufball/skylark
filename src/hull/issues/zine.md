@@ -273,6 +273,32 @@ their public functions, not their tables.
   If the baton was with a NON-entrypoint agent when the server died, that hand
   stays paused until the next handoff or a human nudge — the honest gap that
   remains.
+- **Reconcile ALSO sweeps lost background jobs — last, on purpose (#69iz).** The
+  runtime's `reconcileJobs` (hull/agent, #v6ft) clears every stranded
+  `background_jobs` row and resumes its session with a "job lost, re-run it"
+  message. It's the LAST thing this orchestrator's `reconcile` does, and it's
+  wired here — not in `boot.ts` as a standalone call — for two reasons. Order:
+  it must run AFTER the stranded-`running` cancels, or a job-lost resume could
+  mark its session `running` and then be swept back to idle mid-message, after
+  the row was already claimed — silencing the one message that session was owed.
+  Instance: it must run on the SAME runtime this orchestrator drives, so a
+  job-lost resume landing on a session whose re-seeded entrypoint turn is
+  already streaming queues as a `followUp` (one live entry per session —
+  `ensureEntry` is single-flight) rather than double-driving the conversation.
+  `boot.ts` calls `ensureOrchestrator()` exactly once per boot, so this sweep
+  runs exactly once. Both halves are error-isolated (a down DB or a failed sweep
+  is logged, never sinks boot). Known residual, accepted for now: a job on a
+  CHAT session is swept on the ISSUES runtime while the chat orchestrator
+  reconciles that same session on its OWN separate runtime (each
+  `orchestrator-live` builds its own `createServerRuntime`) — two live sessions,
+  two registries, so the `startGate` single-flight can't see across them. Rows
+  are append-only (nothing is deleted), but two turns interleaved into one `seq`
+  order could leave a transcript that isn't a valid single conversation, which
+  the next boot would feed back to the model verbatim — a resumability hazard,
+  not merely cosmetic. Tolerated because builder sessions are jobs' overwhelming
+  users and the destructive move (cancel) lives on this side; the real cure is
+  one shared server runtime for both orchestrators (then the sweep moves to
+  `boot.ts` and single-flight covers chat too), a separate voyage.
 - **Playbook entrypoints boot from the entrypoint user's own config.** The
   playbook names WHO starts; how that agent boots is data on its own `users` row
   — one source of truth, the same one a handoff target uses. Corollary:

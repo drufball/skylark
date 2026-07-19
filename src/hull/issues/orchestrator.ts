@@ -187,6 +187,13 @@ export interface GitOps {
 export interface OrchestratorRuntime extends RunsTurns {
   cancel(sessionId: string): Promise<void>
   dispose(sessionId: string): void
+  /**
+   * Sweep background jobs stranded by a prior process (#v6ft) — every
+   * outstanding `background_jobs` row is cleared and its session resumed with
+   * a "job lost" message. Called once per boot at the END of `reconcile`; see
+   * the ordering rationale there (#69iz).
+   */
+  reconcileJobs(): Promise<void>
 }
 
 export interface OrchestratorDeps {
@@ -747,8 +754,49 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * refresh triggers), an issue can be stuck in `building` with a session row
    * but no live session in this fresh process. Resume each by re-seeding a turn
    * — idempotent ensureEntrypoint reuses the existing worktree + session.
+   *
+   * The background-job sweep (#v6ft) runs at the END, deliberately (#69iz):
+   * the issue sweep CANCELS any session stranded on 'running', so a job-lost
+   * resume fired first could mark its session running and be swept back to
+   * idle mid-message — after the row was already claimed, silencing the one
+   * "your job was lost" the session was owed. Ordered after, the cancels are
+   * done, and a job-lost resume landing on a session whose re-seeded turn is
+   * already streaming just queues as a followUp — same runtime, same registry
+   * (ensureEntry is single-flight per session). This is also why the sweep
+   * lives HERE and not in boot.ts: it must share THIS orchestrator's runtime
+   * instance for that queueing to hold, and reconcile already runs exactly
+   * once per boot (subscribeToShipLog under ensureOrchestrator's arm-once).
+   * Both halves are error-isolated: a db that's down must not strand the job
+   * sweep, and a failed sweep must not sink boot.
+   *
+   * Known residual (accepted): a job on a CHAT session is swept on THIS
+   * runtime while the chat orchestrator reconciles the same session on its own
+   * separate runtime — two registries, so the startGate single-flight can't
+   * span them. Rows are append-only (nothing deleted), but two turns
+   * interleaved into one seq order could leave a transcript that isn't a valid
+   * single conversation, which the next boot replays to the model verbatim — a
+   * resumability hazard, not merely cosmetic. Tolerated because builder
+   * sessions are jobs' overwhelming users and the destructive move (cancel) is
+   * on this side; the real cure is one shared server runtime for both
+   * orchestrators (a separate voyage — see issues/zine.md).
    */
   async function reconcile(): Promise<void> {
+    await reconcileBuildingIssues().catch((err: unknown) => {
+      console.error(
+        `reconcile: issue sweep failed (continuing to job sweep): ${errorMessage(err)}`,
+      )
+    })
+    await runtime.reconcileJobs().catch((err: unknown) => {
+      console.error(
+        `reconcile: background-job sweep failed: ${errorMessage(err)}`,
+      )
+    })
+  }
+
+  async function reconcileBuildingIssues(): Promise<void> {
+    // Cancel orphan worktree sessions first (#f5io): their cancel also clears
+    // their background jobs, so the job sweep at the tail of reconcile() won't
+    // resume a session we just swept idle.
     await sweepOrphanSessions()
     const all = await listIssues(db)
     for (const issue of all) {

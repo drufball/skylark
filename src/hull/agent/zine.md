@@ -76,7 +76,18 @@ the **full** history, even across compaction (see Decisions).
 - **Background jobs** (`background.ts` + the `background` tool) — an agent hands
   a long-running command (waiting on CI, a slow build) to the manager, ends its
   turn, and is automatically resumed with the tail of the output when the
-  command exits — instead of blocking or polling in the foreground.
+  command exits — instead of blocking or polling in the foreground. Each job
+  also writes a durable `background_jobs` row (#v6ft): a server reload orphans
+  the in-process watcher, so at boot the runtime's `reconcileJobs` (in
+  `runtime.ts`, wrapping the pure `reconcileBackgroundJobs` in `reconcile.ts`)
+  sweeps every leftover row and resumes its session with an explicit "job lost,
+  re-run it" message. The resume rides the same `runTurn` bridge as any turn: if
+  the session's re-seeded boot turn is already streaming it queues as a
+  `followUp`, else it runs as the next turn on the one live entry — never a
+  second concurrent prompt (see the `startGate` in `Entry`). The sweep is
+  invoked once per boot from the tail of the issues orchestrator's `reconcile()`
+  (#69iz — see the ordering rationale there and in
+  [`../issues/zine.md`](../issues/zine.md)).
 - **Tool budget** (`tool-budget.ts`) — a wall-clock budget for foreground tool
   calls: past it (default 10 minutes; `SKYLARK_TOOL_BUDGET_MS` overrides) the
   call's own AbortSignal fires — pi's bash tool kills its whole process tree —
@@ -279,6 +290,17 @@ idle session, because the truth is in the database, not the registry.
   (`users/service.ts`), one query instead of N. A `running` row always prints a
   caveat rather than a computed staleness guess — the DB alone can't tell a live
   turn from a crashed one.
+- **#69iz — the lost-job boot sweep gets a caller, and turns get a start-gate.**
+  `reconcileJobs` (the #v6ft reconciler) had no production caller, so a job
+  stranded by a reload was never swept. It's now invoked once per boot from the
+  tail of the issues orchestrator's `reconcile()` (ordering rationale in
+  [`../issues/zine.md`](../issues/zine.md)). Wiring it surfaced a latent race:
+  two `runTurn`s sharing one freshly-booted session (the reconcile's re-seeded
+  turn + the job resume) both read `isStreaming === false` across the boot gap
+  and prompted the one live session twice. `ensureEntry` is now single-flight
+  (one boot per session id, failed boots evicted), and `runTurn` arms a
+  synchronous `startGate` so the second caller waits for the winner's prompt to
+  go live and then queues as a `followUp` — one session, never double-prompted.
 - **Gateway keys move to the gateway's own UI.** Provider keys and model routes
   leave `.env`/`litellm.config.yaml` for the gateway's admin UI, stored
   encrypted in a `litellm` database beside the ship's; `gatewayUiUrl()` tells
