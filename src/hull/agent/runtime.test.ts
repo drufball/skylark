@@ -495,6 +495,52 @@ describe('agent runtime', () => {
     expect(defined(await getSession(db, 's1')).status).toBe('idle')
   })
 
+  it('a budget-killed tool call leaves the session consistent: turn ends, errored result persists, status idle', async () => {
+    // When a foreground tool call blows its wall-clock budget (tool-budget.ts,
+    // #83ph), the wrapper rejects and pi's agent loop converts the throw into
+    // an isError toolResult message and CARRIES ON — the turn itself completes
+    // normally. From the runtime's side that must look like any other turn:
+    // the transcript (errored tool result included) is persisted, the status
+    // returns to idle, and the error path is never taken.
+    await createSession(db, { id: 's1', model: 'm' })
+    const killedResult = {
+      role: 'toolResult',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+      content: [
+        {
+          type: 'text',
+          text: 'bash was killed after running past its 10m foreground budget.',
+        },
+      ],
+      isError: true,
+      timestamp: 0,
+    } as unknown as AgentMessage
+    fake.onPrompt = (text) => {
+      fake.append(msg('user', text))
+      fake.append(killedResult)
+      fake.append(msg('assistant', 'that hung — backgrounding it instead'))
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+
+    const result = await runtime.runTurn('s1', 'run the tests')
+
+    expect(messagesOf(result).map((m) => m.role)).toEqual([
+      'user',
+      'toolResult',
+      'assistant',
+    ])
+    const rows = await getMessages(db, 's1')
+    expect(rows.map((r) => r.role)).toEqual(['user', 'toolResult', 'assistant'])
+    const row = defined(await getSession(db, 's1'))
+    expect(row.status).toBe('idle')
+    expect(row.error).toBeNull()
+  })
+
   it('queues a message when a turn is already in flight', async () => {
     await createSession(db, { id: 's1', model: 'm' })
     const gate = deferred()

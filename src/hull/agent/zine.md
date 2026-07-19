@@ -77,6 +77,14 @@ the **full** history, even across compaction (see Decisions).
   a long-running command (waiting on CI, a slow build) to the manager, ends its
   turn, and is automatically resumed with the tail of the output when the
   command exits — instead of blocking or polling in the foreground.
+- **Tool budget** (`tool-budget.ts`) — a wall-clock budget for foreground tool
+  calls: past it (default 10 minutes; `SKYLARK_TOOL_BUDGET_MS` overrides) the
+  call's own AbortSignal fires — pi's bash tool kills its whole process tree —
+  and the call rejects with copy that teaches the escape hatch (long waits
+  belong in the `background` tool, which is exempt). pi feeds the rejection back
+  to the model as an errored tool result and the turn carries on: the agent can
+  react instead of the session hanging on `running` forever. Pure and
+  unit-tested; the live wiring sits in `createPiSession`.
 - **Agent memory** (`memory.ts`) — persistent memory for named agents: each
   agent crew member owns `agents/<handle>/` in the ship's shared files, and at
   session boot the runtime folds the folder's index into the system prompt. The
@@ -224,6 +232,22 @@ idle session, because the truth is in the database, not the registry.
   build-gates extension is the commit/landing/session-start gates rebuilt
   against pi's extension API for builder agents — same intent, different
   mechanism, not auto-translated from `settings.json`.
+- **The tool budget wraps tools at session construction, not in an extension.**
+  pi's extension hooks (`tool_call`/`tool_result`) can veto a call before it
+  runs or rewrite its result after, but cannot abort one in flight — and
+  `ctx.abort()` kills the whole turn, the opposite of what a budget kill wants.
+  So `createPiSession` re-creates the built-in coding tools
+  (read/bash/edit/write — pi's default active set), wraps their `execute` with
+  `withToolBudget`, and registers them as `customTools`: a custom tool with a
+  built-in's name shadows the built-in in pi's tool registry, while the config's
+  tool allowlist and extension hooks (build-gates' commit gate) still apply to
+  it. The budget aborts a per-call controller, never the turn's own signal —
+  kill the call, not the turn. Known edges: pi's built-in grep/find/ls are left
+  unwrapped (never active by default, no ship config allowlists them, and bash
+  is the only unbounded-duration vector), and the wrapped copies are built with
+  factory defaults rather than pi's user settings (a customized `~/.pi` shell
+  prefix or image-resize setting wouldn't reach them — irrelevant on a ship,
+  noted for honesty).
 - **Extensions are referenced by registry, not by path.** An agent names
   extensions by id (`extensionIds`); the `extensions` table maps id →
   repo-relative path. The registry is the single place an agent (and the future
@@ -242,6 +266,10 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **#83ph** — Foreground tool calls get a wall-clock budget (`tool-budget.ts`,
+  default 10m, `SKYLARK_TOOL_BUDGET_MS` overrides): a runaway call is killed and
+  the turn returns an errored tool result that points at the `background` tool,
+  instead of the session hanging on `running` forever.
 - **#7an8 — `agent fleet`.** One read-only view of every session — status, agent
   handle (`(unattributed)` when there's no `agentUserId`), title, cwd, age of
   `lastMessageAt`, and any outstanding background jobs — replacing the night
