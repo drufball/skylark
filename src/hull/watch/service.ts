@@ -18,6 +18,7 @@ import {
   listIssues,
   listIssueSessions,
   setBatonHolder,
+  transitionIssue,
 } from '@hull/issues/service'
 import { issueTopic } from '@hull/issues/topic'
 import type { IssueRow } from '@hull/issues/schema'
@@ -58,6 +59,17 @@ import {
 export const WATCHDOG_NUDGED = 'watchdog.nudged'
 /** A stall was escalated to the issue owner (baton handed to the human). */
 export const WATCHDOG_OWNER_PING = 'watchdog.owner_ping'
+/**
+ * An agent holds the baton but has no live session to nudge (a dropped/stranded
+ * handoff): surfaced while the watch climbs the ladder toward escalation.
+ */
+export const WATCHDOG_STUCK = 'watchdog.stuck'
+/**
+ * A stall was escalated but there was no HUMAN owner to hand to, so the build
+ * was paused to `open` for a human to pick up (rather than handing the baton
+ * back to an agent, which would loop).
+ */
+export const WATCHDOG_PAUSED = 'watchdog.paused'
 /** A long background wait's owning session was woken for a health check. */
 export const WATCHDOG_HEALTH_CHECK = 'watchdog.health_check'
 
@@ -152,6 +164,10 @@ export function decideStall(input: {
   if (!input.batonIsAgent) return { kind: 'none' }
   // An outstanding background job is Rule 2's business, not a stall.
   if (input.hasOutstandingJob) return { kind: 'none' }
+  // No activity clock at all → can't measure a stall; stay conservative (this
+  // also keeps `computeBuildActivity` from reading an Infinity age off a null
+  // timestamp, which the caller couldn't render a real duration for).
+  if (!input.statusLineAt) return { kind: 'none' }
 
   const activity = computeBuildActivity({
     sessionRunning: input.sessionRunning,
@@ -500,21 +516,21 @@ async function handleStall(
 
   if (action.kind === 'none') return
 
-  const stalledMs =
-    deps.now.getTime() - (issue.statusLineAt?.getTime() ?? deps.now.getTime())
+  const stalledMs = deps.now.getTime() - (issue.statusLineAt?.getTime() ?? 0)
   const holderHandle = await handleOf(db, holderId)
   const nextCount = (nudgeRow?.nudgeCount ?? 0) + 1
 
-  if (action.kind === 'nudge') {
-    // A baton holder with a session is a precondition of an agent baton on a
-    // building issue; guard anyway so a race can't drive a null session.
-    if (!holderSessionId) return
+  // A nudge we can actually deliver: the baton holder has a live session.
+  if (action.kind === 'nudge' && holderSessionId) {
+    // Record BEFORE the fire-and-forget drive: if the drive throws after a
+    // successful record, `lastNudgeAt` is already set so the next sweep honours
+    // the re-nudge floor instead of re-driving every 60s.
+    await recordIntervention(db, issue.id, nextCount, deps.now)
     deps.driveTurn(
       issue.id,
       holderSessionId,
       nudgePrompt(action.escalated, stalledMs),
     )
-    await recordIntervention(db, issue.id, nextCount, deps.now)
     await emitWatchdog(db, {
       type: WATCHDOG_NUDGED,
       issueId: issue.id,
@@ -527,22 +543,104 @@ async function handleStall(
     return
   }
 
-  // Owner ping: hand the baton to the human owner (so the watch goes quiet —
-  // a human holder is "waiting for input") and surface it to the owner's inbox.
+  // A nudge we CAN'T deliver: an agent holds the baton but has no live session
+  // (a dropped/stranded handoff — requestHandoff moves the baton before the
+  // orchestrator creates the session, and a dropped pass never reverts it).
+  // This is NOT "skip" — it's stuck. Climb the same ladder (so it DOES reach
+  // escalation) and surface it, but take no disruptive action yet: a legit
+  // in-flight handoff resolves within seconds, well inside the stall window.
+  if (action.kind === 'nudge') {
+    await recordIntervention(db, issue.id, nextCount, deps.now)
+    await emitWatchdog(db, {
+      type: WATCHDOG_STUCK,
+      issueId: issue.id,
+      actorId: holderId,
+      headline:
+        `the night watch found #${issue.nano} stuck: @${holderHandle} holds ` +
+        `the baton but has no live session (a dropped handoff?) — will ` +
+        `escalate to a human if it stays this way`,
+    })
+    return
+  }
+
+  // Terminal escalation (the third strike).
+  await escalate(db, {
+    issue,
+    holderId,
+    holderHandle,
+    nextCount,
+    priorNudges: nudgeRow?.nudgeCount ?? 0,
+    stalledMs,
+    now: deps.now,
+  })
+}
+
+/**
+ * The third-strike terminal move. Handing the baton to the issue's owner only
+ * makes the watch go quiet if that owner is a HUMAN (a human holder reads as
+ * "waiting for input"). But `ownerId` defaults to `authorId` and can be an
+ * AGENT — handing the baton back to an agent would loop the watch forever, and
+ * if the owner IS the stalled holder the ping is dropped as "your own action".
+ * So: a human owner gets the baton + a ping; otherwise the build is PAUSED to
+ * `open` (Rule 1 only watches `building`, so that's what goes quiet) and a human
+ * fallback — the author, if a distinct human — is pinged.
+ */
+async function escalate(
+  db: Database,
+  ctx: {
+    issue: IssueRow
+    holderId: string
+    holderHandle: string
+    nextCount: number
+    priorNudges: number
+    stalledMs: number
+    now: Date
+  },
+): Promise<void> {
+  const { issue, holderId, holderHandle } = ctx
   const fresh = await getIssue(db, issue.id)
   const ownerId = fresh?.ownerId ?? issue.ownerId
-  await setBatonHolder(db, issue.id, ownerId)
-  await recordIntervention(db, issue.id, nextCount, deps.now)
-  const ownerHandle = await handleOf(db, ownerId)
+  const owner = await getUserById(db, ownerId)
+  const duration = formatStallDuration(ctx.stalledMs)
+
+  await recordIntervention(db, issue.id, ctx.nextCount, ctx.now)
+
+  if (owner?.type === 'human') {
+    // Hand the baton to the human owner → the watch goes quiet.
+    await setBatonHolder(db, issue.id, ownerId)
+    await emitWatchdog(db, {
+      type: WATCHDOG_OWNER_PING,
+      issueId: issue.id,
+      actorId: holderId,
+      headline:
+        `the night watch escalated #${issue.nano} to @${owner.handle}: ` +
+        `stalled ${duration} and ${String(ctx.priorNudges)} nudge(s) to ` +
+        `@${holderHandle} didn't move it — needs a human`,
+      addRecipients: [ownerId],
+    })
+    return
+  }
+
+  // No human owner to hand to. Pause to `open` so Rule 1 (building-only) goes
+  // quiet, and ping the author if they're a distinct human fallback.
+  await transitionIssue(db, {
+    issueId: issue.id,
+    to: 'open',
+    actorId: holderId,
+  })
+  const author = await getUserById(db, issue.authorId)
+  const humanFallback =
+    author?.type === 'human' && author.id !== holderId ? author.id : null
   await emitWatchdog(db, {
-    type: WATCHDOG_OWNER_PING,
+    type: WATCHDOG_PAUSED,
     issueId: issue.id,
     actorId: holderId,
     headline:
-      `the night watch escalated #${issue.nano} to @${ownerHandle}: stalled ` +
-      `${formatStallDuration(stalledMs)} and ${String(nudgeRow?.nudgeCount ?? 0)} ` +
-      `nudges to @${holderHandle} didn't move it — needs a human`,
-    addRecipients: [ownerId],
+      `the night watch paused #${issue.nano} to open: stalled ${duration} ` +
+      `and ${String(ctx.priorNudges)} nudge(s) to @${holderHandle} didn't ` +
+      `move it, with no human owner to escalate to — needs a human to pick ` +
+      `it up`,
+    ...(humanFallback ? { addRecipients: [humanFallback] } : {}),
   })
 }
 
@@ -571,19 +669,26 @@ async function handleHealthCheck(
   if (!due) return
 
   const outstandingMs = deps.now.getTime() - job.createdAt.getTime()
+  // Record BEFORE the fire-and-forget drive (see handleStall) so a failed drive
+  // can't reset the re-check floor and re-wake every 60s.
+  const firstCheck = checkRow === undefined
+  await recordJobCheck(db, job.id, deps.now)
   deps.driveTurn(
     issue.id,
     job.sessionId,
     healthCheckPrompt(job.label, outstandingMs),
   )
-  await recordJobCheck(db, job.id, deps.now)
+  // Keep driving the agent's health-check turn every interval, but only surface
+  // it to WATCHERS once (the first check) — an honest 90-minute job shouldn't
+  // fan a fresh inbox notification to every watcher every 10 minutes.
+  if (!firstCheck) return
   const handle = await handleOf(db, ctx.agentUserId)
   await emitWatchdog(db, {
     type: WATCHDOG_HEALTH_CHECK,
     issueId: issue.id,
     actorId: ctx.agentUserId,
     headline:
-      `the night watch checked in on @${handle}'s background wait ` +
+      `the night watch is checking in on @${handle}'s background wait ` +
       `"${job.label}" on #${issue.nano} (running ${formatStallDuration(outstandingMs)})`,
   })
 }

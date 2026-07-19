@@ -32,6 +32,8 @@ import {
   WATCHDOG_HEALTH_CHECK,
   WATCHDOG_NUDGED,
   WATCHDOG_OWNER_PING,
+  WATCHDOG_PAUSED,
+  WATCHDOG_STUCK,
   type WatchConfig,
   type WatchSweepDeps,
 } from './service'
@@ -149,6 +151,12 @@ describe('decideStall', () => {
 
   it('is conservative with no status line yet', () => {
     expect(decideStall({ ...base, statusLine: null })).toEqual({ kind: 'none' })
+  })
+
+  it('is conservative with no activity clock (statusLineAt null)', () => {
+    expect(decideStall({ ...base, statusLineAt: null })).toEqual({
+      kind: 'none',
+    })
   })
 
   it('holds off re-nudging inside one threshold window', () => {
@@ -290,12 +298,15 @@ describe('runWatchSweep', () => {
   async function buildingIssue(opts?: {
     statusLineAt?: Date
     running?: boolean
+    /** Override the issue owner (defaults to the human owner). */
+    owner?: string
   }): Promise<{ issueId: string; sessionId: string }> {
+    const owner = opts?.owner ?? ownerId
     const issue = await createIssue(db, {
       title: 'ship it',
       body: '',
-      authorId: ownerId,
-      ownerId,
+      authorId: owner,
+      ownerId: owner,
     })
     const sessionId = uuidv7()
     await db
@@ -426,6 +437,97 @@ describe('runWatchSweep', () => {
     await runWatchSweep(db, s4.deps)
     expect(s4.drives).toHaveLength(0)
     expect((await getNudgeRow(db, issueId))?.nudgeCount).toBe(3)
+  })
+
+  it('pauses to open instead of looping when the owner is an agent', async () => {
+    // ownerId defaults to authorId and here is the agent itself — handing the
+    // baton "to the owner" would hand it back to an agent and loop forever.
+    const { issueId } = await buildingIssue({ owner: agentId })
+
+    // Climb to the third strike. The holder session exists, so 1 and 2 nudge.
+    await runWatchSweep(db, sweepDeps(at(20 * MIN)).deps)
+    await runWatchSweep(db, sweepDeps(at(40 * MIN)).deps)
+    const third = sweepDeps(at(60 * MIN))
+    await runWatchSweep(db, third.deps)
+
+    // Terminal move is a PAUSE, not an owner ping to an agent.
+    expect((await getIssue(db, issueId))?.status).toBe('open')
+    expect(await watchdogEvents(issueId, WATCHDOG_PAUSED)).toHaveLength(1)
+    expect(await watchdogEvents(issueId, WATCHDOG_OWNER_PING)).toHaveLength(0)
+    // The baton was NOT handed back to the agent.
+    expect((await getIssue(db, issueId))?.batonHolderId).toBe(agentId)
+
+    // And now that it's `open`, the watch is quiet — no more interventions.
+    const fourth = sweepDeps(at(80 * MIN))
+    await runWatchSweep(db, fourth.deps)
+    expect(fourth.drives).toHaveLength(0)
+    expect((await getNudgeRow(db, issueId))?.nudgeCount).toBe(3)
+  })
+
+  it('escalates a stranded handoff (agent baton, no session) instead of skipping', async () => {
+    // A dropped handoff: the baton points at an agent with no session row.
+    const stranded = await createUser(db, {
+      id: uuidv7(),
+      handle: 'reviewer',
+      displayName: 'Reviewer',
+      type: 'agent',
+    })
+    const { issueId } = await buildingIssue()
+    await setBatonHolder(db, issueId, stranded.id) // no session for this agent
+
+    // No session means no drive is possible — but the watch must still climb
+    // the ladder and reach a human, not silently skip forever.
+    const s1 = sweepDeps(at(20 * MIN))
+    await runWatchSweep(db, s1.deps)
+    expect(s1.drives).toHaveLength(0)
+    expect((await getNudgeRow(db, issueId))?.nudgeCount).toBe(1)
+    expect(await watchdogEvents(issueId, WATCHDOG_STUCK)).toHaveLength(1)
+
+    await runWatchSweep(db, sweepDeps(at(40 * MIN)).deps) // count → 2
+    const s3 = sweepDeps(at(60 * MIN))
+    await runWatchSweep(db, s3.deps) // third strike → escalate to human owner
+
+    expect(s3.drives).toHaveLength(0)
+    expect((await getIssue(db, issueId))?.batonHolderId).toBe(ownerId)
+    expect(await watchdogEvents(issueId, WATCHDOG_OWNER_PING)).toHaveLength(1)
+  })
+
+  it('records the intervention before driving, so a failed drive does not re-nudge', async () => {
+    const { issueId } = await buildingIssue()
+
+    // The drive throws; the sweep swallows it, but the record already happened.
+    await runWatchSweep(db, {
+      now: at(20 * MIN),
+      config: CONFIG,
+      driveTurn: () => {
+        throw new Error('runtime down')
+      },
+    })
+    expect((await getNudgeRow(db, issueId))?.nudgeCount).toBe(1)
+
+    // A minute later — the re-nudge floor holds, so no re-drive despite the
+    // earlier failure.
+    const second = sweepDeps(at(21 * MIN))
+    await runWatchSweep(db, second.deps)
+    expect(second.drives).toHaveLength(0)
+  })
+
+  it('surfaces a health check to watchers only on the first wake', async () => {
+    const { issueId, sessionId } = await buildingIssue()
+    const jobId = await addJob(sessionId)
+
+    const first = sweepDeps(at(20 * MIN))
+    await runWatchSweep(db, first.deps)
+    expect(first.drives).toHaveLength(1)
+    expect(await watchdogEvents(issueId, WATCHDOG_HEALTH_CHECK)).toHaveLength(1)
+
+    // A full interval later: the agent is re-woken (drive fires) but no second
+    // watcher-facing event.
+    const second = sweepDeps(at(40 * MIN))
+    await runWatchSweep(db, second.deps)
+    expect(second.drives).toHaveLength(1)
+    expect((await getJobCheckRow(db, jobId))?.checkCount).toBe(2)
+    expect(await watchdogEvents(issueId, WATCHDOG_HEALTH_CHECK)).toHaveLength(1)
   })
 
   it('never nudges a build whose baton is held by a human', async () => {

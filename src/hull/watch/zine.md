@@ -46,8 +46,12 @@ and a reload never re-act on the same state.
 - **The two tables** (`schema.ts`) — `watch_nudges` (per-issue nudge memory) and
   `watch_job_checks` (per-job health-check memory). See Structure.
 - **`watchdog.*` events** — `watchdog.nudged`, `watchdog.owner_ping`,
+  `watchdog.stuck` (a stranded handoff climbing toward escalation),
+  `watchdog.paused` (escalation with no human owner), and
   `watchdog.health_check`, all on `issue:<id>`, audience public, carrying
   `_notification` metadata (Rule 3).
+- **`singleFlight`** (`hull/lib/single-flight.ts`) — wraps the live tick so a
+  slow sweep can't overlap the next one.
 - **The read-only CLI** (`cli.ts`) — `watch status`: the sweep config and the
   watch's memory. Read-only on purpose (see Decisions).
 
@@ -72,9 +76,17 @@ through `orch.driveTurn(issueId, sessionId, text)` — the one seam added to the
 issues orchestrator, which is just its private `fireTurn` exposed by name. A
 **surfacing** is an `emitEvent` on the issue topic with `_notification`
 metadata; the notifications reactor (which fans any public event carrying that
-metadata) turns it into inbox rows. The owner ping additionally hands the baton
-to the human owner via `setBatonHolder`, which is what makes the watch go quiet
-afterward (a human baton reads as "waiting for input").
+metadata) turns it into inbox rows.
+
+The third-strike terminal move has two shapes, because it must GUARANTEE the
+watch goes quiet. If the issue owner is a **human**, the baton is handed to them
+(`setBatonHolder`) and they're pinged — a human baton reads as "waiting for
+input", so Rule 1 leaves it alone. But `issues.ownerId` defaults to `authorId`
+and can be an **agent**; handing the baton back to an agent would loop the watch
+forever (and if the owner IS the stalled holder, the reactor drops the ping as
+"your own action"). So when there's no human owner, the watch instead PAUSES the
+build to `open` via `transitionIssue` — Rule 1 only watches `building`, so that
+is what falls silent — and pings the issue author if they're a distinct human.
 
 ## Decisions
 
@@ -101,6 +113,32 @@ afterward (a human baton reads as "waiting for input").
 - **A human (or empty) baton is never nudged.** A human holder is the universal
   "waiting for input" signal; an empty holder (a pre-baton build we can't
   resolve) is treated the same way — conservatively left alone.
+- **The owner ping requires a HUMAN owner; otherwise pause.** "Escalate to the
+  owner" only makes the watch go quiet if the owner is human. An agent owner
+  (the default, since `ownerId` defaults to `authorId`) must never receive the
+  baton on escalation — that loops. The safety property is: after the third
+  strike the issue is EITHER held by a human OR no longer `building`. See
+  Structure. `handoff.ts` guards the analogous self-ping-strands-the-issue case;
+  this mirrors that intent for the watch.
+- **A stranded handoff (agent baton, no session) escalates — it is not
+  skipped.** `requestHandoff` moves the baton to the target agent BEFORE the
+  orchestrator creates that agent's session, and a dropped pass (off-roster,
+  another hand mid-turn) never reverts it — leaving an agent baton with no
+  session to nudge. The watch treats that as stuck: it climbs the same ladder
+  (surfacing `watchdog.stuck` without a disruptive action while it waits out the
+  stall window — a legit in-flight handoff resolves in seconds) and reaches the
+  terminal human escalation, rather than silently returning forever.
+- **Record the intervention BEFORE the fire-and-forget drive.** If the drive
+  throws after the record, the re-nudge/re-check floor still holds; if it threw
+  before, the watch would re-fire every sweep.
+- **A slow sweep can't overlap the next.** The live tick is wrapped in
+  `singleFlight` (`hull/lib`), so a sweep that runs past the interval (a waking
+  database) drops the next fire rather than letting two sweeps read the same
+  not-yet-persisted state and double-intervene.
+- **Health-check drives repeat every interval; the watcher-facing event fires
+  once.** A healthy 90-minute job is re-woken to self-report each interval (by
+  design), but only the FIRST check notifies watchers — re-notifying every
+  interval would be inbox spam.
 - **v1 is issue-backed building sessions only.** Every recorded incident lives
   there. A background job on a chat/bare session is skipped — there's no
   per-session activity clock for non-issue sessions, and driving one would need

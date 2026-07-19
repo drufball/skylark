@@ -1,6 +1,7 @@
 import { systemDb } from '@hull/db/client'
 import { ensureOrchestrator } from '@hull/issues/orchestrator-live'
 import { startIntervalSweep } from '@hull/lib/interval-sweep'
+import { singleFlight } from '@hull/lib/single-flight'
 
 import { resolveWatchConfig, runWatchSweep } from './service'
 
@@ -53,20 +54,24 @@ export function ensureWatchService(): void {
   stopSweep?.()
 
   const config = resolveWatchConfig(process.env)
+  // singleFlight: a sweep that runs past the interval (slow Postgres waking)
+  // must not have the next tick fire on top of it — two overlapping sweeps
+  // would both read the same nudge/health state and double-intervene.
+  const sweep = singleFlight(async (now: number) => {
+    // Get the SAME orchestrator boot armed — its runtime owns issue sessions.
+    const orch = await ensureOrchestrator()
+    await runWatchSweep(systemDb, {
+      now: new Date(now),
+      config,
+      driveTurn: (issueId, sessionId, text) => {
+        orch.driveTurn(issueId, sessionId, text)
+      },
+    })
+  })
   stopSweep = startIntervalSweep({
     intervalMs: config.sweepMs,
     label: 'night watch',
-    tick: async (now) => {
-      // Get the SAME orchestrator boot armed — its runtime owns issue sessions.
-      const orch = await ensureOrchestrator()
-      await runWatchSweep(systemDb, {
-        now: new Date(now),
-        config,
-        driveTurn: (issueId, sessionId, text) => {
-          orch.driveTurn(issueId, sessionId, text)
-        },
-      })
-    },
+    tick: (now) => sweep(now),
   })
 }
 /* v8 ignore stop */
