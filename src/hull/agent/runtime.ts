@@ -3,7 +3,12 @@ import {
   type AgentSessionEvent,
   AuthStorage,
   createAgentSession,
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
   DefaultResourceLoader,
+  defineTool,
   getAgentDir,
   ModelRegistry,
   SessionManager,
@@ -23,6 +28,7 @@ import { withAgentMemory, type AgentMemoryLoader } from './memory'
 import { defaultModelRef, gatewayApiKey, resolveModel } from './models'
 import { resolveExtensionPaths } from './agent-config'
 import { resolveSessionOptions, type AgentConfig } from './session-config'
+import { toolBudgetMs, withToolBudgets } from './tool-budget'
 import {
   appendMessage,
   getMessages,
@@ -152,6 +158,18 @@ export type SessionFactory = (
  * whether to load the repo's skills, and which extensions to load. Extensions
  * are pi.dev's answer to the human's Claude Code hooks (build-gates mirrors the
  * commit/landing/session-start gates), wired via additionalExtensionPaths.
+ *
+ * Foreground tool calls run under a wall-clock budget (tool-budget.ts, issue
+ * #83ph). pi's extension hooks can veto a tool call before it runs but can't
+ * abort one in flight, so the budget is enforced here at session construction:
+ * we re-create the built-in coding tools (read/bash/edit/write — pi's default
+ * active set), wrap their execute, and register them as customTools. In pi's
+ * tool registry a custom tool with a built-in's name SHADOWS the built-in
+ * (agent-session.js `_refreshToolRegistry` sets custom tools last), while the
+ * config's tool allowlist and extension hooks (build-gates' commit gate) still
+ * apply to them. The per-session `background` tool stays exempt. The built-in
+ * grep/find/ls are left unwrapped: pi never activates them by default, no ship
+ * config allowlists them, and bash is the only unbounded-duration vector.
  */
 export const createPiSession: SessionFactory = async (
   config,
@@ -182,13 +200,29 @@ export const createPiSession: SessionFactory = async (
   const authStorage = AuthStorage.create()
   authStorage.setRuntimeApiKey('litellm', gatewayApiKey())
 
+  // Re-create the built-in coding tools (read/bash/edit/write — pi's default
+  // active set) so we can budget-wrap them and register them as customTools; a
+  // custom tool with a built-in's name shadows the built-in in pi's tool
+  // registry. `defineTool` gives each concrete factory result the loose
+  // `ToolDefinition` shape the array needs. `withToolBudgets` then wraps every
+  // tool except `background` (which ends the turn by design and is exempt).
+  const codingTools: ToolDefinition[] = [
+    defineTool(createReadToolDefinition(cwd)),
+    defineTool(createBashToolDefinition(cwd)),
+    defineTool(createEditToolDefinition(cwd)),
+    defineTool(createWriteToolDefinition(cwd)),
+  ]
+
   const { session } = await createAgentSession({
     model: resolveModel(options.model ?? model),
     modelRegistry: ModelRegistry.create(authStorage),
     sessionManager: SessionManager.inMemory(),
     cwd: options.session.cwd,
     tools: options.session.tools,
-    customTools,
+    customTools: withToolBudgets(
+      [...codingTools, ...(customTools ?? [])],
+      toolBudgetMs(),
+    ),
     resourceLoader,
   })
   session.setAutoCompactionEnabled(true)
