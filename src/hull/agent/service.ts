@@ -248,6 +248,38 @@ export async function listOutstandingBackgroundJobs(
   return db.select().from(backgroundJobs).orderBy(asc(backgroundJobs.id))
 }
 
+export interface FleetSession {
+  session: AgentSessionRow
+  jobs: BackgroundJobRow[]
+}
+
+/**
+ * The fleet view: every session with its own outstanding background jobs
+ * attached, newest activity first — the query the night watch ran by hand a
+ * dozen times (issue #7an8, part of #q5ia). Scoped to this service's own two
+ * tables (agent_sessions + background_jobs); the agentUserId → handle join is
+ * cross-service and stays in the CLI, same convention as `issue show`'s
+ * author/owner lookup.
+ */
+export async function listFleet(db: Database): Promise<FleetSession[]> {
+  const [sessions, jobs] = await Promise.all([
+    listSessions(db),
+    listOutstandingBackgroundJobs(db),
+  ])
+
+  const jobsBySession = new Map<string, BackgroundJobRow[]>()
+  for (const job of jobs) {
+    const existing = jobsBySession.get(job.sessionId)
+    if (existing) existing.push(job)
+    else jobsBySession.set(job.sessionId, [job])
+  }
+
+  return sessions.map((session) => ({
+    session,
+    jobs: jobsBySession.get(session.id) ?? [],
+  }))
+}
+
 /**
  * Clear a job's row — called by the real `onClose` once a live process
  * observes the job end, or by the reconciler once it's claimed a stranded row

@@ -11,6 +11,7 @@ import {
   findAgentSessionByTitle,
   getMessages,
   getSession,
+  listFleet,
   listOutstandingBackgroundJobs,
   listSessions,
   recordBackgroundJob,
@@ -318,6 +319,55 @@ describe('background jobs persistence', () => {
     })
     const outstanding = await listOutstandingBackgroundJobs(db)
     expect(outstanding.map((j) => j.id)).toEqual(['job-1', 'job-2'])
+  })
+})
+
+describe('listFleet', () => {
+  let db: Database
+  let close: () => Promise<void>
+
+  beforeEach(async () => {
+    ;({ db, close } = await freshDb())
+  })
+  afterEach(() => close())
+
+  it('attaches each session’s own outstanding jobs, newest activity first', async () => {
+    await createSession(db, { id: 'old', model: 'm' })
+    await createSession(db, { id: 'new', model: 'm' })
+    await db.execute(
+      sql`update agent_sessions set last_message_at = '2020-01-01' where id = 'old'`,
+    )
+    await db.execute(
+      sql`update agent_sessions set last_message_at = '2026-06-01' where id = 'new'`,
+    )
+    await recordBackgroundJob(db, {
+      id: 'job-old',
+      sessionId: 'old',
+      command: 'gh pr checks 12 --watch',
+      label: 'PR #12 CI',
+      cwd: '/wt',
+      pid: 1,
+    })
+
+    const fleet = await listFleet(db)
+
+    expect(fleet.map((f) => f.session.id)).toEqual(['new', 'old'])
+    expect(fleet.find((f) => f.session.id === 'new')?.jobs).toEqual([])
+    expect(fleet.find((f) => f.session.id === 'old')?.jobs).toMatchObject([
+      { id: 'job-old', label: 'PR #12 CI' },
+    ])
+  })
+
+  it('returns an empty jobs list for a session with none', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    const fleet = await listFleet(db)
+    expect(fleet).toHaveLength(1)
+    expect(fleet[0].session.id).toBe('s1')
+    expect(fleet[0].jobs).toEqual([])
+  })
+
+  it('returns nothing when there are no sessions', async () => {
+    expect(await listFleet(db)).toEqual([])
   })
 })
 

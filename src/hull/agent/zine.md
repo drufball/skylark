@@ -89,7 +89,11 @@ the **full** history, even across compaction (see Decisions).
 - **Ship's-log announcements** — the runtime emits `agent.status` and
   `agent.message` on topic `session:<id>` as a turn runs, which is what the
   session monitor and progress consumers subscribe to.
-- **Doors** — `cli.ts` (the default door: also `seed`, `extensions`) and
+- **Doors** — `cli.ts` (the default door: also `seed`, `extensions`, `fleet` —
+  one read-only view of every session, joined to its agent handle and its
+  outstanding `background_jobs` rows, sorted by most-recent activity; a
+  `running` row always carries an explicit caveat rather than a guessed liveness
+  check, since a crash can leave one stuck and the DB alone can't tell) and
   `server.ts` (the web door behind the Agents monitor view; chat — the ship's
   front door — is its own hull service driving this runtime, see
   [`../chat/zine.md`](../chat/zine.md)).
@@ -238,6 +242,15 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **#7an8 — `agent fleet`.** One read-only view of every session — status, agent
+  handle (`(unattributed)` when there's no `agentUserId`), title, cwd, age of
+  `lastMessageAt`, and any outstanding background jobs — replacing the night
+  watch's hand-written query. `listFleet` (`service.ts`) joins `agent_sessions`
+  to its own `background_jobs`, scoped to this service's tables; the CLI does
+  the cross-service `agentUserId` → handle join with a new batch `getUsersByIds`
+  (`users/service.ts`), one query instead of N. A `running` row always prints a
+  caveat rather than a computed staleness guess — the DB alone can't tell a live
+  turn from a crashed one.
 - **Gateway keys move to the gateway's own UI.** Provider keys and model routes
   leave `.env`/`litellm.config.yaml` for the gateway's admin UI, stored
   encrypted in a `litellm` database beside the ship's; `gatewayUiUrl()` tells
