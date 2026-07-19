@@ -13,6 +13,7 @@
     "issue": "node --env-file-if-exists=.env --import tsx src/hull/issues/cli.ts",
     "chat": "node --env-file-if-exists=.env --import tsx src/hull/chat/cli.ts",
     "files": "node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts",
+    "watch": "node --env-file-if-exists=.env --import tsx src/hull/watch/cli.ts",
     "build": "vite build",
     "generate-routes": "tsr generate",
     "typecheck": "tsc --noEmit",

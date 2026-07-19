@@ -221,6 +221,8 @@ export async function recordBackgroundJob(
     label: string
     cwd: string
     pid: number
+    /** Optional per-call watch check-in interval (ms); null → watch default. */
+    checkInIntervalMs?: number | null
   },
 ): Promise<BackgroundJobRow> {
   const [row] = await db
@@ -232,6 +234,7 @@ export async function recordBackgroundJob(
       label: input.label,
       cwd: input.cwd,
       pid: input.pid,
+      checkInIntervalMs: input.checkInIntervalMs ?? null,
     })
     .returning()
   return row

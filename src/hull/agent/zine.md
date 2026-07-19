@@ -87,7 +87,10 @@ the **full** history, even across compaction (see Decisions).
   second concurrent prompt (see the `startGate` in `Entry`). The sweep is
   invoked once per boot from the tail of the issues orchestrator's `reconcile()`
   (#69iz — see the ordering rationale there and in
-  [`../issues/zine.md`](../issues/zine.md)).
+  [`../issues/zine.md`](../issues/zine.md)). The tool takes an optional
+  `checkInMinutes`, stored on the row as `check_in_interval_ms` — a hint the
+  night watch (hull/watch) reads to pace its health-check wakes; null means the
+  watch's default. The on-close resume is unchanged by it.
 - **Tool budget** (`tool-budget.ts`) — a wall-clock budget for foreground tool
   calls: past it (default 10 minutes; `SKYLARK_TOOL_BUDGET_MS` overrides) the
   call's own AbortSignal fires — pi's bash tool kills its whole process tree —
@@ -277,6 +280,10 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **#q9d9** — The `background` tool gained an optional `checkInMinutes`, stored
+  on the row as `check_in_interval_ms` (nullable) — a per-job pacing hint the
+  night watch (hull/watch) reads for its health-check wakes. The on-close resume
+  and the boot reconciler are unchanged.
 - **#83ph** — Foreground tool calls get a wall-clock budget (`tool-budget.ts`,
   default 10m, `SKYLARK_TOOL_BUDGET_MS` overrides): a runaway call is killed and
   the turn returns an errored tool result that points at the `background` tool,

@@ -204,6 +204,13 @@
       "when": 1784494782207,
       "tag": "0028_wild_dragon_lord",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1784496288492,
+      "tag": "0029_chemical_colonel_america",
+      "breakpoints": true
     }
   ]
 }

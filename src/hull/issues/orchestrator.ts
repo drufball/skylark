@@ -831,7 +831,21 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     }
   }
 
-  return { onStatusChanged, resume, handleBusNote, reconcile }
+  /**
+   * Drive a turn on one of this issue's sessions through THIS orchestrator's
+   * own runtime — the single seam the night watch (hull/watch) uses to nudge a
+   * stalled build or health-check a long background wait. It MUST go through
+   * here and not a fresh runtime: issue-backed sessions are owned by this
+   * runtime instance, and its single-flight/queue is what folds a nudge into a
+   * followUp instead of double-driving a session another turn is already on
+   * (the #69iz caveat). It's just the private `fireTurn` — same status-line
+   * streaming, same fire-and-forget contract — exposed by name.
+   */
+  function driveTurn(issueId: string, sessionId: string, text: string): void {
+    fireTurn(issueId, sessionId, text)
+  }
+
+  return { onStatusChanged, resume, handleBusNote, reconcile, driveTurn }
 }
 
 export type Orchestrator = ReturnType<typeof createOrchestrator>
