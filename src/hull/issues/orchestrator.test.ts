@@ -1971,6 +1971,19 @@ describe('generalPrompt', () => {
   })
 })
 
+describe('driveTurn', () => {
+  it('fires a turn on the given session through the orchestrator runtime', () => {
+    const { deps, runtime } = makeDeps()
+    const orch = createOrchestrator(deps)
+
+    orch.driveTurn('issue-x', 'sess-y', 'the night watch nudge')
+
+    expect(runtime.turns).toEqual([
+      { sessionId: 'sess-y', text: 'the night watch nudge' },
+    ])
+  })
+})
+
 // Helper: find the status_changed event id for an issue on the public scope.
 async function findStatusEventId(
   database: Database,

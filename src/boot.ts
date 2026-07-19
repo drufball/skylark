@@ -32,6 +32,7 @@ import { ensureChatOrchestrator } from '@hull/chat/orchestrator-live'
 import { ensureOrchestrator } from '@hull/issues/orchestrator-live'
 import { ensureNotificationsReactor } from '@hull/notifications/live'
 import { liveFilesService } from '@hull/files/live'
+import { ensureWatchService } from '@hull/watch/live'
 
 /* v8 ignore start -- live wiring exercised by the running app */
 
@@ -95,6 +96,13 @@ export function bootAllReactors(): void {
 
   // Files service: sweep staging branch to main on idle
   liveFilesService()
+
+  // Night watch: a ~60s sweep that nudges stalled builds and health-checks long
+  // background waits. Armed AFTER the issues orchestrator (above) on purpose —
+  // it drives its interventions through that orchestrator's own runtime, and
+  // its interval floor means the first tick fires well after reconcile settles,
+  // so it never acts on pre-crash state.
+  ensureWatchService()
 }
 
 /**

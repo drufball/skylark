@@ -126,6 +126,12 @@ export default defineConfig(
       'src/hull/users/actor.ts',
       'src/hull/auth/server.ts',
       'src/hull/auth/cli.ts',
+      // The night watch sweeps EVERY building issue, session, and background
+      // job across all crew and drives the issues orchestrator's runtime —
+      // fixed supervision plumbing, exactly like the orchestrators it rides.
+      // Its CLI is read-only but likewise reads across all rows with no actor.
+      'src/hull/watch/live.ts',
+      'src/hull/watch/cli.ts',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },

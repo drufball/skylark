@@ -111,6 +111,10 @@ app-shell nav).
   a slug generator as dependencies, so its decisions are unit-tested against
   fakes. `onStatusChanged` is the single decision point; `handleBusNote` is the
   ship-log subscription that feeds it; `reconcile` is startup recovery.
+  `driveTurn(issueId, sessionId, text)` is a narrow seam — its private
+  `fireTurn` exposed by name — so the night watch (hull/watch) can nudge a
+  stalled build or health-check a long wait through THIS orchestrator's own
+  runtime, never a fresh one (see hull/watch/zine.md's ownership note).
 - **The live shell** (`orchestrator-live.ts`) — the impure wiring the
   orchestrator's decisions plug into: `nodeGitOps` (real `git worktree` +
   file-copy via `child_process`), `generateSlug` (a cheap Anthropic call that
@@ -378,6 +382,10 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **#q9d9** — `driveTurn(issueId, sessionId, text)` added to the orchestrator's
+  return: the private `fireTurn` exposed by name so the night watch (hull/watch)
+  drives nudges/health-checks through THIS orchestrator's runtime, never a fresh
+  one. No lifecycle change.
 - **#5vp3** — The baton is now an explicit column, not a re-derivation.
   `issues.batonHolderId` (→ users.id, nullable) + `setBatonHolder`; set to the
   playbook entrypoint on → building (orchestrator), to the target agent on
