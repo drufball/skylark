@@ -1,5 +1,6 @@
 import { db } from '@hull/db/client'
 import { errorMessage } from '@hull/lib/errors'
+import { startIntervalSweep } from '@hull/lib/interval-sweep'
 
 import { createFilesRepo } from './git'
 import { createFilesService, type FilesService } from './service'
@@ -38,11 +39,13 @@ export function liveFilesService(): FilesService {
       console.error(`files: ensure dir failed: ${errorMessage(err)}`)
     })
     const service = createFilesService({ db, repo })
-    setInterval(() => {
-      void service.sweep(Date.now()).catch((err: unknown) => {
-        console.error(`files: sweep failed: ${errorMessage(err)}`)
-      })
-    }, SWEEP_INTERVAL_MS).unref()
+    // The shared recurring-sweep helper (unref'd interval, injected clock,
+    // errors swallowed + logged) — the same one chat's schedule sweep rides.
+    startIntervalSweep({
+      intervalMs: SWEEP_INTERVAL_MS,
+      label: 'files',
+      tick: (now) => service.sweep(now),
+    })
     singleton = service
   }
   return singleton

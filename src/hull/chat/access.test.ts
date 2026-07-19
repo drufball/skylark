@@ -8,11 +8,14 @@ import { createUser } from '@hull/users/service'
 import {
   addMessage,
   createChat,
+  createSchedule,
   ensureChatVisible,
   getChat,
+  getSchedule,
   listChatSummaries,
   listMembers,
   listMessages,
+  listSchedules,
 } from './service'
 
 // Proves the migration 0007 RLS policies actually filter chat reads/writes by
@@ -144,5 +147,61 @@ describe('chat access (RLS)', () => {
         }),
       ),
     ).rejects.toThrow()
+  })
+
+  it('schedules ride membership: a member creates + reads, a non-member is blocked', async () => {
+    const timing = {
+      fireAt: new Date(),
+      intervalMinutes: null,
+      nextFireAt: null,
+    }
+    // alice is in c1 → may create a schedule there and read it back.
+    const created = await asActor(db, alice, (tx) =>
+      createSchedule(tx, {
+        id: uuidv7(),
+        chatId: c1,
+        authorId: alice,
+        body: 'standup',
+        createdById: alice,
+        ...timing,
+      }),
+    )
+    const seen = await asActor(db, alice, (tx) => listSchedules(tx, c1))
+    expect(seen.map((s) => s.id)).toEqual([created.id])
+
+    // alice is NOT in c2 → the WITH CHECK policy rejects the insert.
+    await expect(
+      asActor(db, alice, (tx) =>
+        createSchedule(tx, {
+          id: uuidv7(),
+          chatId: c2,
+          authorId: alice,
+          body: 'sneak',
+          createdById: alice,
+          ...timing,
+        }),
+      ),
+    ).rejects.toThrow()
+  })
+
+  it('hides a non-member chat’s schedules entirely', async () => {
+    const id = uuidv7()
+    // Arrange as superuser (RLS bypassed): a schedule on bob-only c2.
+    await createSchedule(db, {
+      id,
+      chatId: c2,
+      authorId: bob,
+      body: 'private',
+      createdById: bob,
+      fireAt: new Date(),
+      intervalMinutes: null,
+      nextFireAt: null,
+    })
+    // alice is not in c2 → sees neither the list nor the row.
+    expect(await asActor(db, alice, (tx) => listSchedules(tx, c2))).toEqual([])
+    expect(
+      await asActor(db, alice, (tx) => getSchedule(tx, id)),
+    ).toBeUndefined()
+    expect(await asActor(db, bob, (tx) => getSchedule(tx, id))).toBeDefined()
   })
 })

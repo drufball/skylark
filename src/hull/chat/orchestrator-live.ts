@@ -11,8 +11,10 @@ import {
   markRead,
 } from '@hull/notifications/service'
 import { getUserById, handleOf } from '@hull/users/service'
+import { startIntervalSweep } from '@hull/lib/interval-sweep'
 
 import { type ChatOrchestrator, createChatOrchestrator } from './orchestrator'
+import { fireDueSchedules } from './service'
 import { createAgentWaker } from './waker'
 
 /* v8 ignore start -- live wiring: the real agent runtime + the ship-log
@@ -25,9 +27,18 @@ import { createAgentWaker } from './waker'
 /** How long a flurry of notifications gathers before one wake fires. */
 const WAKE_DEBOUNCE_MS = 10_000
 
+/**
+ * How often the schedule sweep checks for due schedules. The interval floor is
+ * five minutes, so a 30s cadence keeps a fire within half a minute of its time
+ * — responsive without being chatty (mirrors the files sweep's 30s tick). A
+ * long-overdue row from a reboot still fires exactly once (advanceNextFire).
+ */
+const SCHEDULE_SWEEP_INTERVAL_MS = 30_000
+
 let started: ChatOrchestrator | undefined
 let unsubscribeBus: (() => void) | undefined
 let unsubscribeHook: (() => void) | undefined
+let stopScheduleSweep: (() => void) | undefined
 
 /**
  * globalThis-based arm-once registry (defense in depth, survives module
@@ -81,6 +92,7 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
   // persist (InProcessBus, deliveryHooks). Clean up the old ones first.
   unsubscribeBus?.()
   unsubscribeHook?.()
+  stopScheduleSweep?.()
   // systemDb (superuser): the orchestrator is fixed plumbing — it scans all
   // chats to recover work (reconcile) and posts the agent's reply, which under
   // app_user with no actor would fail closed. It reacts to events, it doesn't
@@ -111,6 +123,16 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
     waker.onNotified(notification)
   })
   ensureNotificationsReactor()
+
+  // The schedule sweep: fire every due chat schedule (one-shot or recurring) by
+  // calling chat's own addMessage as the author — nothing else, so the reply
+  // rules do the rest. On systemDb (RLS bypassed), the same posture as the
+  // orchestrator; the shared interval helper keeps it unref'd + error-swallowing.
+  stopScheduleSweep = startIntervalSweep({
+    intervalMs: SCHEDULE_SWEEP_INTERVAL_MS,
+    label: 'chat schedules',
+    tick: (now) => fireDueSchedules(systemDb, new Date(now)),
+  })
 
   return orchestrator
 }

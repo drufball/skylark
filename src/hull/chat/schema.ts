@@ -1,5 +1,7 @@
 import {
+  boolean,
   index,
+  integer,
   pgTable,
   primaryKey,
   text,
@@ -85,6 +87,65 @@ export const chatMessages = pgTable(
   (table) => [index('chat_messages_chat_idx').on(table.chatId, table.id)],
 )
 
+/**
+ * A message queued to post itself into a chat later — one-shot or recurring —
+ * owned entirely by the chat service. It fires by posting a chat message AS its
+ * `authorId` (the same message write + event as any post, committed atomically
+ * with the schedule's advance), so the existing reply rules do the rest: a
+ * human-authored schedule triggers agent replies (a recurring task), an
+ * agent-authored one triggers none (a recurring announcement; agents never
+ * trigger agents).
+ *
+ * Timing is one of two shapes, never both: a one-shot carries `fireAt` (and is
+ * disabled once it fires); a recurring one carries `intervalMinutes` with a
+ * `nextFireAt` advanced each fire. Schedules ride chat membership like messages
+ * (RLS, migration 0027) — visible to every member, no invisible clockwork.
+ *
+ * NOTE: the timing XOR and the author rule ("posts as the creator or an agent
+ * member, never another human") are enforced at the doors (scheduleTiming,
+ * canAuthorSchedule in service.ts), NOT in the schema/RLS — every write path
+ * must go through them. RLS only gates visibility by chat membership.
+ */
+export const chatSchedules = pgTable(
+  'chat_schedules',
+  {
+    id: text('id').primaryKey(),
+    chatId: text('chat_id')
+      .notNull()
+      .references(() => chats.id, { onDelete: 'cascade' }),
+    /** The member this posts AS — the creator themself, or an agent member; never another human. */
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id),
+    body: text('body').notNull(),
+    /** One-shot: the single time to fire. Null for a recurring schedule. */
+    fireAt: timestamp('fire_at', { withTimezone: true }),
+    /** Recurring: whole minutes between fires (floor enforced at the door). Null for a one-shot. */
+    intervalMinutes: integer('interval_minutes'),
+    /** Recurring: the next time to fire, advanced each fire. Null for a one-shot. */
+    nextFireAt: timestamp('next_fire_at', { withTimezone: true }),
+    /** Off never fires; a fired one-shot is disabled (consumed), not deleted. */
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Who created the schedule (audit) — distinct from `authorId`, who it posts as. */
+    createdById: text('created_by_id')
+      .notNull()
+      .references(() => users.id),
+  },
+  (table) => [
+    index('chat_schedules_chat_idx').on(table.chatId),
+    // The sweep scans enabled rows by due time (fireAt for one-shots, nextFireAt for recurring).
+    index('chat_schedules_due_idx').on(
+      table.enabled,
+      table.fireAt,
+      table.nextFireAt,
+    ),
+  ],
+)
+
 export type ChatRow = typeof chats.$inferSelect
 export type ChatMemberRow = typeof chatMembers.$inferSelect
 export type ChatMessageRow = typeof chatMessages.$inferSelect
+export type ChatScheduleRow = typeof chatSchedules.$inferSelect

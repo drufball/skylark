@@ -8,10 +8,14 @@ import { useCallback, useMemo, useState } from 'react'
 
 import {
   createChatFn,
+  createChatSchedule,
+  deleteChatSchedule,
   getChatThread,
   listChatCrew,
   listChats,
+  listChatSchedules,
   postChatMessage,
+  setChatScheduleEnabled,
   updateChat,
 } from '@hull/chat/server'
 import {
@@ -25,6 +29,8 @@ import {
   type ChatMemberItem,
   type ChatMsg,
   type CrewMember,
+  type NewSchedule,
+  type ScheduleItem,
   workingFromMembers,
 } from '@rigging/views/chat'
 import { Dock } from '@rigging/views/dock'
@@ -56,7 +62,16 @@ export const Route = createFileRoute('/')({
     // Default to the most recent chat unless we're composing a new one.
     const activeId = deps.composing ? undefined : (deps.chat ?? chats[0]?.id)
     const thread = activeId ? await getChatThread({ data: activeId }) : null
-    return { me, chats, crew, thread, activeId: thread ? activeId : undefined }
+    const schedules =
+      thread && activeId ? await listChatSchedules({ data: activeId }) : []
+    return {
+      me,
+      chats,
+      crew,
+      thread,
+      schedules,
+      activeId: thread ? activeId : undefined,
+    }
   },
   component: ChatRoute,
 })
@@ -76,7 +91,7 @@ function readProgress(payload: unknown): ChatAgentProgressPayload | null {
 
 function ChatRoute() {
   const { new: composing } = Route.useSearch()
-  const { me, chats, crew, thread, activeId } = Route.useLoaderData()
+  const { me, chats, crew, thread, schedules, activeId } = Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
   const { busy, run } = useServerAction()
@@ -149,6 +164,24 @@ function ChatRoute() {
     await router.invalidate()
   }
 
+  async function addSchedule(input: NewSchedule) {
+    if (!activeId) return
+    await run(() =>
+      createChatSchedule({ data: { chatId: activeId, ...input } }),
+    )
+    await router.invalidate()
+  }
+
+  async function toggleSchedule(scheduleId: string, enabled: boolean) {
+    await run(() => setChatScheduleEnabled({ data: { scheduleId, enabled } }))
+    await router.invalidate()
+  }
+
+  async function removeSchedule(scheduleId: string) {
+    await run(() => deleteChatSchedule({ data: { scheduleId } }))
+    await router.invalidate()
+  }
+
   const chatItems: ChatListItem[] = chats.map((c) => ({
     id: c.id,
     title: c.title,
@@ -171,6 +204,16 @@ function ChatRoute() {
     handle: c.handle,
     displayName: c.displayName,
     type: c.type,
+  }))
+  const scheduleItems: ScheduleItem[] = schedules.map((s) => ({
+    id: s.id,
+    authorHandle: s.authorHandle,
+    body: s.body,
+    enabled: s.enabled,
+    intervalMinutes: s.intervalMinutes,
+    // Serialized over the wire: a Date | null becomes an ISO string | null.
+    fireAt: s.fireAt as unknown as string | null,
+    nextFireAt: s.nextFireAt as unknown as string | null,
   }))
 
   const onLogout = useLogout()
@@ -207,6 +250,16 @@ function ChatRoute() {
         }}
         onRemoveMember={(userId) => {
           void changeMembers({ removeMemberId: userId })
+        }}
+        schedules={scheduleItems}
+        onCreateSchedule={(input) => {
+          void addSchedule(input)
+        }}
+        onToggleSchedule={(id, enabled) => {
+          void toggleSchedule(id, enabled)
+        }}
+        onDeleteSchedule={(id) => {
+          void removeSchedule(id)
         }}
       />
     </Dock>
