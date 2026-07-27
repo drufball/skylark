@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react'
+
 import { Button } from '@rigging/components/ui/button'
 import { cn } from '@rigging/lib/utils'
 
@@ -44,23 +46,41 @@ export const choiceKind: WidgetKind = {
       view: {
         headline: record.question,
         topics: [],
-        Body: ({ onAnswer, spent }) => (
-          <div className="flex flex-wrap gap-2 px-3 pb-3">
-            {options.map((option) => (
-              <Button
-                key={option}
-                variant="outline"
-                disabled={spent}
-                onClick={() => {
-                  onAnswer(option)
-                }}
-                className={cn('flex-1 basis-32', TAP_TARGET)}
-              >
-                {option}
-              </Button>
-            ))}
-          </div>
-        ),
+        Body: ({ onAnswer, spent, answer }) =>
+          answer === null ? (
+            <div className="flex flex-wrap gap-2 px-3 pb-3">
+              {options.map((option) => (
+                <Button
+                  key={option}
+                  variant="outline"
+                  disabled={spent}
+                  onClick={() => {
+                    onAnswer(option)
+                  }}
+                  className={cn('flex-1 basis-32', TAP_TARGET)}
+                >
+                  {option}
+                </Button>
+              ))}
+            </div>
+          ) : (
+            /* Answered, and still on screen — so this is a canvas or a home
+               tile, where the decision IS the state. The options stay visible
+               with the chosen one marked, because "Yes" alone doesn't tell you
+               what the alternatives were. */
+            <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
+              <span className="flex items-center gap-1 text-sm font-medium">
+                <Check className="size-4 text-primary" aria-hidden />
+                {answer}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {options
+                  .filter((option) => option !== answer)
+                  .map((option) => `not ${option}`)
+                  .join(' · ')}
+              </span>
+            </div>
+          ),
       },
     }
   },

@@ -33,6 +33,17 @@ export interface WidgetBodyProps {
   onAnswer: (value: string) => void
   /** An answer is already in flight — the buttons are spent until it settles. */
   spent: boolean
+  /**
+   * The decision already recorded on this row (`chat_widgets.answer_value`), or
+   * null if it hasn't been answered.
+   *
+   * Non-null only on a spatial surface. The stack takes an answered widget away
+   * — the turn is over — while a canvas keeps it, because a tile that vanished
+   * out of a layout somebody made left a hole in it. That rule is the HULL's
+   * (`answerDismisses`), not a rendering trick; what a kind does with the value
+   * is this deck's business, and for `choice` it's showing which button won.
+   */
+  answer: string | null
 }
 
 /** A parsed widget instance, bound and ready for the stack to render. */

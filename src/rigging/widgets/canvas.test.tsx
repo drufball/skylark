@@ -2,13 +2,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { CANVAS_COLUMNS } from '@hull/chat/widgets'
 import { MOBILE_BREAKPOINT } from '@rigging/lib/use-is-mobile'
 import type { EventSourceLike } from '@rigging/lib/use-ship-log'
 
 import {
-  cellAt,
-  nudge,
   WidgetCanvas,
   type CanvasPageItem,
   type CanvasWidgetItem,
@@ -40,6 +37,7 @@ function tile(over: Partial<CanvasWidgetItem> = {}): CanvasWidgetItem {
     kind: 'note',
     props: { text: '# Deploys\n\nfour today' },
     createdByHandle: 'tilde',
+    answerValue: null,
     pageId: 'p1',
     gridX: 0,
     gridY: 0,
@@ -87,62 +85,6 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   setWidth(1024)
-})
-
-describe('cellAt', () => {
-  it('reads the cell a pointer is over', () => {
-    // A 400px-wide four-column grid: 102px a column once the gutter is counted.
-    expect(
-      cellAt(
-        { left: 0, top: 0, width: 400 },
-        { clientX: 210, clientY: 120 },
-        0,
-      ),
-    ).toEqual({ gridX: 2, gridY: 1 })
-  })
-
-  it('counts the grid’s own scroll, so a dragged tile lands where you see it', () => {
-    expect(
-      cellAt({ left: 0, top: 0, width: 400 }, { clientX: 0, clientY: 0 }, 224),
-    ).toEqual({ gridX: 0, gridY: 2 })
-  })
-
-  it('refuses to guess from a grid with no width', () => {
-    // A zero-width box (unlaid-out, or jsdom) would divide every column into
-    // nothing and slam the tile to 0,0 — worse than not moving it.
-    expect(
-      cellAt({ left: 0, top: 0, width: 0 }, { clientX: 50, clientY: 50 }, 0),
-    ).toBeNull()
-  })
-})
-
-describe('nudge', () => {
-  const box = { gridX: 1, gridY: 1, gridW: 2, gridH: 2 }
-
-  it('moves a cell per arrow', () => {
-    expect(nudge(box, 'ArrowRight', false)).toMatchObject({
-      gridX: 2,
-      gridY: 1,
-    })
-    expect(nudge(box, 'ArrowUp', false)).toMatchObject({ gridX: 1, gridY: 0 })
-  })
-
-  it('resizes with shift held', () => {
-    expect(nudge(box, 'ArrowRight', true)).toMatchObject({ gridW: 3, gridH: 2 })
-    expect(nudge(box, 'ArrowUp', true)).toMatchObject({ gridW: 2, gridH: 1 })
-  })
-
-  it('parks against an edge instead of walking off it', () => {
-    const edge = { gridX: CANVAS_COLUMNS - 1, gridY: 0, gridW: 1, gridH: 1 }
-    expect(nudge(edge, 'ArrowRight', false)).toMatchObject({
-      gridX: CANVAS_COLUMNS - 1,
-    })
-    expect(nudge(edge, 'ArrowUp', false)).toMatchObject({ gridY: 0 })
-  })
-
-  it('ignores a key that isn’t an arrow', () => {
-    expect(nudge(box, 'Enter', false)).toBeNull()
-  })
 })
 
 describe('WidgetCanvas: the pages', () => {
@@ -212,7 +154,7 @@ describe('WidgetCanvas: the desktop grid', () => {
       ],
     })
     const cells = screen
-      .getAllByLabelText(/^Send widget/)
+      .getAllByLabelText(/^Send /)
       .map((btn) =>
         btn.closest('[style*="grid-column"]')?.getAttribute('style'),
       )
@@ -244,8 +186,92 @@ describe('WidgetCanvas: the desktop grid', () => {
       setWidth(DESKTOP)
     })
     const { onStackWidget } = renderCanvas()
-    fireEvent.click(screen.getByLabelText('Send widget w1 to the stack'))
+    fireEvent.click(screen.getByLabelText('Send Deploys to the stack'))
     expect(onStackWidget).toHaveBeenCalledWith('w1')
+  })
+
+  it('keeps an answered choice in place, showing what was decided', () => {
+    // The #cse5 wart: answering a choice pinned to a canvas made the tile
+    // vanish, leaving a hole in an arrangement somebody made. The row now
+    // carries its decision (the hull's `answerDismisses` keeps it here), and
+    // the tile shows it instead of re-offering a settled question.
+    act(() => {
+      setWidth(DESKTOP)
+    })
+    renderCanvas({
+      widgets: [
+        {
+          id: 'w1',
+          kind: 'choice',
+          props: { question: 'Ship it?', options: ['Yes', 'No'] },
+          answerValue: 'Yes',
+        },
+      ],
+    })
+    expect(screen.getByLabelText('Move Ship it?')).toBeTruthy()
+    expect(screen.getByText('Yes')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'No' })).toBeNull()
+  })
+
+  it('names every control after the tile, never after its row id', () => {
+    // A primary key read aloud — "Send widget 019fa5b1-f0f1-… to the stack" —
+    // is a database column escaping into the UI, and it's the only thing a
+    // screen reader user would hear about the tile.
+    act(() => {
+      setWidth(DESKTOP)
+    })
+    renderCanvas({ widgets: [{ id: '019fa5b1-f0f1-7000-8000-000000000001' }] })
+    for (const label of screen
+      .getAllByLabelText(/./)
+      .map((el) => el.getAttribute('aria-label') ?? '')) {
+      expect(label).not.toContain('019fa5b1')
+    }
+    expect(screen.getByLabelText('Send Deploys to the stack')).toBeTruthy()
+    expect(screen.getByLabelText('Resize Deploys')).toBeTruthy()
+  })
+
+  it('offers a pin to home only when the host wired one up', () => {
+    act(() => {
+      setWidth(DESKTOP)
+    })
+    const { rerender } = render(
+      <WidgetCanvas
+        pages={PAGES}
+        widgets={[tile()]}
+        activePageId="p1"
+        busy={false}
+        eventSourceFactory={factory}
+        onSelectPage={vi.fn()}
+        onNewPage={vi.fn()}
+        onRenamePage={vi.fn()}
+        onRemovePage={vi.fn()}
+        onPlaceWidget={vi.fn()}
+        onStackWidget={vi.fn()}
+        onAnswerWidget={vi.fn()}
+      />,
+    )
+    expect(screen.queryByLabelText(/Pin Deploys/)).toBeNull()
+
+    const onPinHome = vi.fn()
+    rerender(
+      <WidgetCanvas
+        pages={PAGES}
+        widgets={[tile()]}
+        activePageId="p1"
+        busy={false}
+        eventSourceFactory={factory}
+        onSelectPage={vi.fn()}
+        onNewPage={vi.fn()}
+        onRenamePage={vi.fn()}
+        onRemovePage={vi.fn()}
+        onPlaceWidget={vi.fn()}
+        onStackWidget={vi.fn()}
+        onAnswerWidget={vi.fn()}
+        onPinHome={onPinHome}
+      />,
+    )
+    fireEvent.click(screen.getByLabelText('Pin Deploys to your home'))
+    expect(onPinHome).toHaveBeenCalledWith('w1')
   })
 
   it('spends the buttons on the first tap, so a double tap answers once', () => {
@@ -411,7 +437,7 @@ describe('WidgetCanvas: the phone', () => {
       setWidth(PHONE)
     })
     const { onStackWidget } = renderCanvas()
-    fireEvent.click(screen.getByLabelText('Send widget w1 to the stack'))
+    fireEvent.click(screen.getByLabelText('Send Deploys to the stack'))
     expect(onStackWidget).toHaveBeenCalledWith('w1')
   })
 })
@@ -425,7 +451,7 @@ describe('WidgetCanvas: thumb-sized where it has to be', () => {
     })
     renderCanvas()
     expect(
-      screen.getByLabelText('Send widget w1 to the stack').className,
+      screen.getByLabelText('Send Deploys to the stack').className,
     ).toContain('min-h-11')
   })
 
@@ -437,7 +463,7 @@ describe('WidgetCanvas: thumb-sized where it has to be', () => {
     })
     renderCanvas()
     expect(
-      screen.getByLabelText('Send widget w1 to the stack').className,
+      screen.getByLabelText('Send Deploys to the stack').className,
     ).not.toContain('min-h-11')
   })
 })

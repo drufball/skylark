@@ -6,6 +6,7 @@ import {
   Boxes,
   FolderOpen,
   Hammer,
+  House,
   LogOut,
   MessageSquare,
 } from 'lucide-react'
@@ -13,14 +14,18 @@ import {
 import { cn } from '@rigging/lib/utils'
 
 // The dock: the ship's persistent app-shell nav. It switches between the ship's
-// surfaces — Chat (the front door), Issues (the board), Files (shared docs),
-// Inbox (notifications), Agents (profiles + the session monitor), and Models
-// (local + hosted models). Presentational and router-agnostic: the link element
-// is injected so the dock is testable without a router and reusable across
-// routes.
+// surfaces — Chat (the front door), Home (your own canvas of pointers at the
+// widgets living in your chats), Issues (the board), Files (shared docs), Inbox
+// (notifications), Agents (profiles + the session monitor), and Models (local +
+// hosted models). Presentational and router-agnostic: the link element is
+// injected so the dock is testable without a router and reusable across routes.
+//
+// Home sits AFTER Chat deliberately: `/` is still the chat front door, and
+// putting Home first would imply a change to that which this slice hasn't made.
 
 export type DockSection =
   | 'chat'
+  | 'home'
   | 'issues'
   | 'files'
   | 'inbox'
@@ -43,6 +48,7 @@ interface DockItem {
 
 const ITEMS: DockItem[] = [
   { section: 'chat', to: '/', label: 'Chat', Icon: MessageSquare },
+  { section: 'home', to: '/home', label: 'Home', Icon: House },
   { section: 'issues', to: '/issues', label: 'Issues', Icon: Hammer },
   { section: 'files', to: '/files', label: 'Files', Icon: FolderOpen },
   { section: 'inbox', to: '/inbox', label: 'Inbox', Icon: Bell },

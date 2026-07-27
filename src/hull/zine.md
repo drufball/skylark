@@ -39,6 +39,11 @@ notifications, and the access gate that says who may see what.
   (humans and agents), where membership is visibility and an agent member's
   replies are driven through its backing session. See
   [`chat/zine.md`](chat/zine.md).
+- **home-canvas service** (`home-canvas/`) — your own screen of POINTERS at
+  widgets living in chats. Personal (`owner_id`, RLS with no membership
+  wrapper), and a pointer is not a grant: what a tile shows is resolved from the
+  viewer's current chat membership on every read. See
+  [`home-canvas/zine.md`](home-canvas/zine.md).
 - **files service** (`files/`) — the crew's shared documents: real files in the
   repo, staged on a git branch and auto-merged back. See
   [`files/zine.md`](files/zine.md).
@@ -93,12 +98,17 @@ into rigging or home. (drizzle-kit finds tables on its own by globbing every
   only its own; it learns about the rest through an exported function or the
   ship's log. Two named exceptions, held by `src/architecture.test.ts`: joining
   `users` for identity (every row knows its crew — that IS the design), and
-  declared FKs between schemas (issues → agent, issues → chat, chat → agent)
-  from the owning `schema.ts` only. A new exception is a diff on that test —
-  which makes it a design review, not a drift.
+  declared FKs between schemas (issues → agent, chat → agent, watch → issues,
+  watch → agent, home-canvas → chat) from the owning `schema.ts` only. A new
+  exception is a diff on that test — which makes it a design review, not a
+  drift.
 
 ## Changelog
 
+- **#cse6** — The home canvas ([`home-canvas/zine.md`](home-canvas/zine.md))
+  joins the hull: personal pages of pointers at chat widgets, resolved against
+  live membership. Adds a fifth allowlisted cross-schema FK (home-canvas →
+  chat).
 - **#q9d9** — The night watch ([`watch/zine.md`](watch/zine.md)): a stall-nudge
   - background-health-check sweep, armed after reconcile, driving through the
     issues orchestrator's runtime. Adds a fourth allowlisted cross-schema FK

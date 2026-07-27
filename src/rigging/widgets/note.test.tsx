@@ -77,14 +77,14 @@ describe('note: parsing', () => {
 describe('note: the body', () => {
   it('renders the note as markdown', () => {
     const { Body } = parse({ text: '# Standup\n\nBring the **board**.' })
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     expect(screen.getByRole('heading', { name: 'Standup' })).toBeTruthy()
     expect(screen.getByText('board').tagName).toBe('STRONG')
   })
 
   it('offers nothing to answer — a note is read, not decided', () => {
     const { Body } = parse({ text: 'Standup at 09:30' })
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     expect(screen.queryAllByRole('button')).toEqual([])
   })
 })

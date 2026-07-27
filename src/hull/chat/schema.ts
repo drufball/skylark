@@ -241,6 +241,18 @@ export const chatWidgets = pgTable(
     gridH: integer('grid_h').notNull().default(2),
     /** Set when answered or waved away: out of the stack, kept as history. */
     dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+    /**
+     * When this widget was answered, and with which of its own offered values.
+     * Distinct from `dismissedAt` because the two surfaces disagree about what
+     * an answer DOES (`answerDismisses` in widgets.ts): on the turn-shaped
+     * stack an answered widget also leaves, while on a canvas page it stays
+     * where somebody put it and shows the decision instead. So "has this been
+     * answered?" needed a mark of its own — it's also the guard that serializes
+     * a double submit now that a dismissal no longer always follows.
+     */
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    /** The value that was answered — one of the row's own offered options. */
+    answerValue: text('answer_value'),
     /** Which member put it here (audit) — a widget is always somebody's judgment. */
     createdById: text('created_by_id')
       .notNull()

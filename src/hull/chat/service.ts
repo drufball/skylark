@@ -29,6 +29,7 @@ import {
   type ChatWidgetChange,
 } from './topic'
 import {
+  answerDismisses,
   answerMessageBody,
   CANVAS_PLACEMENT,
   clampCanvasBox,
@@ -818,6 +819,8 @@ const widgetViewColumns = {
   gridW: chatWidgets.gridW,
   gridH: chatWidgets.gridH,
   dismissedAt: chatWidgets.dismissedAt,
+  answeredAt: chatWidgets.answeredAt,
+  answerValue: chatWidgets.answerValue,
   createdById: chatWidgets.createdById,
   createdAt: chatWidgets.createdAt,
   createdByHandle: users.handle,
@@ -947,6 +950,58 @@ export async function listOpenWidgets(
     .orderBy(asc(chatWidgets.stackOrder), asc(chatWidgets.id))
 }
 
+/**
+ * These exact widgets, whichever chats they live in — RLS-filtered, so a row in
+ * a chat the actor is not (or is no longer) in simply doesn't come back.
+ *
+ * The read the home canvas resolves a **widget pointer** through. It is asked of
+ * chat rather than joined from outside because a widget is chat's row and chat's
+ * access: "may this person see it?" is answered by chat's own policies, at read
+ * time, from the viewer's CURRENT membership. A caller that got a shorter list
+ * than it asked for has learned exactly one thing, which is the right thing —
+ * some of those are not yours any more.
+ */
+export async function listWidgetsByIds(
+  db: Database,
+  widgetIds: string[],
+): Promise<ChatWidgetView[]> {
+  if (widgetIds.length === 0) return []
+  return db
+    .select(widgetViewColumns)
+    .from(chatWidgets)
+    .innerJoin(users, eq(chatWidgets.createdById, users.id))
+    .where(inArray(chatWidgets.id, widgetIds))
+}
+
+/**
+ * The open stack widgets of several chats at once, in render order — the read a
+ * **chat pointer** resolves through: whatever is currently at the top of that
+ * chat's stack. RLS-filtered like every chat read, so a chat the actor has left
+ * contributes nothing at all.
+ *
+ * One query for many chats rather than one per chat, because a home screen may
+ * point into a dozen conversations and the point of it is that it's cheap to
+ * look at.
+ */
+export async function listOpenWidgetsForChats(
+  db: Database,
+  chatIds: string[],
+): Promise<ChatWidgetView[]> {
+  if (chatIds.length === 0) return []
+  return db
+    .select(widgetViewColumns)
+    .from(chatWidgets)
+    .innerJoin(users, eq(chatWidgets.createdById, users.id))
+    .where(
+      and(
+        inArray(chatWidgets.chatId, chatIds),
+        eq(chatWidgets.placement, STACK_PLACEMENT),
+        isNull(chatWidgets.dismissedAt),
+      ),
+    )
+    .orderBy(asc(chatWidgets.stackOrder), asc(chatWidgets.id))
+}
+
 /** Move a widget within its placement — how an agent reorders the stack. */
 export async function reorderWidget(
   db: Database,
@@ -986,8 +1041,8 @@ export async function dismissWidget(
 }
 
 /**
- * Answer a widget: post the answer as an ORDINARY chat message and take the
- * widget out of the stack — in ONE transaction.
+ * Answer a widget: post the answer as an ORDINARY chat message and mark the
+ * decision on the row — in ONE transaction.
  *
  * "Ordinary message" is the whole design. Answering reuses chat's own message
  * write, authored by the ANSWERING actor, so the unseen-message diffing, reply
@@ -995,13 +1050,22 @@ export async function dismissWidget(
  * reconcile all apply with zero new code — the same reasoning as a schedule
  * firing. There is no separate answer table and no separate delivery path.
  *
+ * **What answering DOES to the tile depends on the surface it's on**, and that
+ * distinction lives in the row's contract (`answerDismisses`), not in whichever
+ * component draws it. On the turn-shaped **stack** the widget also leaves: the
+ * question was dealt with. On a **canvas** page it stays exactly where somebody
+ * put it and shows `answerValue` — a page is a layout the crew made, and a tile
+ * that vanished when you answered it punched a hole in it.
+ *
  * The guards, in order: the widget must be visible (RLS hides a non-member's, and
  * the chat's deletion cascades the row away entirely), the row must actually
- * offer answers, the value must be one of them, and the dismissal must win the
- * race — the update is conditional on `dismissed_at is null`, so a double submit
- * (two taps, two tabs) touches no rows the second time and rolls back without
- * posting a second message. Dismissing BEFORE writing the message is deliberate:
- * the row lock is what serializes the two attempts.
+ * offer answers, the value must be one of them, and the ANSWER must win the race
+ * — the update is conditional on `answered_at is null and dismissed_at is null`,
+ * so a double submit (two taps, two tabs) touches no rows the second time and
+ * rolls back without posting a second message. That the guard is the answer mark
+ * rather than the dismissal is what a canvas answer needs: the tile is still on
+ * screen afterwards, so "is it dismissed?" stopped being the question. Marking
+ * BEFORE writing the message is deliberate: the row lock serializes the attempts.
  *
  * The offer is read structurally (`offeredAnswer`), so the whitelist holds for
  * every answerable kind without the hull knowing one by name — and a `note`, an
@@ -1021,17 +1085,24 @@ export async function answerWidget(
     if (!offer.options.includes(input.value)) {
       throw new Error(`“${input.value}” is not one of this widget’s options`)
     }
-    const dismissed = await tx
+    const now = new Date()
+    const answered = await tx
       .update(chatWidgets)
-      .set({ dismissedAt: new Date() })
+      .set({
+        answeredAt: now,
+        answerValue: input.value,
+        // The turn-shaped surface clears; the state-shaped one keeps the tile.
+        ...(answerDismisses(widget.placement) ? { dismissedAt: now } : {}),
+      })
       .where(
         and(
           eq(chatWidgets.id, input.widgetId),
+          isNull(chatWidgets.answeredAt),
           isNull(chatWidgets.dismissedAt),
         ),
       )
       .returning({ id: chatWidgets.id })
-    if (dismissed.length === 0) {
+    if (answered.length === 0) {
       throw new Error('this widget has already been answered')
     }
     return writeMessage(tx, {

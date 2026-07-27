@@ -1161,6 +1161,63 @@ describe('the canvas: pages, placement, and who is looking at what', () => {
     ])
   })
 
+  it('keeps an answered CANVAS widget in place, showing the decision it recorded', async () => {
+    // The stack is turn-shaped, so answering clears a tile off it. A canvas
+    // page is a layout somebody MADE, and a tile that vanished when you
+    // answered it left a hole in their arrangement — so on this surface an
+    // answered question stays put and becomes the decision it recorded.
+    const pageId = await page('Ops')
+    const widgetId = uuidv7()
+    await addWidget(db, {
+      id: widgetId,
+      chatId,
+      kind: 'choice',
+      props: { question: 'Ship it?', options: ['Yes', 'No'] },
+      createdById: tilde,
+    })
+    await placeWidget(db, { widgetId, actorId: dru, pageId })
+
+    const message = await answerWidget(db, {
+      widgetId,
+      actorId: dru,
+      value: 'Yes',
+    })
+
+    // The answer is still an ORDINARY chat message — the same door, unchanged.
+    expect(message.body).toBe(answerMessageBody('Ship it?', 'Yes'))
+    // …but the tile is still on the page, carrying what was decided.
+    expect(await listCanvasWidgets(db, chatId)).toMatchObject([
+      { id: widgetId, pageId, answerValue: 'Yes' },
+    ])
+    expect(defined(await getWidget(db, widgetId)).dismissedAt).toBeNull()
+    expect(defined(await getWidget(db, widgetId)).answeredAt).toBeInstanceOf(
+      Date,
+    )
+  })
+
+  it('refuses a second answer on the canvas, and posts no second message', async () => {
+    // The tile is still on screen after the first answer, which is exactly why
+    // the guard can't be "is it dismissed?" any more.
+    const pageId = await page('Ops')
+    const widgetId = uuidv7()
+    await addWidget(db, {
+      id: widgetId,
+      chatId,
+      kind: 'choice',
+      props: { question: 'Ship it?', options: ['Yes', 'No'] },
+      createdById: tilde,
+    })
+    await placeWidget(db, { widgetId, actorId: dru, pageId })
+    await answerWidget(db, { widgetId, actorId: dru, value: 'Yes' })
+
+    await expect(
+      answerWidget(db, { widgetId, actorId: dru, value: 'No' }),
+    ).rejects.toThrow(/already been answered/)
+    expect(await listMessages(db, chatId)).toHaveLength(1)
+    // And the first decision stands — a refused second tap cannot rewrite it.
+    expect(defined(await getWidget(db, widgetId)).answerValue).toBe('Yes')
+  })
+
   it('slots an unplaced widget into the first free cell, never on top of another', async () => {
     const pageId = await page('Ops')
     const a = await raise('a')

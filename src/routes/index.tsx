@@ -35,6 +35,7 @@ import {
   chatTopic,
   type ChatAgentProgressPayload,
 } from '@hull/chat/topic'
+import { pinHomeCanvasTile } from '@hull/home-canvas/server'
 import {
   ChatView,
   type ChatListItem,
@@ -303,6 +304,12 @@ function ChatRoute() {
     await router.invalidate()
   }
 
+  /** Run a door and refresh — the shape most of the small actions above share. */
+  async function act(fn: () => Promise<unknown>) {
+    await run(fn)
+    await router.invalidate()
+  }
+
   /**
    * Open a canvas page — MY view, not the chat's. Optimistic locally (a tab tap
    * must not wait on a round trip) and persisted against (chat, me) so a reload
@@ -344,12 +351,16 @@ function ChatRoute() {
     kind: w.kind,
     props: w.props,
     createdByHandle: w.createdByHandle,
+    answerValue: w.answerValue,
   }))
   const canvasItems: CanvasWidgetItem[] = canvas.widgets.map((w) => ({
     id: w.id,
     kind: w.kind,
     props: w.props,
     createdByHandle: w.createdByHandle,
+    // An answered choice STAYS on a canvas and shows what was decided (the
+    // hull's `answerDismisses`), so the row's decision has to come down too.
+    answerValue: w.answerValue,
     // A canvas row always carries a page; the column is nullable only because a
     // STACK row has none.
     pageId: w.pageId ?? '',
@@ -449,6 +460,12 @@ function ChatRoute() {
         }}
         onStackWidget={(widgetId) => {
           void stackWidget(widgetId)
+        }}
+        onPinHomeWidget={(widgetId) => {
+          // A POINTER on your own home, not a move: the widget stays right
+          // here. No page named — the door lands it on your first one (and
+          // makes you one if this is your first pin).
+          void act(() => pinHomeCanvasTile({ data: { widgetId } }))
         }}
       />
     </Dock>
