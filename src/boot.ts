@@ -29,10 +29,12 @@
  */
 
 import { ensureChatOrchestrator } from '@hull/chat/orchestrator-live'
+import { registerWidgetKinds } from '@hull/chat/widget-catalog'
 import { ensureOrchestrator } from '@hull/issues/orchestrator-live'
 import { ensureNotificationsReactor } from '@hull/notifications/live'
 import { liveFilesService } from '@hull/files/live'
 import { ensureWatchService } from '@hull/watch/live'
+import { widgetKindSpecs } from '@rigging/widgets/registry'
 
 /* v8 ignore start -- live wiring exercised by the running app */
 
@@ -76,6 +78,16 @@ export function bootAllReactors(): void {
   const registry = getBootRegistry()
   if (registry.booted) return
   registry.booted = true
+
+  // The widget catalog, injected across the deck line. What a widget KIND means —
+  // how it renders, which service it reads, which ship-log topics keep it live —
+  // lives in the rigging catalog (@rigging/widgets), because a catalog in the
+  // hull would import every service that has a widget and hand us
+  // `hull/issues → hull/widgets → hull/issues`. But the agent-facing door
+  // (`chat_widget`) is in the hull and has to TELL an agent which kinds exist. The
+  // composition root is the one module allowed to know both decks, so it hands
+  // the vocabulary down here. First, before anything that could boot a session.
+  registerWidgetKinds(widgetKindSpecs())
 
   // Issues orchestrator: reconcile marooned builds, react to ship-log events.
   // Its reconcile also sweeps background jobs stranded by the reload (#v6ft),

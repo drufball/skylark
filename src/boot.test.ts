@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { knownWidgetKinds } from '@hull/chat/widget-catalog'
+import { WIDGET_REGISTRY } from '@rigging/widgets/registry'
+
 import { bootAllReactors, disarmForTests } from './boot'
 
 interface GlobalWithBoot {
@@ -79,5 +82,15 @@ describe('eager boot with globalThis arm-once', () => {
     // Registry still true, proving it survived
     expect(wasBooted).toBe(true)
     expect(g.__SKYLARK_BOOT__?.booted).toBe(true)
+  })
+
+  it('hands the rigging widget catalog down to the hull', () => {
+    // The seam that lets `chat_widget` describe kinds the hull may not import.
+    // If this ever stops running, an agent gets a tool that says the ship knows
+    // no widget kinds — so it's pinned HERE, at the one place both decks meet.
+    bootAllReactors()
+    expect(knownWidgetKinds().map((k) => k.kind)).toEqual(
+      Object.keys(WIDGET_REGISTRY),
+    )
   })
 })

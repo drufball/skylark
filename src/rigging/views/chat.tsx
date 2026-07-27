@@ -1,23 +1,13 @@
-import { useState } from 'react'
-import {
-  AlertTriangle,
-  Bot,
-  CalendarClock,
-  ChevronRight,
-  Plus,
-  Trash2,
-  User,
-  Users,
-  X,
-} from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Bot, CalendarClock, Plus, Trash2, User, Users, X } from 'lucide-react'
 
-import { parseProps } from '@hull/chat/widgets'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Composer } from '@rigging/components/composer'
 import { CollapsibleSidebar } from '@rigging/components/collapsible-sidebar'
 import { inputClass, selectClass } from '@rigging/components/ui/input'
+import { WidgetStack, type WidgetItem } from '@rigging/widgets/stack'
 
 // The front door: chat between the crew — humans and agents. Participant-focused
 // (you keep messaging the same people with new tasks), so the sidebar names a
@@ -101,19 +91,6 @@ export function scheduleSummary(s: {
   return `once · ${at}`
 }
 
-/**
- * A widget as the loader hands it over: a `kind` and an opaque `props` blob,
- * exactly as the row holds them. The view is what calls `parseProps` — so a
- * blob an agent got wrong is one honest tile in the stack, not a failed load.
- */
-export interface WidgetItem {
-  id: string
-  kind: string
-  props: unknown
-  /** Who put it here — a widget is always somebody's judgment, so it's named. */
-  createdByHandle: string
-}
-
 export interface ChatViewProps {
   chats: ChatListItem[]
   activeId?: string
@@ -137,7 +114,12 @@ export interface ChatViewProps {
   onCreateSchedule?: (input: NewSchedule) => void
   onToggleSchedule?: (id: string, enabled: boolean) => void
   onDeleteSchedule?: (id: string) => void
-  /** The active chat's open widgets, already in stack order. */
+  /**
+   * The active chat's open widgets, already in stack order — `kind` + opaque
+   * `props`, exactly as the rows hold them. The stack resolves each one through
+   * the widget catalog (`@rigging/widgets`), so this view knows no kind by name
+   * and adding one never touches it.
+   */
   widgets?: WidgetItem[]
   onAnswerWidget?: (widgetId: string, value: string) => void
   onDismissWidget?: (widgetId: string) => void
@@ -213,6 +195,24 @@ export function seenByHandles(
         m.lastSeenMessageId >= last.id,
     )
     .map((m) => m.handle)
+}
+
+/**
+ * What the composer's placeholder says. Mobile-first, and shorter than it was for
+ * two reasons: the old copy wrapped to three lines in a one-row textarea on a
+ * 390px phone, and it advised "Enter to send" to somebody holding a touch
+ * keyboard, where Enter is a newline.
+ *
+ * The @mention hint is kept only where it's TRUE. In a 1:1 the agent always
+ * answers, so telling you to mention it is wrong information taking up the whole
+ * field; in a group only mentioned agents reply, which is the one thing about
+ * this composer you couldn't guess. Pure and exported so the wording is tested.
+ */
+export function composerPlaceholder(members: ChatMemberItem[]): string {
+  const agents = members.filter((m) => m.type === 'agent').length
+  const humans = members.filter((m) => m.type === 'human').length
+  const group = agents > 1 || humans > 1
+  return group ? 'Message… @mention an agent' : 'Message…'
 }
 
 export function ChatView(props: ChatViewProps) {
@@ -426,7 +426,7 @@ function ActiveChat({
       <Composer
         busy={busy}
         onSend={onSend}
-        placeholder="Message…  (@mention an agent in a group; Enter to send)"
+        placeholder={composerPlaceholder(members)}
       />
     </>
   )
@@ -575,201 +575,20 @@ function SchedulesPanel({
   )
 }
 
-/**
- * The widget stack: the live little views this chat is keeping open, sitting
- * directly above the composer where the next thing you'd touch belongs.
- *
- * It is deliberately a THIN band. One widget is expanded at a time and the rest
- * stay one truncated line each, and the whole band is height-capped and
- * scrollable — so five open widgets can never push the message thread off a
- * phone screen. The stack is a shelf, not a second pane.
- */
-function WidgetStack({
-  widgets,
-  busy,
-  onAnswerWidget,
-  onDismissWidget,
-}: {
-  widgets: WidgetItem[]
-  busy: boolean
-  onAnswerWidget: (widgetId: string, value: string) => void
-  onDismissWidget: (widgetId: string) => void
-}) {
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  // Which widget this crew member has just answered. The server's own event
-  // refreshes the stack a moment later; until then the buttons are spent, so a
-  // double tap can't fire a second answer the door would only refuse. (The host
-  // usually flips `busy` too, but a rigging component shouldn't need it to
-  // avoid double-firing.)
-  const [answered, setAnswered] = useState<string[]>([])
-
-  // Forget what's spent the moment the host stops being busy. On a successful
-  // answer the widget is gone from the stack anyway; on a FAILED one it's still
-  // here, and it has to be answerable again rather than sitting there with dead
-  // buttons forever. Compared during render so the first paint after the
-  // request settles is already right.
-  const [wasBusy, setWasBusy] = useState(busy)
-  if (wasBusy !== busy) {
-    setWasBusy(busy)
-    if (!busy) setAnswered([])
-  }
-
-  return (
-    <div
-      data-testid="widget-stack"
-      className="max-h-52 shrink-0 overflow-y-auto border-t bg-muted/20 px-4 py-2"
-    >
-      <div className="mx-auto flex max-w-3xl flex-col gap-2">
-        {widgets.map((widget) => (
-          <ChatWidget
-            key={widget.id}
-            widget={widget}
-            expanded={expandedId === widget.id}
-            spent={busy || answered.includes(widget.id)}
-            onToggle={() => {
-              setExpandedId((id) => (id === widget.id ? null : widget.id))
-            }}
-            onAnswer={(value) => {
-              setAnswered((ids) => [...ids, widget.id])
-              onAnswerWidget(widget.id, value)
-            }}
-            onDismiss={() => {
-              onDismissWidget(widget.id)
-            }}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/** The tap-target floor a thumb needs — 2.75rem is 44px. */
-const TAP_TARGET = 'min-h-11'
-
-/**
- * One widget, rendered two ways: **compact** (a single truncated line — the
- * question and who asked) and **expanded** (the same line plus its options as
- * tappable buttons). Clicking the compact line expands it; answering hands the
- * value up and the row disappears from the stack when the server says so.
- *
- * A widget whose props don't parse, or whose kind this ship doesn't know, gets
- * an honest tile instead — it says which of the two it is, and it can still be
- * dismissed, so a bad blob is never a dead end you can't clear.
- */
-function ChatWidget({
-  widget,
-  expanded,
-  spent,
-  onToggle,
-  onAnswer,
-  onDismiss,
-}: {
-  widget: WidgetItem
-  expanded: boolean
-  spent: boolean
-  onToggle: () => void
-  onAnswer: (value: string) => void
-  onDismiss: () => void
-}) {
-  const parsed = parseProps(widget.kind, widget.props)
-  const dismiss = (
-    <button
-      type="button"
-      aria-label={`Dismiss widget ${widget.id}`}
-      onClick={onDismiss}
-      className={cn(
-        'flex shrink-0 items-center justify-center px-3',
-        'text-muted-foreground hover:text-destructive',
-        TAP_TARGET,
-      )}
-    >
-      <X className="size-4" />
-    </button>
-  )
-
-  if (!parsed.ok) {
-    return (
-      <div className="flex items-center gap-1 rounded-lg border border-dashed bg-background px-3 py-1">
-        <AlertTriangle className="size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1 py-1">
-          <p className="text-sm">
-            {parsed.fault === 'unknown-kind'
-              ? 'This ship doesn’t know this widget kind'
-              : 'These props don’t parse'}
-          </p>
-          {/* `detail` carries the technical half either way — the offending
-              kind, or which field is wrong. */}
-          <p className="truncate text-xs text-muted-foreground">
-            {parsed.detail}
-          </p>
-        </div>
-        {dismiss}
-      </div>
-    )
-  }
-
-  return (
-    <div className="rounded-lg border bg-background">
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          aria-label={`Open widget ${widget.id}`}
-          aria-expanded={expanded}
-          onClick={onToggle}
-          className={cn(
-            'flex min-w-0 flex-1 items-center gap-2 px-3 text-left',
-            TAP_TARGET,
-          )}
-        >
-          <ChevronRight
-            className={cn(
-              'size-4 shrink-0 text-muted-foreground transition-transform',
-              expanded && 'rotate-90',
-            )}
-          />
-          {/* Two lines, not one: on a 390px phone a single truncated line left
-              about five words of the question readable, which is no question at
-              all. Clamped rather than free-flowing so the tile stays a tile. */}
-          <span
-            data-testid="widget-question"
-            className="min-w-0 flex-1 line-clamp-2 py-1 text-sm"
-          >
-            {parsed.props.question}
-          </span>
-          {/* Who asked is context, not the point — the first thing to go when
-              the screen is narrow, so the question gets the width. */}
-          <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-            @{widget.createdByHandle}
-          </span>
-        </button>
-        {dismiss}
-      </div>
-      {expanded && (
-        <div className="flex flex-wrap gap-2 px-3 pb-3">
-          {parsed.props.options.map((option) => (
-            <Button
-              key={option}
-              variant="outline"
-              disabled={spent}
-              onClick={() => {
-                onAnswer(option)
-              }}
-              className={cn('flex-1 basis-32', TAP_TARGET)}
-            >
-              {option}
-            </Button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function Messages({
   messages,
   working,
   seenBy,
 }: Pick<ChatViewProps, 'messages' | 'working'> & { seenBy: string[] }) {
+  // Keep the newest thing in view — the Agents transcript has always done this
+  // and the front door never did, so answering a widget could post your own
+  // message somewhere you couldn't see it. Re-runs on a new message and on the
+  // working line coming or going, which are the only things that grow the thread.
+  const bottomRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages.length, working])
+
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 p-6">
@@ -820,6 +639,7 @@ function Messages({
             Seen by {seenBy.map((h) => `@${h}`).join(', ')}
           </p>
         )}
+        <div ref={bottomRef} />
       </div>
     </ScrollArea>
   )

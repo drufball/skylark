@@ -87,8 +87,8 @@ export function fakeToolCall(
       name: 'chat_widget',
       args: {
         action: 'raise',
-        question: FAKE_WIDGET_QUESTION,
-        options: ['Yes', 'No'],
+        kind: 'choice',
+        props: { question: FAKE_WIDGET_QUESTION, options: ['Yes', 'No'] },
       },
     }
   }

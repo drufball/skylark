@@ -1,6 +1,6 @@
 # Chat
 
-_chat zine — issue #cse1_
+_chat zine — issue #cse3_
 
 ## tl;dr
 
@@ -99,14 +99,27 @@ rigging.
   its lifetime is the conversation's lifetime (an FK cascade, not a cleanup job)
   and its access is the conversation's access (membership under RLS, migration
   0031). Its CONTENTS are fetched fresh on render and never stored on the row.
-- **Widget kinds** (`widgets.ts`) — the pure, node-free meaning of a `props`
-  blob, shared by the doors and the view. `parseProps(kind, json)` is **total**:
-  it returns a fully-typed `props` or an honest refusal (`unknown-kind` /
-  `bad-props`), never a throw. One kind so far: **`choice`**
-  (`{ question, options[] }`; yes/no is just `options: ['Yes','No']`), which
-  needs nothing from any other service. `answerOptions` is the whitelist an
-  answer is checked against; `answerMessageBody` composes the message an answer
-  posts.
+- **The row's answer contract** (`widgets.ts`) — the pure, node-free half of a
+  widget the HULL keeps: `offeredAnswer(props)` reads the question and the exact
+  values a row will accept back, structurally (a filled `question` plus a
+  non-empty `options` list of non-empty strings) and **without knowing any kind
+  by name**; `answerMessageBody` composes the message an answer posts. Total:
+  every input returns an offer or null, nothing throws. A kind that offers no
+  answers (a `note`, an `issue-list`) simply has no options on its blob, so
+  answering it is refused for free — and so is answering a blob an agent
+  malformed.
+- **Widget kinds** — what a `kind` MEANS (how it renders, what its props are,
+  which topics keep it live) is the rigging **catalog**'s, not the hull's:
+  [`rigging/widgets/zine.md`](../../rigging/widgets/zine.md). Three kinds today
+  — `choice`, `note`, `issue-list`. **Hull holds the row; rigging holds the
+  meaning** (see the decision below for the cycle that forces it).
+- **The widget catalog seam** (`widget-catalog.ts`) — `registerWidgetKinds` /
+  `knownWidgetKinds` / `describeWidgetKinds` / `validateWidgetProps`. The hull
+  may not import the rigging catalog, but `chat_widget` has to TELL an agent
+  which kinds exist, so the composition root (`src/boot.ts`) hands the
+  vocabulary down at boot and this module holds it. The tool's description is
+  GENERATED from it, so a kind added to the catalog is described in one place,
+  not two.
 - **Dismissal** — `dismissedAt` set. The widget leaves the stack; the row
   survives as history — what was asked, of whom, and when it stopped being open.
 - **Doors** — three, and each has a body it belongs to. `server.ts` (the **web**
@@ -185,17 +198,21 @@ announcement.
 the row lands in the actor's own name and a `chat.widget_changed` event goes out
 on the chat's **existing** `chat:<id>` topic, so every member's open browser
 refreshes the stack off the stream it was already listening on. The view renders
-each row through `parseProps`: a good blob becomes a **compact** tile (the
-question, clamped to two lines) that expands into tappable option buttons; a bad
-blob or an unknown kind becomes an honest tile that says which it is and can
-still be dismissed. Answering **posts an ordinary chat message as the answering
-actor** and sets `dismissedAt` — in ONE transaction, the dismissal conditional
-on `dismissed_at is null` so a double submit rolls back instead of posting
-twice. Then the ordinary reply path takes over, with no widget-specific
-machinery anywhere in it: the answer is just a message, so the agent's next turn
-sees it in its unread tail and answers with `chat_post`. **That loop — an agent
-raises a question, a thumb taps it on a phone, the answer arrives as a message,
-the agent responds — is the whole thesis of the project in one interaction.**
+each row through the rigging catalog's `resolveWidget`: a good blob becomes a
+**compact** tile (the kind's headline, clamped to two lines) that expands into
+the kind's own body — tappable option buttons for a `choice`, a markdown card
+for a `note`, a live list for an `issue-list`; a bad blob or an unknown kind
+becomes an honest tile that says which it is and can still be dismissed. A kind
+that reads a service reads it FRESH on render (never off the row) and stays live
+off the topics it declares, on the one subscription the stack holds. Answering
+**posts an ordinary chat message as the answering actor** and sets `dismissedAt`
+— in ONE transaction, the dismissal conditional on `dismissed_at is null` so a
+double submit rolls back instead of posting twice. Then the ordinary reply path
+takes over, with no widget-specific machinery anywhere in it: the answer is just
+a message, so the agent's next turn sees it in its unread tail and answers with
+`chat_post`. **That loop — an agent raises a question, a thumb taps it on a
+phone, the answer arrives as a message, the agent responds — is the whole thesis
+of the project in one interaction.**
 
 **Identity.** Every door resolves the acting user with `currentActor()` (see the
 users zine) — you never tell the system it's you. Creating a chat always
@@ -389,19 +406,48 @@ agent.
   calling `addMessage` and nothing else. The message quotes the question above
   the answer, so the transcript still reads as a question-and-answer long after
   the widget row has left the stack.
-- **The row knows nothing about kinds, and `parseProps` never throws.** `kind`
-  and `props` are opaque to the table, and a bad blob is stored, not refused —
-  because whoever wrote it (usually an agent) has to be able to SEE what they
-  got wrong, and a rejected write teaches them nothing. So the two honest
-  failure tiles ("these props don't parse", "this ship doesn't know this widget
-  kind") are designed states, not error handling: later slices let kinds be
-  defined per ship, so rows WILL outlive their definitions and must say so out
-  loud.
+- **Hull holds the row; rigging holds the meaning.** The `chat_widgets` table is
+  a `kind` string and an opaque `props` blob, and the hull keeps exactly one
+  opinion about what's inside: the **answer convention** every answerable kind
+  spells the same way (`offeredAnswer`), which is a property of the ROW, not of
+  a kind. Everything else — the component, the prop grammar, the ship-log topics
+  — lives in the rigging catalog, because the catalog has to know every
+  service's topic grammar and read every service's data. In `src/hull/widgets/`
+  that would make the hull import every service with a widget, and the day
+  `issues` wants one you get `hull/issues → hull/widgets → hull/issues` — a
+  cycle `src/architecture.test.ts` fails the build over, correctly. Rigging may
+  import every hull service freely; that's `home → rigging → hull` working as
+  designed. The sharpest form of the argument: `issue-list`'s parser validates
+  its `statuses` against the ISSUES service's own status vocabulary, which
+  `hull/chat` may not import at all.
+- **The row knows nothing about kinds, and nothing about them ever throws.**
+  `kind` and `props` are opaque to the table, and a bad blob is stored, not
+  refused — because whoever wrote it (usually an agent) has to be able to SEE
+  what they got wrong, and a rejected write teaches them nothing. So the two
+  honest failure tiles ("these props don't parse", "this ship doesn't know this
+  widget kind") are designed states, not error handling: later slices let kinds
+  be defined per ship, so rows WILL outlive their definitions and must say so
+  out loud.
 - **Widget changes ride the chat's existing topic.** `chat.widget_changed` goes
   out on `chat:<id>`, the topic every member's browser already subscribes to for
   messages — so the stack goes live with no new transport, no new subscription,
   and no polling. Every mutation announces itself from the SERVICE, not the
   door, so a second door can't ship a change nobody's browser hears.
+- **The vocabulary is injected at the composition root, not imported.** The
+  agent's door needs kind names and prop shapes; the hull may not reach up for
+  them. `src/boot.ts` calls `registerWidgetKinds(widgetKindSpecs())` at server
+  start, and `chat_widget` reads the catalog at CALL time (not tool-definition
+  time), so there's no boot-order trap and a re-registration is picked up. An
+  unregistered catalog refuses every raise **loudly** rather than quietly
+  storing rows nothing can render — the failure it would otherwise cause is far
+  harder to see than an error in a tool result.
+- **The `chat_widget` tool takes `kind` + free-form `props`, not one kind's
+  fields.** Slice #cse2 froze `question`/`options` into the signature, which
+  made it a choice-only tool by construction. The shape now follows the row's
+  shape, and `prepareArguments` absorbs the three mistakes models actually make
+  on the way in (stringified props, a stringified nested list, the whole blob
+  flattened beside `action`) — same reasoning as the original shim: the failure
+  it prevents is a question that never reaches a human's thumb.
 - **The stack is a shelf, not a second pane.** It's height-capped and
   scrollable, and only one widget expands at a time, so however many widgets are
   open they cannot push the message thread off a phone screen. A widget lives
@@ -410,6 +456,16 @@ agent.
 
 ## Changelog
 
+- **#cse3 — The widget catalog moves to rigging.** Per-kind parsing and
+  rendering leave `widgets.ts` and `chat.tsx` for the rigging catalog
+  ([`rigging/widgets/zine.md`](../../rigging/widgets/zine.md)); the hull keeps
+  only the row's structural answer contract (`offeredAnswer`). Two new kinds
+  land — `note` and the live `issue-list`, which composes the issues service's
+  data off its existing door and topic with no hull coupling. `chat_widget`
+  becomes `kind` + `props` and generates its own kind list from the catalog,
+  injected at `src/boot.ts` (`widget-catalog.ts`). The chat view stops knowing
+  any kind by name; the thread finally scrolls to the newest message, and the
+  composer placeholder stops advising "Enter to send" to a thumb.
 - **#cse2 — The agent speaks for itself.** The orchestrator stops lifting
   assistant text out of a finished turn (`assistantTextFrom` is gone, and chat
   no longer imports `toChatItems`) and becomes pure dispatch. Two session tools

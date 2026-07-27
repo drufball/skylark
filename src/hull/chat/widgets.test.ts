@@ -1,134 +1,70 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  answerOptions,
-  answerMessageBody,
-  parseProps,
-  STACK_PLACEMENT,
-  WIDGET_KINDS,
-} from './widgets'
+import { answerMessageBody, offeredAnswer, STACK_PLACEMENT } from './widgets'
 
-// The whole point of parseProps is that AGENTS write these props and will get
-// them wrong. So the exhaustive case here isn't "does the happy path work" —
-// it's "does every malformed shape come back as an honest refusal", never a
-// throw the render would turn into a white screen.
+// What the hull enforces about a widget ROW without knowing any kind by name:
+// you may only post back an answer the row itself offered, and the answer quotes
+// the question so the transcript stands alone. Everything about what a kind
+// MEANS — how it renders, which service it reads — is the rigging registry's
+// (see rigging/widgets/zine.md); this is the row half that stayed here.
+//
+// The exhaustive cases are the malformed ones, because AGENTS write these props
+// and get them wrong: every shape must come back as "nothing on offer", never a
+// throw the answer door would turn into a 500.
 
-describe('parseProps: a kind this ship does not know', () => {
-  it('refuses an unregistered kind, naming it', () => {
-    const parsed = parseProps('poll', { question: 'q', options: ['a'] })
-    expect(parsed).toEqual({
-      ok: false,
-      fault: 'unknown-kind',
-      detail: 'poll',
-    })
-  })
-
-  it('refuses the empty kind rather than guessing', () => {
-    expect(parseProps('', {})).toMatchObject({ fault: 'unknown-kind' })
-  })
-
-  it('is case-sensitive — "Choice" is not "choice"', () => {
-    // Kinds are opaque strings written by agents; matching loosely would let a
-    // typo silently resolve to a different widget than the row says it is.
+describe('offeredAnswer', () => {
+  it('reads the question and options a row offers', () => {
     expect(
-      parseProps('Choice', { question: 'q', options: ['a'] }),
-    ).toMatchObject({ fault: 'unknown-kind' })
-  })
-
-  it('knows exactly the kinds it lists', () => {
-    expect([...WIDGET_KINDS]).toEqual(['choice'])
-    for (const kind of WIDGET_KINDS) {
-      expect(parseProps(kind, { question: 'q', options: ['a'] }).ok).toBe(true)
-    }
-  })
-})
-
-describe('parseProps: choice', () => {
-  it('parses a well-formed choice', () => {
-    expect(
-      parseProps('choice', { question: 'Ship it?', options: ['Yes', 'No'] }),
-    ).toEqual({
-      ok: true,
-      kind: 'choice',
-      props: { question: 'Ship it?', options: ['Yes', 'No'] },
-    })
+      offeredAnswer({ question: 'Ship it?', options: ['Yes', 'No'] }),
+    ).toEqual({ question: 'Ship it?', options: ['Yes', 'No'] })
   })
 
   it('keeps a single option — a one-button acknowledgement is legal', () => {
-    expect(
-      parseProps('choice', { question: 'Seen?', options: ['Ok'] }).ok,
-    ).toBe(true)
+    expect(offeredAnswer({ question: 'Seen?', options: ['Ok'] })).toEqual({
+      question: 'Seen?',
+      options: ['Ok'],
+    })
   })
 
-  it('ignores extra keys an agent throws in', () => {
-    const parsed = parseProps('choice', {
-      question: 'Ship it?',
-      options: ['Yes'],
-      colour: 'blue',
-    })
-    expect(parsed).toEqual({
-      ok: true,
-      kind: 'choice',
-      props: { question: 'Ship it?', options: ['Yes'] },
-    })
+  it('lifts out only the offer, never an agent’s extra keys', () => {
+    expect(
+      offeredAnswer({ question: 'Ship it?', options: ['Yes'], colour: 'red' }),
+    ).toEqual({ question: 'Ship it?', options: ['Yes'] })
+  })
+
+  it('offers nothing for a row that carries no answers at all', () => {
+    // A `note` or an `issue-list` is read, not answered. Structurally that's
+    // just "no options on the blob", which is why the hull needs no kind names.
+    expect(offeredAnswer({ text: 'Standup at 09:30' })).toBeNull()
+    expect(offeredAnswer({ statuses: ['open'] })).toBeNull()
   })
 
   it.each([
     ['null', null],
+    ['undefined', undefined],
     ['a string', '{"question":"q"}'],
     ['a number', 7],
-    ['an array', [{ question: 'q' }]],
-  ])('refuses props that are %s, not an object', (_label, json) => {
-    expect(parseProps('choice', json)).toEqual({
-      ok: false,
-      fault: 'bad-props',
-      detail: 'expected an object of props',
-    })
+    ['an array', ['Yes', 'No']],
+  ])('offers nothing when props are %s, not an object', (_label, json) => {
+    expect(offeredAnswer(json)).toBeNull()
   })
 
   it.each([
-    ['missing', {}],
+    ['missing', { options: ['Yes'] }],
     ['not a string', { question: 42, options: ['Yes'] }],
     ['blank', { question: '   ', options: ['Yes'] }],
-  ])('refuses a question that is %s', (_label, json) => {
-    expect(parseProps('choice', json)).toEqual({
-      ok: false,
-      fault: 'bad-props',
-      detail: 'question must be a non-empty string',
-    })
+  ])('offers nothing when the question is %s', (_label, json) => {
+    expect(offeredAnswer(json)).toBeNull()
   })
 
   it.each([
     ['missing', { question: 'q' }],
-    ['not an array', { question: 'q', options: 'Yes' }],
+    ['not an array', { question: 'q', options: 'Yes,No' }],
     ['empty', { question: 'q', options: [] }],
     ['holding a non-string', { question: 'q', options: ['Yes', 3] }],
     ['holding a blank string', { question: 'q', options: ['Yes', ' '] }],
-  ])('refuses options that are %s', (_label, json) => {
-    expect(parseProps('choice', json)).toEqual({
-      ok: false,
-      fault: 'bad-props',
-      detail: 'options must be a non-empty array of non-empty strings',
-    })
-  })
-
-  it('reports the question fault first when both are wrong', () => {
-    // One fault at a time, in field order: the tile shows one honest line.
-    expect(parseProps('choice', {})).toMatchObject({
-      detail: 'question must be a non-empty string',
-    })
-  })
-})
-
-describe('answerOptions', () => {
-  it('is a choice widget’s options — the only answers it will accept', () => {
-    const parsed = parseProps('choice', {
-      question: 'Ship it?',
-      options: ['Yes', 'No'],
-    })
-    expect(parsed.ok).toBe(true)
-    if (!parsed.ok) return
-    expect(answerOptions(parsed)).toEqual(['Yes', 'No'])
+  ])('offers nothing when the options are %s', (_label, json) => {
+    expect(offeredAnswer(json)).toBeNull()
   })
 })
 

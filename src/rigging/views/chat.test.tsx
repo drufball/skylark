@@ -4,18 +4,23 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   ChatView,
+  type ChatMemberItem,
+  type ChatMsg,
   type ChatViewProps,
   chatName,
+  composerPlaceholder,
   scheduleSummary,
   seenByHandles,
-  type WidgetItem,
   workingFromMembers,
   workingLabel,
 } from './chat'
+import type { WidgetItem } from '@rigging/widgets/stack'
 import { classTokensOf } from './test-support'
 
+/** jsdom has no scrollIntoView; the thread calls it to stay at the newest message. */
+const scrollIntoView = vi.fn()
 beforeAll(() => {
-  Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.scrollIntoView = scrollIntoView
 })
 afterEach(cleanup)
 
@@ -547,6 +552,83 @@ describe('ChatView', () => {
   })
 })
 
+describe('composerPlaceholder', () => {
+  const dru: ChatMemberItem = { userId: 'a', handle: 'dru', type: 'human' }
+  const tilde: ChatMemberItem = { userId: 'b', handle: 'tilde', type: 'agent' }
+  const bix: ChatMemberItem = { userId: 'c', handle: 'bix', type: 'agent' }
+
+  it('never advises "Enter to send" — a thumb’s Enter is a newline', () => {
+    for (const members of [
+      [dru, tilde],
+      [dru, tilde, bix],
+    ]) {
+      expect(composerPlaceholder(members)).not.toMatch(/enter/i)
+    }
+  })
+
+  it('stays short enough for one line on a 390px phone', () => {
+    // The old copy wrapped to three lines in a one-row textarea. The composer
+    // is ~260px wide once the dock and the send button have their share.
+    for (const members of [
+      [dru, tilde],
+      [dru, tilde, bix],
+    ]) {
+      expect(composerPlaceholder(members).length).toBeLessThanOrEqual(26)
+    }
+  })
+
+  it('keeps the @mention hint only in a group, where it is true', () => {
+    // In a 1:1 the agent always answers, so "@mention an agent" is wrong
+    // information filling the whole field.
+    expect(composerPlaceholder([dru, tilde])).toBe('Message…')
+    expect(composerPlaceholder([dru, tilde, bix])).toBe(
+      'Message… @mention an agent',
+    )
+    expect(
+      composerPlaceholder([dru, { ...dru, userId: 'z', handle: 'pip' }]),
+    ).toBe('Message… @mention an agent')
+  })
+})
+
+describe('ChatView: the thread stays at the newest thing', () => {
+  function msg(id: string): ChatMsg {
+    return { id, authorHandle: 'dru', body: `m${id}`, mine: true }
+  }
+
+  it('scrolls to the bottom on load', () => {
+    scrollIntoView.mockClear()
+    renderView({ activeId: 'c1', messages: [msg('1')] })
+    expect(scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('scrolls again when a message lands — including your own widget answer', () => {
+    // The front door never did this, so answering a widget could post your reply
+    // somewhere you couldn't see it. The Agents transcript has always done it.
+    const { rerender } = renderView({ activeId: 'c1', messages: [msg('1')] })
+    scrollIntoView.mockClear()
+    rerender(
+      <ChatView
+        chats={[]}
+        activeId="c1"
+        title={null}
+        members={[]}
+        messages={[msg('1'), msg('2')]}
+        working={null}
+        crew={[]}
+        composing={false}
+        busy={false}
+        onSelect={vi.fn()}
+        onNew={vi.fn()}
+        onSend={vi.fn()}
+        onCreate={vi.fn()}
+        onAddMember={vi.fn()}
+        onRemoveMember={vi.fn()}
+      />,
+    )
+    expect(scrollIntoView).toHaveBeenCalled()
+  })
+})
+
 /** A choice widget as the loader hands it over. */
 function choiceWidget(over: Partial<WidgetItem> = {}): WidgetItem {
   return {
@@ -558,6 +640,10 @@ function choiceWidget(over: Partial<WidgetItem> = {}): WidgetItem {
   }
 }
 
+// The view's half of the widget shelf is only WIRING: is the band there, and do
+// its callbacks reach the host? What each kind renders, the honest tiles, the
+// live subscription and the tap targets belong to the shelf itself and are
+// tested in rigging/widgets/stack.test.tsx — this view knows no kind by name.
 describe('ChatView widget stack', () => {
   it('shows nothing at all when there are no widgets', () => {
     // Both callbacks wired, so an EMPTY list is the only reason the band is
@@ -576,194 +662,7 @@ describe('ChatView widget stack', () => {
     expect(screen.queryByTestId('widget-stack')).toBeNull()
   })
 
-  it('renders a compact tile — the question, no answer buttons yet', () => {
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget: vi.fn(),
-    })
-    expect(screen.getByText('Ship the new theme?')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
-  })
-
-  it('expands a compact tile on click, revealing the options', () => {
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget: vi.fn(),
-    })
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'No' })).toBeTruthy()
-  })
-
-  it('answers with the tapped option', () => {
-    const onAnswerWidget = vi.fn()
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget,
-      onDismissWidget: vi.fn(),
-    })
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    fireEvent.click(screen.getByRole('button', { name: 'No' }))
-    expect(onAnswerWidget).toHaveBeenCalledWith('w1', 'No')
-  })
-
-  it('answers only once per tap-through, even on a double tap', () => {
-    // The stack is refreshed by the server's own event; until it arrives the
-    // buttons must not fire a second answer the door would reject.
-    const onAnswerWidget = vi.fn()
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget,
-      onDismissWidget: vi.fn(),
-    })
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
-    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
-  })
-
-  it('re-offers the options if the answer did not take', () => {
-    // A spent widget normally vanishes because the server says it did. If the
-    // answer FAILED, the widget is still in the stack — and must be answerable
-    // again rather than sitting there with dead buttons forever.
-    const onAnswerWidget = vi.fn()
-    const props: Partial<ChatViewProps> = {
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget,
-      onDismissWidget: vi.fn(),
-    }
-    const { rerender } = renderView({ ...props, busy: false })
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
-    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
-
-    function paint(busy: boolean) {
-      rerender(
-        <ChatView
-          chats={[]}
-          title={null}
-          members={[]}
-          messages={[]}
-          working={null}
-          crew={[]}
-          composing={false}
-          busy={busy}
-          onSelect={vi.fn()}
-          onNew={vi.fn()}
-          onSend={vi.fn()}
-          onCreate={vi.fn()}
-          onAddMember={vi.fn()}
-          onRemoveMember={vi.fn()}
-          {...props}
-        />,
-      )
-    }
-    paint(true) // the request is in flight — still spent
-    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
-    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
-
-    paint(false) // it came back, and the widget is STILL here → answerable
-    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
-    expect(onAnswerWidget).toHaveBeenCalledTimes(2)
-  })
-
-  it('dismisses a widget', () => {
-    const onDismissWidget = vi.fn()
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget,
-    })
-    fireEvent.click(screen.getByLabelText('Dismiss widget w1'))
-    expect(onDismissWidget).toHaveBeenCalledWith('w1')
-  })
-
-  it('expands only one widget at a time, so the stack can’t swallow the thread', () => {
-    renderView({
-      activeId: 'c1',
-      widgets: [
-        choiceWidget({ id: 'w1', props: { question: 'A?', options: ['Ay'] } }),
-        choiceWidget({ id: 'w2', props: { question: 'B?', options: ['Bee'] } }),
-      ],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget: vi.fn(),
-    })
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    expect(screen.getByRole('button', { name: 'Ay' })).toBeTruthy()
-    fireEvent.click(screen.getByLabelText('Open widget w2'))
-    expect(screen.getByRole('button', { name: 'Bee' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Ay' })).toBeNull()
-  })
-
-  it('collapses an expanded widget when its header is clicked again', () => {
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget: vi.fn(),
-    })
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
-  })
-
-  it('caps the stack’s height and scrolls it, so the thread always stays visible', () => {
-    const { container } = renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget()],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget: vi.fn(),
-    })
-    const stack = container.querySelector('[data-testid="widget-stack"]')
-    expect(stack?.className).toContain('max-h-')
-    expect(stack?.className).toContain('overflow-y-auto')
-  })
-
-  it('says so honestly when the props do not parse — and offers no answers', () => {
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget({ props: { question: 'Ship it?' } })],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget: vi.fn(),
-    })
-    expect(screen.getByText(/don’t parse/i)).toBeTruthy()
-    expect(screen.getByText(/options must be a non-empty array/i)).toBeTruthy()
-    // Nothing to answer: the tile doesn't expand into invented buttons.
-    expect(screen.queryByLabelText('Open widget w1')).toBeNull()
-  })
-
-  it('says so honestly when it doesn’t know the kind, naming it', () => {
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget({ kind: 'orrery' })],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget: vi.fn(),
-    })
-    expect(screen.getByText(/doesn’t know this widget kind/i)).toBeTruthy()
-    expect(screen.getByText(/orrery/)).toBeTruthy()
-  })
-
-  it('lets you dismiss a widget it cannot render — never a dead end', () => {
-    const onDismissWidget = vi.fn()
-    renderView({
-      activeId: 'c1',
-      widgets: [choiceWidget({ kind: 'orrery' })],
-      onAnswerWidget: vi.fn(),
-      onDismissWidget,
-    })
-    fireEvent.click(screen.getByLabelText('Dismiss widget w1'))
-    expect(onDismissWidget).toHaveBeenCalledWith('w1')
-  })
-
-  it('renders the widgets in the order given, and truncates a long question', () => {
+  it('hands the shelf its widgets, in the order given', () => {
     renderView({
       activeId: 'c1',
       widgets: [
@@ -779,29 +678,47 @@ describe('ChatView widget stack', () => {
       onAnswerWidget: vi.fn(),
       onDismissWidget: vi.fn(),
     })
-    const questions = screen.getAllByTestId('widget-question')
-    expect(questions.map((q) => q.textContent)).toEqual(['First?', 'Second?'])
-    // Compact means compact: at most two clamped lines, so several widgets
-    // can't push the message thread off a phone screen.
-    expect(questions[0].className).toContain('line-clamp-2')
+    expect(
+      screen.getAllByTestId('widget-headline').map((h) => h.textContent),
+    ).toEqual(['First?', 'Second?'])
   })
 
-  it('gives every widget control a thumb-sized tap target', () => {
+  it('passes an answer back up to the host', () => {
+    const onAnswerWidget = vi.fn()
     renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget,
+      onDismissWidget: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByRole('button', { name: 'No' }))
+    expect(onAnswerWidget).toHaveBeenCalledWith('w1', 'No')
+  })
+
+  it('passes a dismissal back up to the host', () => {
+    const onDismissWidget = vi.fn()
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget,
+    })
+    fireEvent.click(screen.getByLabelText('Dismiss widget w1'))
+    expect(onDismissWidget).toHaveBeenCalledWith('w1')
+  })
+
+  it('sits between the thread and the composer, where your thumb already is', () => {
+    const { container } = renderView({
       activeId: 'c1',
       widgets: [choiceWidget()],
       onAnswerWidget: vi.fn(),
       onDismissWidget: vi.fn(),
     })
-    // 44px is the floor a thumb needs; min-h-11 is 2.75rem = 44px.
-    expect(classTokensOf('Ship the new theme?', 'button')).toContain('min-h-11')
-    expect(screen.getByLabelText('Dismiss widget w1').className).toContain(
-      'min-h-11',
-    )
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    expect(screen.getByRole('button', { name: 'Yes' }).className).toContain(
-      'min-h-11',
-    )
+    const order = [...container.querySelectorAll('[data-testid], textarea')]
+      .map((el) => el.getAttribute('data-testid') ?? el.tagName.toLowerCase())
+      .filter((name) => name === 'widget-stack' || name === 'textarea')
+    expect(order).toEqual(['widget-stack', 'textarea'])
   })
 })
 

@@ -35,9 +35,9 @@ import {
   type CrewMember,
   type NewSchedule,
   type ScheduleItem,
-  type WidgetItem,
   workingFromMembers,
 } from '@rigging/views/chat'
+import type { WidgetItem } from '@rigging/widgets/stack'
 import { Dock } from '@rigging/views/dock'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLog, type ShipLogEvent } from '@rigging/lib/use-ship-log'

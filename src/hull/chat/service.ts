@@ -26,8 +26,7 @@ import {
 } from './topic'
 import {
   answerMessageBody,
-  answerOptions,
-  parseProps,
+  offeredAnswer,
   STACK_PLACEMENT,
   type JsonValue,
 } from './widgets'
@@ -37,7 +36,8 @@ import {
  * service; touches only its own tables (plus a read-join onto users for
  * display). The orchestrator (orchestrator.ts) is the impure shell that drives
  * agent replies; the web doors live in server.ts. What a widget's props MEAN is
- * `widgets.ts` — pure, node-free, shared with the view.
+ * the rigging catalog's business (`@rigging/widgets`); `widgets.ts` keeps only
+ * what's true of the ROW — the answer convention and the answer's message body.
  *
  * Membership is visibility: a chat is seen only by its members, so chat events
  * are scoped to `chat:<id>` — never `public` — and the doors check membership
@@ -786,9 +786,9 @@ export async function fireDueSchedules(
 
 /**
  * A widget joined with the handle of whoever raised it — view/CLI ready. `props`
- * stays opaque JSON: only `widgets.ts`'s `parseProps` gives it meaning, and it
- * does that at the edge that renders, so an unparseable blob costs one honest
- * tile rather than failing the whole list.
+ * stays opaque JSON: only the rigging catalog gives it meaning, and it does that
+ * at the edge that renders, so an unparseable blob costs one honest tile rather
+ * than failing the whole list.
  */
 export interface ChatWidgetView extends ChatWidgetRow {
   createdByHandle: string
@@ -836,8 +836,8 @@ async function emitWidgetChanged(
 /**
  * Raise a widget in a chat. `createdById` is the actor who put it there — a
  * widget is always somebody's judgment, never a service's (see the zine).
- * `props` is written as given; validity is `parseProps`'s business at render
- * and answer time, so a wrong blob is a visible tile the author can SEE and fix,
+ * `props` is written as given; validity is the rigging catalog's business at
+ * render time, so a wrong blob is a visible tile the author can SEE and fix,
  * rather than a rejected write an agent gets no feedback from.
  */
 export async function addWidget(
@@ -981,12 +981,17 @@ export async function dismissWidget(
  * firing. There is no separate answer table and no separate delivery path.
  *
  * The guards, in order: the widget must be visible (RLS hides a non-member's, and
- * the chat's deletion cascades the row away entirely), its props must parse, the
- * value must be one the widget actually offered, and the dismissal must win the
+ * the chat's deletion cascades the row away entirely), the row must actually
+ * offer answers, the value must be one of them, and the dismissal must win the
  * race — the update is conditional on `dismissed_at is null`, so a double submit
  * (two taps, two tabs) touches no rows the second time and rolls back without
  * posting a second message. Dismissing BEFORE writing the message is deliberate:
  * the row lock is what serializes the two attempts.
+ *
+ * The offer is read structurally (`offeredAnswer`), so the whitelist holds for
+ * every answerable kind without the hull knowing one by name — and a `note`, an
+ * `issue-list` or a blob an agent malformed all land on the same clean refusal
+ * rather than posting a value nobody offered.
  */
 export async function answerWidget(
   db: Database,
@@ -994,15 +999,11 @@ export async function answerWidget(
 ): Promise<ChatMessageRow> {
   const row = await db.transaction(async (tx) => {
     const widget = await visibleWidget(tx, input.widgetId)
-    const parsed = parseProps(widget.kind, widget.props)
-    if (!parsed.ok) {
-      throw new Error(
-        parsed.fault === 'unknown-kind'
-          ? `this ship does not know a “${parsed.detail}” widget`
-          : `this widget’s props do not parse: ${parsed.detail}`,
-      )
+    const offer = offeredAnswer(widget.props)
+    if (!offer) {
+      throw new Error('this widget offers nothing to answer')
     }
-    if (!answerOptions(parsed).includes(input.value)) {
+    if (!offer.options.includes(input.value)) {
       throw new Error(`“${input.value}” is not one of this widget’s options`)
     }
     const dismissed = await tx
@@ -1022,7 +1023,7 @@ export async function answerWidget(
       id: uuidv7(),
       chatId: widget.chatId,
       authorId: input.actorId,
-      body: answerMessageBody(parsed.props.question, input.value),
+      body: answerMessageBody(offer.question, input.value),
     })
   })
   await emitMessagePosted(db, row)

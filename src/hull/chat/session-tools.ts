@@ -15,6 +15,12 @@ import {
   findChatForSession,
   reorderWidget,
 } from './service'
+import {
+  describeWidgetKinds,
+  knownWidgetKinds,
+  validateWidgetProps,
+} from './widget-catalog'
+import { offeredAnswer, type JsonValue } from './widgets'
 
 // The agent-facing door onto a chat: the tools an agent's own turn uses to SPEAK
 // and to put a widget in front of the crew.
@@ -55,19 +61,29 @@ const WIDGET_PARAMS = Type.Object({
     [Type.Literal('raise'), Type.Literal('reorder'), Type.Literal('dismiss')],
     {
       description:
-        '"raise" a new question, "reorder" one already up, or "dismiss" one that no longer matters.',
+        '"raise" a new widget, "reorder" one already up, or "dismiss" one that no longer matters.',
     },
   ),
-  question: Type.Optional(
+  kind: Type.Optional(
     Type.String({
-      description: 'raise: the question to put in front of the crew.',
+      description:
+        'raise: which kind of widget — one of the kinds listed in this tool’s description.',
     }),
   ),
-  options: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        'raise: the answers to offer, as tappable buttons (["Yes","No"] for a yes/no).',
-    }),
+  props: Type.Optional(
+    // A free-form object, because the shape depends on the kind. The kinds and
+    // their shapes are spelled out in the tool's description, which is generated
+    // from the catalog — so this schema stays honest as kinds come and go
+    // instead of freezing one kind's fields into the signature (which is what
+    // slice #cse2's `question`/`options` did).
+    Type.Object(
+      {},
+      {
+        additionalProperties: true,
+        description:
+          'raise: the kind’s own props, exactly as its shape in this tool’s description says.',
+      },
+    ),
   ),
   widgetId: Type.Optional(
     Type.String({ description: 'reorder/dismiss: which widget.' }),
@@ -89,25 +105,79 @@ function said(text: string, id: string | null = null) {
   return { content: [{ type: 'text' as const, text }], details: { id } }
 }
 
+/** A JSON-encoded list, or a comma list, read back into an array of strings. */
+function asList(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (Array.isArray(parsed)) return parsed.map((o) => String(o))
+  } catch {
+    // Not JSON — maybe a comma list, which is how the CLI spells it.
+  }
+  return value.split(',').map((o) => o.trim())
+}
+
 /**
- * Straighten out the one mistake a real model made on its first try: passing
- * `options` as a JSON-encoded STRING (`'["Yes","No"]'`) instead of an array.
- * pi's `prepareArguments` hook exists for exactly this — a compatibility shim
- * ahead of schema validation — and it's worth using here because the failure it
- * prevents is a question that never reaches a human's thumb. Anything else is
- * left alone for the schema to refuse, which the model then sees and can fix.
+ * Straighten out the mistakes real models actually make on the way in, before the
+ * schema sees them. pi's `prepareArguments` hook exists for exactly this — a
+ * compatibility shim ahead of validation — and it's worth using because the
+ * failure it prevents is a question that never reaches a human's thumb. Three
+ * shims, each for a mistake that's been observed or is one keystroke away:
+ *
+ * - `props` arriving as a JSON STRING rather than an object;
+ * - a nested `options` arriving as a JSON string or a comma list;
+ * - the whole blob FLATTENED onto the top level (`question`/`options`/`text`
+ *   beside `action`) instead of nested under `props`. Nesting is the one thing
+ *   this tool's shape asks for that the old one didn't, so it's the mistake most
+ *   worth absorbing.
+ *
+ * Anything else is left alone for the schema — and then the catalog's own
+ * validator — to refuse, which the model sees in the tool result and can fix.
  */
 export function prepareWidgetArgs(args: unknown): unknown {
   if (typeof args !== 'object' || args === null) return args
-  const record = args as Record<string, unknown>
-  if (typeof record.options !== 'string') return args
-  try {
-    const parsed: unknown = JSON.parse(record.options)
-    return Array.isArray(parsed) ? { ...record, options: parsed } : args
-  } catch {
-    // Not JSON — maybe a comma list, which is how the CLI spells it.
-    const list = record.options.split(',').map((o) => o.trim())
-    return { ...record, options: list }
+  const { action, kind, props, widgetId, stackOrder, ...rest } = args as Record<
+    string,
+    unknown
+  >
+
+  let blob: Record<string, unknown> | undefined
+  if (typeof props === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(props)
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        !Array.isArray(parsed)
+      )
+        blob = parsed as Record<string, unknown>
+    } catch {
+      // Not JSON at all — leave it for the schema to refuse.
+    }
+  } else if (typeof props === 'object' && props !== null) {
+    blob = props as Record<string, unknown>
+  } else if (Object.keys(rest).length > 0) {
+    // Flattened: the props were written beside `action` instead of under it.
+    blob = rest
+  }
+  if (!blob) return args
+
+  if (typeof blob.options === 'string')
+    blob = { ...blob, options: asList(blob.options) }
+
+  // A flat `question`/`options` pair is unambiguously a `choice`, so an omitted
+  // kind is inferable rather than an error the crew never sees an answer for.
+  const resolvedKind =
+    kind ??
+    (blob.question !== undefined && blob.options !== undefined
+      ? 'choice'
+      : undefined)
+
+  return {
+    action,
+    ...(resolvedKind === undefined ? {} : { kind: resolvedKind }),
+    props: blob,
+    ...(widgetId === undefined ? {} : { widgetId }),
+    ...(stackOrder === undefined ? {} : { stackOrder }),
   }
 }
 
@@ -166,56 +236,74 @@ function chatPostTool(
  * from its own turn.
  *
  * This is what makes structured interaction real: an agent that needs a decision
- * raises a `choice` and the crew taps an option, instead of typing "yes or no?"
- * and hoping the reply parses. The answer comes back as an ordinary chat message
- * (see `answerWidget`), so nothing new carries it.
+ * raises a `choice` and the crew taps an option instead of typing "yes or no?"
+ * and hoping the reply parses; an agent that wants a slice of the board in view
+ * raises an `issue-list`. The answer to an answerable one comes back as an
+ * ordinary chat message (see `answerWidget`), so nothing new carries it.
  *
- * Only `choice` — the one kind this ship knows (`widgets.ts`). The tool's own
- * schema is what keeps an agent from writing a blob that can't render: the CLI
- * can still store a bad one on purpose, because seeing the honest tile is how
- * you learn what you got wrong.
+ * **The kinds are not written here.** They're generated from the rigging catalog,
+ * handed to the hull by the composition root (`widget-catalog.ts`), so a kind
+ * added in one place is described in one place. That's also why the parameters are
+ * `kind` + a free-form `props` rather than one kind's fields: freezing
+ * `question`/`options` into the signature is what made slice #cse2's version a
+ * choice-only tool.
+ *
+ * The catalog's own validator refuses a blob that can't render, with the reason —
+ * an agent can fix that mid-turn, which is worth far more than a dud tile in a
+ * human's face. The CLI still stores a bad blob on purpose, because seeing the
+ * honest tile is how a human learns what the ship does with one.
  */
 function chatWidgetTool(
   chat: { chatId: string },
   agentUserId: string,
   asActor: AsActor,
 ): ToolDefinition {
+  const vocabulary = describeWidgetKinds(knownWidgetKinds())
   return defineTool({
     name: 'chat_widget',
     label: 'Raise a widget in the chat',
     description:
-      'Ask the crew a question with a fixed set of answers: "raise" puts it above the composer as tappable buttons, and their answer arrives as an ordinary chat message. Prefer this over typing a question when the answers are known — it is one tap on a phone instead of a sentence. Also "reorder" (move one in the stack) and "dismiss" (take one down that no longer matters).',
+      'Put a live little view above the crew’s composer: "raise" adds one, "reorder" moves one already up, "dismiss" takes down one that no longer matters. A widget the crew can answer (a question with known answers) comes back as an ordinary chat message — prefer that over typing the question, it is one tap on a phone instead of a sentence.\n\n' +
+      vocabulary,
     promptSnippet:
-      'chat_widget(action, …) — raise a tappable question above the composer, or reorder/dismiss one.',
+      'chat_widget(action, kind, props) — raise a live view above the composer, or reorder/dismiss one.',
     promptGuidelines: [
-      'When you need a decision from the crew and you know the possible answers, raise a `chat_widget` instead of asking in prose — they tap, and the answer comes back as a message.',
+      'When you need a decision from the crew and you know the possible answers, raise a `chat_widget` of kind `choice` instead of asking in prose — they tap, and the answer comes back as a message.',
+      'The kinds this ship can render, and the props each one takes, are listed in `chat_widget`’s own description. Read it before raising one.',
     ],
     parameters: WIDGET_PARAMS,
     prepareArguments: (args) =>
       prepareWidgetArgs(args) as Static<typeof WIDGET_PARAMS>,
     execute: async (_toolCallId, params) => {
       if (params.action === 'raise') {
-        const question = params.question?.trim()
-        const options = (params.options ?? [])
-          .map((o) => o.trim())
-          .filter(Boolean)
-        if (!question)
-          throw new Error('raising a widget needs a question to ask')
-        if (options.length === 0)
-          throw new Error('raising a widget needs at least one answer option')
+        const kind = params.kind?.trim()
+        if (!kind)
+          throw new Error(
+            `raising a widget needs a kind. ${describeWidgetKinds(knownWidgetKinds())}`,
+          )
+        const props = (params.props ?? {}) as JsonValue
+        // Read at CALL time, not at tool-definition time: the catalog is
+        // registered at boot, and a session that outlives a re-registration
+        // should see the current one rather than the one it booted with.
+        const fault = validateWidgetProps(knownWidgetKinds(), kind, props)
+        if (fault) throw new Error(fault)
         const id = uuidv7()
         await asActor(agentUserId, (tx) =>
           addWidget(tx, {
             id,
             chatId: chat.chatId,
-            kind: 'choice',
-            props: { question, options },
+            kind,
+            props,
             stackOrder: params.stackOrder,
             createdById: agentUserId,
           }),
         )
         return said(
-          `Raised widget ${id}. The crew sees "${question}" above the composer; their answer will arrive as a chat message.`,
+          `Raised a ${kind} widget (${id}) above the composer. The crew can see it${
+            offeredAnswer(props)
+              ? '; their answer will arrive as a chat message'
+              : ''
+          }.`,
           id,
         )
       }
