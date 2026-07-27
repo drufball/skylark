@@ -41,14 +41,15 @@ ship's log → every subscribed view re-runs its loader and shows the new state.
 Reads route to staging while it exists, else to disk.
 
 **The merge.** A 30s timer sweeps: staging idle past the window (2 min) → repo
-on `main` and `src/home/files` clean → fetch origin, and converge with
-`origin/main` _only if origin actually moved past us_ → real `git merge` (the
-docs land on disk) → staging branch deleted → push `main` to origin. Anything
-not ready is postponed to the next sweep; a conflicting convergence or merge is
-aborted cleanly, leaving every side intact. A rejected push (origin moved
-between fetch and push) waits too: local `main` is now ahead of the last-fetched
-`origin/main`, so the next sweep — staged work or not — pushes it. A repo with
-no origin remote skips all of it and merges as before.
+on `main`, no other git operation open, and `src/home/files` clean → fetch
+origin, and converge with `origin/main` _only if origin actually moved past us_
+→ real `git merge` (the docs land on disk) → staging branch deleted → push
+`main` to origin. Anything not ready is postponed to the next sweep; a
+conflicting convergence or merge is aborted cleanly, leaving every side intact.
+A rejected push (origin moved between fetch and push) waits too: local `main` is
+now ahead of the last-fetched `origin/main`, so the next sweep — staged work or
+not — pushes it. A repo with no origin remote skips all of it and merges as
+before.
 
 **Converging with origin.** `origin/main` already an ancestor of local `main`
 (nothing fetched that we lack) means a plain push fast-forwards, so the sweep
@@ -120,6 +121,13 @@ itself still recovers without a restart. A success clears the latch.
   get back — is the one we take every time. It applies **only** inside
   `src/home/files`, and only to text: a conflict in code, or in a binary file,
   is never guessed at.
+- **The sweep never touches a git operation it didn't start.** Its failure paths
+  run `merge --abort`, and an abort doesn't ask whose merge it is — the serving
+  checkout is somebody's working copy, and a crew member part way through
+  resolving a merge or rebase on `main` by hand would simply lose that work. So
+  `mergeReadiness` reports `merge-in-progress` while any merge, rebase,
+  cherry-pick or revert is open, and the sweep postpones — even if the files dir
+  itself is clean. Undefined state, human's call, said out loud.
 - **A wedged sweep is loud and bounded.** Retrying a known-failing git command
   every 30s forever, silently, is how #p5as stayed invisible for 25 minutes.
   Outcomes are reported (idle ones stay quiet, so silence is real news), five

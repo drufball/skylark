@@ -6,6 +6,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -40,7 +41,11 @@ export interface FileChange {
 }
 
 /** How merge-readiness came out — the sweep postpones on anything but 'ready'. */
-export type MergeReadiness = 'not-on-main' | 'files-dirty' | 'ready'
+export type MergeReadiness =
+  | 'not-on-main'
+  | 'merge-in-progress'
+  | 'files-dirty'
+  | 'ready'
 
 export interface FilesRepo {
   /** Create the files directory on disk if it's missing. */
@@ -69,7 +74,11 @@ export interface FilesRepo {
    * across processes (a CLI write elsewhere resets it too).
    */
   stagedAt(): Promise<number>
-  /** May a merge run right now? Only on a clean, main-checked-out repo. */
+  /**
+   * May a merge run right now? Only on a clean, main-checked-out repo with no
+   * other git operation open — the sweep's aborts don't ask whose merge it is,
+   * so it stays out entirely while someone else's is in flight.
+   */
   mergeReadiness(): Promise<MergeReadiness>
   /**
    * Really merge staging into main (updating the working tree), deleting the
@@ -288,6 +297,36 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
     return true
   }
 
+  /**
+   * Is a multi-step git operation already in flight — a merge, rebase,
+   * cherry-pick or revert someone (or something) else started?
+   *
+   * This matters because the sweep's own failure paths run `merge --abort`, and
+   * an abort does not care whose merge it is. The serving checkout is somebody's
+   * working copy: a crew member part way through resolving a merge by hand would
+   * lose that work. So the sweep refuses to act at all while one is open, even
+   * when the files dir itself looks clean. That state is undefined and wants a
+   * human — the sweep just has to say so instead of bulldozing it.
+   */
+  async function operationInProgress(): Promise<boolean> {
+    for (const ref of ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD']) {
+      const present = await git(['rev-parse', '--verify', '--quiet', ref]).then(
+        () => true,
+        () => false,
+      )
+      if (present) return true
+    }
+    for (const dir of ['rebase-merge', 'rebase-apply']) {
+      const path = (await git(['rev-parse', '--git-path', dir])).trim()
+      const present = await stat(resolve(repoRoot, path)).then(
+        () => true,
+        () => false,
+      )
+      if (present) return true
+    }
+    return false
+  }
+
   async function stagingExists(): Promise<boolean> {
     try {
       await git(['show-ref', '--verify', `refs/heads/${stagingBranch}`])
@@ -426,6 +465,9 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
     },
 
     async mergeReadiness() {
+      // Asked first, because a conflicted rebase detaches HEAD: checking the
+      // branch first would report "not on main" and hide the real reason.
+      if (await operationInProgress()) return 'merge-in-progress'
       const branch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
       if (branch !== mainBranch) return 'not-on-main'
       const status = await git(['status', '--porcelain', '--', filesDir])

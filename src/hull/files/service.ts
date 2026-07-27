@@ -167,7 +167,7 @@ export function sweepGate(input: {
 /** What a not-done outcome should say out loud, in the crew's own words. */
 const SWEEP_COMPLAINTS: Partial<Record<SweepOutcome, string>> = {
   postponed:
-    'postponed — the repo is not on a clean main (another branch checked out, or the files dir has uncommitted edits)',
+    'postponed — the repo is not a clean main to merge onto (another branch checked out, someone else’s merge or rebase open, or the files dir has uncommitted edits)',
   conflict:
     'conflict — a document merge could not be settled automatically; the docs are safe but main is not moving until a human looks',
   'push-rejected':

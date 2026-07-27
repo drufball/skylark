@@ -347,6 +347,58 @@ describe('files service over a real git repo', () => {
     expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
   })
 
+  /**
+   * The serving checkout is somebody's working copy: a crew member can be part
+   * way through resolving a merge by hand on main, with the conflict nowhere near
+   * the files dir. The sweep aborts merges it started — it must never abort one it
+   * didn't, or that hand resolution is gone.
+   */
+  it('keeps its hands off a merge somebody else started, even outside the files dir', async () => {
+    await writeFile(join(repoRoot, 'code.txt'), 'base\n')
+    await git('add', '.')
+    await git('commit', '-m', 'base code')
+    await git('checkout', '-b', 'theirs')
+    await writeFile(join(repoRoot, 'code.txt'), 'theirs\n')
+    await git('add', '.')
+    await git('commit', '-m', 'theirs code')
+    await git('checkout', 'main')
+    await writeFile(join(repoRoot, 'code.txt'), 'ours\n')
+    await git('add', '.')
+    await git('commit', '-m', 'ours code')
+    // A human, mid-merge, conflict still open.
+    await git('merge', 'theirs').catch(() => undefined)
+    const { stdout: before } = await git('status', '--porcelain')
+
+    expect(await repo.mergeReadiness()).toBe('merge-in-progress')
+    await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+    expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('postponed')
+
+    // Their merge is exactly where they left it, and the staged doc is safe.
+    await git('rev-parse', '--verify', 'MERGE_HEAD')
+    const { stdout: after } = await git('status', '--porcelain')
+    expect(after).toBe(before)
+    expect(await service.read('p.md')).toBe('x')
+  })
+
+  it('stays out of a half-finished rebase too, not just a merge', async () => {
+    await writeFile(join(repoRoot, 'code.txt'), 'base\n')
+    await git('add', '.')
+    await git('commit', '-m', 'base code')
+    await git('checkout', '-b', 'theirs')
+    await writeFile(join(repoRoot, 'code.txt'), 'theirs\n')
+    await git('add', '.')
+    await git('commit', '-m', 'theirs code')
+    await git('checkout', 'main')
+    await writeFile(join(repoRoot, 'code.txt'), 'ours\n')
+    await git('add', '.')
+    await git('commit', '-m', 'ours code')
+    // A human, mid-rebase, conflict still open — no MERGE_HEAD, but a rebase dir.
+    await git('rebase', 'theirs').catch(() => undefined)
+
+    expect(await repo.mergeReadiness()).toBe('merge-in-progress')
+    await git('rebase', '--abort')
+  })
+
   it('sweep postpones when the files dir has uncommitted disk edits', async () => {
     await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
     await writeFile(join(repoRoot, 'files', 'seed.md'), 'dirty\n')
