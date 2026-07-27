@@ -2,7 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
-import { createSession, getSession } from '@hull/agent/service'
+import { createSession, getSession, listSessions } from '@hull/agent/service'
 import type { NotifyPayload } from '@hull/events/bus'
 import { getEventById, trustedEvent } from '@hull/events/service'
 import { getUserById, handleOf } from '@hull/users/service'
@@ -11,14 +11,16 @@ import { issuesProgressLine } from '@hull/agent/progress'
 
 import {
   addComment,
+  claimIssueSession,
   getIssue,
   getIssueSession,
   ISSUE_STATUS_CHANGED,
   issueTopic,
+  linkedSessionIds,
   listComments,
   listIssues,
   listIssueSessions,
-  recordIssueSession,
+  setBatonHolder,
   setBuildContext,
   setStatusLine,
 } from './service'
@@ -144,6 +146,18 @@ function isStatus(value: unknown): value is IssueStatus {
   )
 }
 
+/**
+ * Thrown inside the create-session + claim-link transaction when another path
+ * already holds the (issue, agent) slot: it rolls the candidate session back
+ * and carries the incumbent's id out to the caller. Control flow, not a
+ * failure — ensureAgentSession catches it and returns the winner.
+ */
+class ClaimLostError extends Error {
+  constructor(readonly winnerSessionId: string) {
+    super('issue session claim lost to a concurrent winner')
+  }
+}
+
 // --- The injected boundaries -----------------------------------------------
 
 /** Everything the orchestrator does to git, the filesystem, and the checkout. */
@@ -174,6 +188,13 @@ export interface GitOps {
 export interface OrchestratorRuntime extends RunsTurns {
   cancel(sessionId: string): Promise<void>
   dispose(sessionId: string): void
+  /**
+   * Sweep background jobs stranded by a prior process (#v6ft) — every
+   * outstanding `background_jobs` row is cleared and its session resumed with
+   * a "job lost" message. Called once per boot at the END of `reconcile`; see
+   * the ordering rationale there (#69iz).
+   */
+  reconcileJobs(): Promise<void>
 }
 
 export interface OrchestratorDeps {
@@ -293,6 +314,14 @@ export function createOrchestrator(deps: OrchestratorDeps) {
    * recorded on issue_sessions), in the issue's worktree, booted as the
    * agent's own identity — its config rides on the user row. Reused on every
    * later turn.
+   *
+   * The issue_sessions link row is the ARBITER (#f5io): its composite PK
+   * (issueId, agentUserId) is what makes "one live session per (issue,
+   * agent)" hold across processes, where the per-issue promise chain can't
+   * reach. The session row and its claim on the link are one transaction — a
+   * concurrent path that loses the claim rolls its candidate back (never
+   * durable, never fired, no transcript to lose) and adopts the winner's
+   * session instead. The fast path (link already there) skips the transaction.
    */
   async function ensureAgentSession(input: {
     issue: IssueRow
@@ -308,19 +337,29 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     if (existing) return existing.sessionId
 
     const sessionId = uuidv7()
-    await createSession(db, {
-      id: sessionId,
-      model: DEFAULT_MODEL,
-      title: input.title,
-      cwd: input.worktreePath,
-      agentUserId: input.agentUserId,
-    })
-    await recordIssueSession(db, {
-      issueId: input.issue.id,
-      agentUserId: input.agentUserId,
-      sessionId,
-    })
-    return sessionId
+    try {
+      await db.transaction(async (tx) => {
+        await createSession(tx, {
+          id: sessionId,
+          model: DEFAULT_MODEL,
+          title: input.title,
+          cwd: input.worktreePath,
+          agentUserId: input.agentUserId,
+        })
+        const winner = await claimIssueSession(tx, {
+          issueId: input.issue.id,
+          agentUserId: input.agentUserId,
+          sessionId,
+        })
+        // Losing the claim throws so the transaction (and with it this
+        // candidate session row) rolls back; the winner rides the error out.
+        if (winner !== sessionId) throw new ClaimLostError(winner)
+      })
+      return sessionId
+    } catch (err) {
+      if (!(err instanceof ClaimLostError)) throw err
+      return err.winnerSessionId
+    }
   }
 
   /**
@@ -457,6 +496,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
         // seed/resume the turn with the latest thread — the build-feature
         // contract for the build playbook, the plain brief for anything else.
         const entry = await ensureEntrypoint(issue)
+        // The baton starts (and, on a resume, returns) with the entrypoint —
+        // the hand this transition seeds a turn for. This is the → building SET
+        // point, riding the same handling that fires that turn; the terminal
+        // clears live in transitionIssue, and a handoff moves it in
+        // requestHandoff.
+        await setBatonHolder(db, issueId, entry.entryUserId)
         const fresh = await getIssue(db, issueId)
         const thread = await threadFor(issueId)
         const prompt = entry.build
@@ -683,12 +728,83 @@ export function createOrchestrator(deps: OrchestratorDeps) {
   }
 
   /**
+   * Sweep orphan worktree sessions (#f5io cleanup): pre-arbitration duplicate
+   * spawns left twin sessions with an issue-worktree cwd that no
+   * issue_sessions link points at. Reconcile resumes only through links, so an
+   * orphan is never resumed — but one left stuck on 'running' by a crash reads
+   * as mid-turn forever. Cancel sweeps it to idle (which also clears its
+   * background jobs, so the jobs reconciler won't resume it either). Rows are
+   * never deleted — they are durable transcripts.
+   */
+  async function sweepOrphanSessions(): Promise<void> {
+    const linked = new Set(await linkedSessionIds(db))
+    const strays = await listSessions(db, {
+      running: true,
+      cwdUnder: `${worktreeRoot}/`,
+    })
+    for (const stray of strays) {
+      if (linked.has(stray.id)) continue
+      console.warn(
+        `reconcile: cancelling orphan worktree session ${stray.id} ` +
+          `("${stray.title ?? '?'}") — no issue links to it`,
+      )
+      await runtime.cancel(stray.id).catch((err: unknown) => {
+        console.error(
+          `reconcile: cancelling orphan session ${stray.id} failed (continuing): ${errorMessage(err)}`,
+        )
+      })
+    }
+  }
+
+  /**
    * Startup reconciliation: after a server restart (e.g. the HMR reload a done
    * refresh triggers), an issue can be stuck in `building` with a session row
    * but no live session in this fresh process. Resume each by re-seeding a turn
    * — idempotent ensureEntrypoint reuses the existing worktree + session.
+   *
+   * The background-job sweep (#v6ft) runs at the END, deliberately (#69iz):
+   * the issue sweep CANCELS any session stranded on 'running', so a job-lost
+   * resume fired first could mark its session running and be swept back to
+   * idle mid-message — after the row was already claimed, silencing the one
+   * "your job was lost" the session was owed. Ordered after, the cancels are
+   * done, and a job-lost resume landing on a session whose re-seeded turn is
+   * already streaming just queues as a followUp — same runtime, same registry
+   * (ensureEntry is single-flight per session). This is also why the sweep
+   * lives HERE and not in boot.ts: it must share THIS orchestrator's runtime
+   * instance for that queueing to hold, and reconcile already runs exactly
+   * once per boot (subscribeToShipLog under ensureOrchestrator's arm-once).
+   * Both halves are error-isolated: a db that's down must not strand the job
+   * sweep, and a failed sweep must not sink boot.
+   *
+   * Known residual (accepted): a job on a CHAT session is swept on THIS
+   * runtime while the chat orchestrator reconciles the same session on its own
+   * separate runtime — two registries, so the startGate single-flight can't
+   * span them. Rows are append-only (nothing deleted), but two turns
+   * interleaved into one seq order could leave a transcript that isn't a valid
+   * single conversation, which the next boot replays to the model verbatim — a
+   * resumability hazard, not merely cosmetic. Tolerated because builder
+   * sessions are jobs' overwhelming users and the destructive move (cancel) is
+   * on this side; the real cure is one shared server runtime for both
+   * orchestrators (a separate voyage — see issues/zine.md).
    */
   async function reconcile(): Promise<void> {
+    await reconcileBuildingIssues().catch((err: unknown) => {
+      console.error(
+        `reconcile: issue sweep failed (continuing to job sweep): ${errorMessage(err)}`,
+      )
+    })
+    await runtime.reconcileJobs().catch((err: unknown) => {
+      console.error(
+        `reconcile: background-job sweep failed: ${errorMessage(err)}`,
+      )
+    })
+  }
+
+  async function reconcileBuildingIssues(): Promise<void> {
+    // Cancel orphan worktree sessions first (#f5io): their cancel also clears
+    // their background jobs, so the job sweep at the tail of reconcile() won't
+    // resume a session we just swept idle.
+    await sweepOrphanSessions()
     const all = await listIssues(db)
     for (const issue of all) {
       if (issue.status !== 'building') continue
@@ -715,7 +831,21 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     }
   }
 
-  return { onStatusChanged, resume, handleBusNote, reconcile }
+  /**
+   * Drive a turn on one of this issue's sessions through THIS orchestrator's
+   * own runtime — the single seam the night watch (hull/watch) uses to nudge a
+   * stalled build or health-check a long background wait. It MUST go through
+   * here and not a fresh runtime: issue-backed sessions are owned by this
+   * runtime instance, and its single-flight/queue is what folds a nudge into a
+   * followUp instead of double-driving a session another turn is already on
+   * (the #69iz caveat). It's just the private `fireTurn` — same status-line
+   * streaming, same fire-and-forget contract — exposed by name.
+   */
+  function driveTurn(issueId: string, sessionId: string, text: string): void {
+    fireTurn(issueId, sessionId, text)
+  }
+
+  return { onStatusChanged, resume, handleBusNote, reconcile, driveTurn }
 }
 
 export type Orchestrator = ReturnType<typeof createOrchestrator>

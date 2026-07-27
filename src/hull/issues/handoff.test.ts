@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
-import { freshDb } from '@hull/db/test-db'
+import { defined, freshDb } from '@hull/db/test-db'
 import { listEventsSince } from '@hull/events/service'
 import { createSession, setStatus } from '@hull/agent/service'
 import { createUser } from '@hull/users/service'
@@ -18,8 +18,10 @@ import {
 } from './handoff'
 import {
   createIssue,
+  getIssue,
   setBuildContext,
-  recordIssueSession,
+  setBatonHolder,
+  claimIssueSession,
   transitionIssue,
 } from './service'
 import { upsertPlaybook } from './playbooks'
@@ -197,7 +199,7 @@ describe('requestHandoff — agent to agent', () => {
       model: 'claude-sonnet-5',
       agentUserId: babysitter.id,
     })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: babysitter.id,
       sessionId: session.id,
@@ -220,7 +222,7 @@ describe('requestHandoff — agent to agent', () => {
       model: 'claude-sonnet-5',
       agentUserId: builder.id,
     })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: builder.id,
       sessionId: session.id,
@@ -461,5 +463,49 @@ describe('requestHandoff — event type split', () => {
     expect(ownerPings).toHaveLength(1)
     expect(handoffs[0].type).toBe(ISSUE_HANDOFF)
     expect(ownerPings[0].type).toBe(ISSUE_OWNER_PING)
+  })
+})
+
+describe('requestHandoff — the baton column moves with the event', () => {
+  it('moves the baton to the target agent on an agent handoff', async () => {
+    const issue = await buildingIssue()
+    // The entrypoint holds it going in (as the orchestrator would set it).
+    await setBatonHolder(db, issue.id, builder.id)
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'babysitter',
+      message: 'PR open — take it home',
+    })
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBe(
+      babysitter.id,
+    )
+  })
+
+  it('moves the baton to the issue OWNER on an owner ping (the waiting-for-input case)', async () => {
+    const issue = await buildingIssue({ ownerId: dru.id })
+    await setBatonHolder(db, issue.id, builder.id)
+    await requestHandoff(db, {
+      issueRef: issue.nano,
+      actorId: builder.id,
+      target: 'OWNER',
+      message: 'checks green — merge?',
+    })
+    // dru is a human, so downstream reads this as "waiting for input".
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBe(dru.id)
+  })
+
+  it('leaves the baton untouched when the handoff is refused', async () => {
+    const issue = await buildingIssue()
+    await setBatonHolder(db, issue.id, builder.id)
+    await expect(
+      requestHandoff(db, {
+        issueRef: issue.nano,
+        actorId: builder.id,
+        target: 'builder', // handing to yourself is refused
+        message: 'nope',
+      }),
+    ).rejects.toThrow()
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBe(builder.id)
   })
 })

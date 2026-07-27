@@ -109,6 +109,19 @@ export const issues = pgTable(
     visibility: text('visibility', { enum: ['public'] })
       .notNull()
       .default('public'),
+    /**
+     * Whose turn it is right now — the baton, as an explicit column (→
+     * users.id, nullable) rather than something re-derived from running-hands
+     * checks and handoff events. Set at the points the baton actually moves:
+     * the playbook entrypoint agent on → building, the target agent on an
+     * `issue.handoff`, the issue OWNER on an `issue.owner_ping`; cleared on
+     * → done / → closed. A HUMAN holder is the universal "waiting for input"
+     * signal the night watch reads to decide whether to nudge (an agent holder
+     * means work is, or should be, in flight). Nullable, and never backfilled
+     * from history: a pre-column building issue simply starts with no holder,
+     * which the watch treats conservatively.
+     */
+    batonHolderId: text('baton_holder_id').references(() => users.id),
     /** The build branch, generated on the first → building transition. */
     branchName: text('branch_name'),
     /** Absolute path to the build worktree, set alongside branchName. */

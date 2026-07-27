@@ -88,6 +88,8 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
     command: string
     label: string
     cwd: string
+    /** Optional per-call watch check-in interval (ms); null → watch default. */
+    checkInIntervalMs?: number | null
   }): Promise<string> {
     const jobId = uuidv7()
     const proc = deps.spawn(input.command, input.cwd)
@@ -105,6 +107,7 @@ export function createBackgroundJobs(deps: BackgroundJobsDeps) {
       label: input.label,
       cwd: input.cwd,
       pid: proc.pid,
+      checkInIntervalMs: input.checkInIntervalMs ?? null,
     })
     proc.onClose(async (code, output) => {
       jobs.delete(job)

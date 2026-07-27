@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bot, Plus, User, Users, X } from 'lucide-react'
+import { Bot, CalendarClock, Plus, Trash2, User, Users, X } from 'lucide-react'
 
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
@@ -46,6 +46,44 @@ export interface CrewMember {
   type: 'human' | 'agent'
 }
 
+/** A schedule as the view shows it — timing fields arrive as ISO strings (serialized). */
+export interface ScheduleItem {
+  id: string
+  authorHandle: string
+  body: string
+  enabled: boolean
+  intervalMinutes: number | null
+  fireAt: string | null
+  nextFireAt: string | null
+}
+
+/** What the crew is asked to author a schedule with. */
+export interface NewSchedule {
+  body: string
+  /** ISO timestamp for a one-shot; XOR intervalMinutes. */
+  fireAt?: string
+  /** Whole minutes for a recurring schedule; XOR fireAt. */
+  intervalMinutes?: number
+}
+
+/**
+ * A one-line, human-ready timing summary for a schedule row. Pure and exported
+ * so the wording is unit-tested; the view just renders it. A recurring row
+ * shows its cadence and next fire; a one-shot shows its single time.
+ */
+export function scheduleSummary(s: {
+  intervalMinutes: number | null
+  fireAt: string | null
+  nextFireAt: string | null
+}): string {
+  if (s.intervalMinutes != null) {
+    const next = s.nextFireAt ? new Date(s.nextFireAt).toLocaleString() : '—'
+    return `every ${String(s.intervalMinutes)} min · next ${next}`
+  }
+  const at = s.fireAt ? new Date(s.fireAt).toLocaleString() : '—'
+  return `once · ${at}`
+}
+
 export interface ChatViewProps {
   chats: ChatListItem[]
   activeId?: string
@@ -64,6 +102,11 @@ export interface ChatViewProps {
   onCreate: (memberIds: string[], title: string) => void
   onAddMember: (userId: string) => void
   onRemoveMember: (userId: string) => void
+  /** The active chat's schedules (optional — the CLI is the primary door for v1). */
+  schedules?: ScheduleItem[]
+  onCreateSchedule?: (input: NewSchedule) => void
+  onToggleSchedule?: (id: string, enabled: boolean) => void
+  onDeleteSchedule?: (id: string) => void
 }
 
 /** A chat's display name: its title, or the members it's with. */
@@ -195,9 +238,17 @@ function ActiveChat({
   onSend,
   onAddMember,
   onRemoveMember,
+  schedules,
+  onCreateSchedule,
+  onToggleSchedule,
+  onDeleteSchedule,
 }: ChatViewProps) {
   const memberIds = new Set(members.map((m) => m.userId))
   const addable = crew.filter((c) => !memberIds.has(c.id))
+  const [showSchedules, setShowSchedules] = useState(false)
+  const schedulingOn = Boolean(
+    onCreateSchedule && onToggleSchedule && onDeleteSchedule,
+  )
 
   return (
     <>
@@ -205,6 +256,23 @@ function ActiveChat({
         <span className="font-medium">
           {chatName({ title, memberHandles: members.map((m) => m.handle) })}
         </span>
+        {schedulingOn && (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Schedules"
+            aria-pressed={showSchedules}
+            onClick={() => {
+              setShowSchedules((v) => !v)
+            }}
+          >
+            <CalendarClock className="size-4" />
+            Schedules
+            {schedules && schedules.length > 0
+              ? ` (${String(schedules.length)})`
+              : ''}
+          </Button>
+        )}
         <div className="flex flex-wrap items-center gap-1">
           {members.map((m) => (
             <span
@@ -248,6 +316,19 @@ function ActiveChat({
           )}
         </div>
       </header>
+      {schedulingOn &&
+        showSchedules &&
+        onCreateSchedule &&
+        onToggleSchedule &&
+        onDeleteSchedule && (
+          <SchedulesPanel
+            schedules={schedules ?? []}
+            busy={busy}
+            onCreateSchedule={onCreateSchedule}
+            onToggleSchedule={onToggleSchedule}
+            onDeleteSchedule={onDeleteSchedule}
+          />
+        )}
       <Messages messages={messages} working={working} />
       <Composer
         busy={busy}
@@ -255,6 +336,149 @@ function ActiveChat({
         placeholder="Message…  (@mention an agent in a group; Enter to send)"
       />
     </>
+  )
+}
+
+function SchedulesPanel({
+  schedules,
+  busy,
+  onCreateSchedule,
+  onToggleSchedule,
+  onDeleteSchedule,
+}: {
+  schedules: ScheduleItem[]
+  busy: boolean
+  onCreateSchedule: (input: NewSchedule) => void
+  onToggleSchedule: (id: string, enabled: boolean) => void
+  onDeleteSchedule: (id: string) => void
+}) {
+  const [body, setBody] = useState('')
+  const [mode, setMode] = useState<'once' | 'repeat'>('once')
+  const [at, setAt] = useState('')
+  const [every, setEvery] = useState('30')
+
+  function submit() {
+    const trimmed = body.trim()
+    if (!trimmed) return
+    if (mode === 'once') {
+      if (!at) return
+      onCreateSchedule({ body: trimmed, fireAt: new Date(at).toISOString() })
+    } else {
+      const minutes = Number.parseInt(every, 10)
+      if (Number.isNaN(minutes)) return
+      onCreateSchedule({ body: trimmed, intervalMinutes: minutes })
+    }
+    setBody('')
+    setAt('')
+  }
+
+  return (
+    <div className="border-b bg-muted/20 px-4 py-3">
+      <div className="mx-auto flex max-w-3xl flex-col gap-3">
+        <p className="text-xs text-muted-foreground">
+          Scheduled messages post themselves into this chat — everyone here can
+          see them. A message from you nudges the agents; one from an agent is a
+          standing announcement.
+        </p>
+        {schedules.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No schedules yet.</p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {schedules.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="text-muted-foreground">
+                    @{s.authorHandle}
+                  </span>{' '}
+                  {s.body}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {scheduleSummary(s)}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`${s.enabled ? 'Disable' : 'Enable'} schedule ${s.id}`}
+                  onClick={() => {
+                    onToggleSchedule(s.id, !s.enabled)
+                  }}
+                  className="shrink-0 rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {s.enabled ? 'On' : 'Off'}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete schedule ${s.id}`}
+                  onClick={() => {
+                    onDeleteSchedule(s.id)
+                  }}
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className={inputClass('min-w-40 flex-1')}
+            placeholder="Message to schedule…"
+            value={body}
+            onChange={(e) => {
+              setBody(e.target.value)
+            }}
+          />
+          <select
+            aria-label="Schedule mode"
+            className={selectClass('text-sm')}
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value === 'repeat' ? 'repeat' : 'once')
+            }}
+          >
+            <option value="once">Once</option>
+            <option value="repeat">Repeat</option>
+          </select>
+          {mode === 'once' ? (
+            <input
+              type="datetime-local"
+              aria-label="Fire time"
+              className={inputClass('text-sm')}
+              value={at}
+              onChange={(e) => {
+                setAt(e.target.value)
+              }}
+            />
+          ) : (
+            <label className="flex items-center gap-1 text-sm text-muted-foreground">
+              every
+              <input
+                type="number"
+                aria-label="Interval minutes"
+                min={5}
+                className={inputClass('w-20 text-sm')}
+                value={every}
+                onChange={(e) => {
+                  setEvery(e.target.value)
+                }}
+              />
+              min
+            </label>
+          )}
+          <Button
+            size="sm"
+            disabled={busy || !body.trim() || (mode === 'once' && !at)}
+            onClick={submit}
+          >
+            <Plus className="size-4" />
+            Add
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 

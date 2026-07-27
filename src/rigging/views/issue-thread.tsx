@@ -16,6 +16,7 @@ import { useNow } from '@rigging/lib/use-now'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Composer } from '@rigging/components/composer'
+import { BatonChip } from '@rigging/components/baton-chip'
 import { activityTint, ISSUE_STATUS_META } from '@rigging/lib/issue-status-meta'
 
 // The issue thread: body, the merged comment + status-change timeline, a
@@ -95,6 +96,7 @@ export function IssueThreadView({
               {thread.branchName}
             </span>
           )}
+          {thread.batonHolder && <BatonChip holder={thread.batonHolder} />}
         </div>
         {activity && (
           <p

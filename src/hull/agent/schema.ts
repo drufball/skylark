@@ -138,6 +138,14 @@ export const backgroundJobs = pgTable('background_jobs', {
   cwd: text('cwd').notNull(),
   /** The OS pid of the spawned child, for observability — see doc comment. */
   pid: bigint('pid', { mode: 'number' }).notNull(),
+  /**
+   * How often the night watch (hull/watch) should health-check this wait, in
+   * milliseconds — an OPTIONAL per-call override the agent sets through the
+   * `background` tool. Null means "use the watch's default check-in interval".
+   * Owned here because it's a fact about the job; read by the watch, never
+   * written by it.
+   */
+  checkInIntervalMs: bigint('check_in_interval_ms', { mode: 'number' }),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),

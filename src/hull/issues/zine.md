@@ -37,7 +37,8 @@ app-shell nav).
   (`open|building|done|closed`), `authorId` (→ users.id), `ownerId` (→ users.id
   — who answers for it, the creator unless set otherwise), `playbookId` (→
   playbooks.id; null = the `build` default), `visibility` (`public` for now —
-  room to grow), and the build context filled in on the first build:
+  room to grow), `batonHolderId` (→ users.id, nullable — whose turn it is right
+  now; see **The baton**), and the build context filled in on the first build:
   `branchName`, `worktreePath`, and `statusLine` (the latest agent progress).
   Issues carry no notion of where they were filed from — an agent that wants to
   report back on one finds the right conversation itself (see
@@ -73,7 +74,25 @@ app-shell nav).
   through [notifications](../notifications/zine.md) (an inbox row for a human,
   an agent wake for an agent) with no worktree turn. One baton per issue: a pass
   is refused while another agent's session on the issue is mid-turn (the caller
-  being mid-turn is expected — handing off is a turn's last action).
+  being mid-turn is expected — handing off is a turn's last action). On a
+  validated pass `requestHandoff` also moves `batonHolderId` (to the target
+  agent, or the OWNER on an owner-ping) on the same write that emits the event —
+  see **The baton**.
+- **The baton** (`batonHolderId` + `setBatonHolder`) — whose turn it is, as an
+  explicit column rather than something re-derived from running-hands checks and
+  handoff events. It moves at exactly the points the baton actually moves,
+  riding the SAME write that emits each event: to the playbook entrypoint agent
+  on → building (the orchestrator, which alone resolves the entrypoint), to the
+  target agent on an `issue.handoff` and to the issue OWNER on an
+  `issue.owner_ping` (`requestHandoff`), and cleared to null on → done / →
+  closed (inline in `transitionIssue`, so a terminal move can't miss it).
+  `assertTransition` stays the single state authority — the column only records
+  who holds the baton after a move, never decides legality. The load-bearing
+  distinction downstream is **human vs agent**: a HUMAN holder is the universal
+  "waiting for input" signal the night watch (#q9d9) reads to decide whether to
+  nudge; an agent holder means work is (or should be) in flight. The board card
+  and thread view surface it (handle + human/agent) via a single users join in
+  the door, shown as a modest `BatonChip` ("waiting on @dru" vs "@builder").
 - **The state machine** — `assertTransition(from, to)` in `service.ts`: the
   pure, exhaustively-tested heart. Legal moves are `open↔building`,
   `building→done`, `open|building→closed`; `done` and `closed` are terminal; a
@@ -92,6 +111,10 @@ app-shell nav).
   a slug generator as dependencies, so its decisions are unit-tested against
   fakes. `onStatusChanged` is the single decision point; `handleBusNote` is the
   ship-log subscription that feeds it; `reconcile` is startup recovery.
+  `driveTurn(issueId, sessionId, text)` is a narrow seam — its private
+  `fireTurn` exposed by name — so the night watch (hull/watch) can nudge a
+  stalled build or health-check a long wait through THIS orchestrator's own
+  runtime, never a fresh one (see hull/watch/zine.md's ownership note).
 - **The live shell** (`orchestrator-live.ts`) — the impure wiring the
   orchestrator's decisions plug into: `nodeGitOps` (real `git worktree` +
   file-copy via `child_process`), `generateSlug` (a cheap Anthropic call that
@@ -151,17 +174,27 @@ row + a notify; the in-process call that started the build is long gone. The
 orchestrator hears the agent because it subscribes to the log, the same way it
 hears the browser. This is the bus earning its keep.
 
-**Idempotent side-effects, serialized per issue.** A worktree or session may
-already exist — a duplicate event, a resume from `open`, a reconcile racing a
-live bus note. `ensureBuild` checks-then-acts: it generates the branch only when
-`branchName` is unset, creates the worktree only when absent, and reuses the
-existing session. But check-then-act is a race if two events for the same issue
-run concurrently, so `onStatusChanged` is **serialized per issue id** (a
-per-issue promise chain); different issues still run in parallel. The branch +
-worktree are persisted the moment the worktree exists on disk — _before_ the
-session is created — so a DB failure mid-build can't strand a worktree with no
-branch recorded (which would re-slug and leak a second one). `teardown` removes
-only what's there.
+**Idempotent side-effects, serialized per issue — and session spawn arbitrated
+by the database.** A worktree or session may already exist — a duplicate event,
+a resume from `open`, a reconcile racing a live bus note. `ensureBuild`
+checks-then-acts: it generates the branch only when `branchName` is unset,
+creates the worktree only when absent, and reuses the existing session. But
+check-then-act is a race if two events for the same issue run concurrently, so
+`onStatusChanged` is **serialized per issue id** (a per-issue promise chain);
+different issues still run in parallel. The chain only guards ONE process,
+though — a reload window or a second process re-raced it and spawned twin
+sessions into the same worktree (#f5io) — so session spawn does not trust the
+chain: `ensureAgentSession` creates the session row and claims the
+`issue_sessions` link **in one transaction**, and the link's composite PK
+`(issueId, agentUserId)` is the arbiter. Losing the claim rolls the candidate
+session back (never durable, never fired) and adopts the winner's session.
+`reconcile` also sweeps orphans this race left before the fix: a worktree-`cwd`
+session no link points at is never resumed (resume only follows links) and, if
+stuck `running`, is cancelled — never deleted; session rows are durable
+transcripts. The branch + worktree are persisted the moment the worktree exists
+on disk — _before_ the session is created — so a DB failure mid-build can't
+strand a worktree with no branch recorded (which would re-slug and leak a second
+one). `teardown` removes only what's there.
 
 **`.worktreeinclude`.** `git worktree add` does **not** carry gitignored files,
 so a fresh worktree has no `.env` and can't reach Postgres. The orchestrator
@@ -233,6 +266,22 @@ their public functions, not their tables.
   finishing while the target's boots) accepted on the same grounds as
   `SKYLARK_ACTOR`'s honesty: the contract says don't touch files after handing
   off.
+- **The baton is an explicit column, moved on the writes that emit its events —
+  not re-derived.** Whose turn it is used to be inferred at read time from
+  running-hands checks plus the handoff event stream. `batonHolderId` makes it a
+  fact, set at the three points it moves (→ building: the entrypoint, in the
+  orchestrator, which alone resolves it; `issue.handoff`/`issue.owner_ping`: the
+  target/owner, in `requestHandoff`) and cleared on the terminal transitions
+  (inline in `transitionIssue`, so a done/closed move can't forget it). Each SET
+  rides the SAME durable write that emits the event, so the column and the log
+  can't drift; a forged bus event, which never passes through `requestHandoff`,
+  can never move the baton. This does NOT add a second state machine —
+  `assertTransition` stays the only place legality lives; the column just
+  records the holder after a move already made. The one distinction downstream
+  reads is human-vs-agent: a human holder is "waiting for input" (the night
+  watch, #q9d9, suppresses stall nudges on it), an agent holder is work in
+  flight. Backfill is deliberately skipped — a pre-column building issue starts
+  with a null holder, which the watch handles conservatively.
 - **The event consumer re-validates; the emitter's checks are courtesy.**
   `applyHandoff` re-checks the target is a crew **agent** (a forged or replayed
   event must never boot a session that acts as a human) and only honors an event
@@ -263,6 +312,32 @@ their public functions, not their tables.
   If the baton was with a NON-entrypoint agent when the server died, that hand
   stays paused until the next handoff or a human nudge — the honest gap that
   remains.
+- **Reconcile ALSO sweeps lost background jobs — last, on purpose (#69iz).** The
+  runtime's `reconcileJobs` (hull/agent, #v6ft) clears every stranded
+  `background_jobs` row and resumes its session with a "job lost, re-run it"
+  message. It's the LAST thing this orchestrator's `reconcile` does, and it's
+  wired here — not in `boot.ts` as a standalone call — for two reasons. Order:
+  it must run AFTER the stranded-`running` cancels, or a job-lost resume could
+  mark its session `running` and then be swept back to idle mid-message, after
+  the row was already claimed — silencing the one message that session was owed.
+  Instance: it must run on the SAME runtime this orchestrator drives, so a
+  job-lost resume landing on a session whose re-seeded entrypoint turn is
+  already streaming queues as a `followUp` (one live entry per session —
+  `ensureEntry` is single-flight) rather than double-driving the conversation.
+  `boot.ts` calls `ensureOrchestrator()` exactly once per boot, so this sweep
+  runs exactly once. Both halves are error-isolated (a down DB or a failed sweep
+  is logged, never sinks boot). Known residual, accepted for now: a job on a
+  CHAT session is swept on the ISSUES runtime while the chat orchestrator
+  reconciles that same session on its OWN separate runtime (each
+  `orchestrator-live` builds its own `createServerRuntime`) — two live sessions,
+  two registries, so the `startGate` single-flight can't see across them. Rows
+  are append-only (nothing is deleted), but two turns interleaved into one `seq`
+  order could leave a transcript that isn't a valid single conversation, which
+  the next boot would feed back to the model verbatim — a resumability hazard,
+  not merely cosmetic. Tolerated because builder sessions are jobs' overwhelming
+  users and the destructive move (cancel) lives on this side; the real cure is
+  one shared server runtime for both orchestrators (then the sweep moves to
+  `boot.ts` and single-flight covers chat too), a separate voyage.
 - **Playbook entrypoints boot from the entrypoint user's own config.** The
   playbook names WHO starts; how that agent boots is data on its own `users` row
   — one source of truth, the same one a handoff target uses. Corollary:
@@ -307,6 +382,28 @@ their public functions, not their tables.
 
 ## Changelog
 
+- **#q9d9** — `driveTurn(issueId, sessionId, text)` added to the orchestrator's
+  return: the private `fireTurn` exposed by name so the night watch (hull/watch)
+  drives nudges/health-checks through THIS orchestrator's runtime, never a fresh
+  one. No lifecycle change.
+- **#5vp3** — The baton is now an explicit column, not a re-derivation.
+  `issues.batonHolderId` (→ users.id, nullable) + `setBatonHolder`; set to the
+  playbook entrypoint on → building (orchestrator), to the target agent on
+  `issue.handoff` and to the issue OWNER on `issue.owner_ping`
+  (`requestHandoff`, on the same write that emits), and cleared on → done / →
+  closed (inline in `transitionIssue`). `assertTransition` stays the single
+  state authority. The board card + thread expose the holder (handle +
+  human/agent) via one users join in the door, rendered as a modest `BatonChip`.
+  This is the "waiting for input" signal the night watch (#q9d9) will read; no
+  history backfill — existing building issues start null.
+- **#f5io** — Session spawn is idempotent under concurrency, enforced by the
+  database: `claimIssueSession` (insert `.onConflictDoNothing().returning()` on
+  the `issue_sessions` composite PK) replaces the swallowed-conflict
+  `recordIssueSession`; `ensureAgentSession` wraps create-session + claim in one
+  transaction and adopts the winner on a lost claim, so a concurrent spawner can
+  never fire a turn on an orphan twin. `reconcile` gained an orphan sweep:
+  unlinked worktree sessions left by pre-fix duplicate spawns are cancelled if
+  `running` (clearing their background jobs too), never resumed, never deleted.
 - **Playbooks carry optional per-member instructions, reusable across every
   issue that picks the strategy.** `playbooks.memberInstructions` is a
   user-id-keyed map of role briefs; `instructionsFor` resolves one, and

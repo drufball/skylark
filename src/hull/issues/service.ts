@@ -365,9 +365,19 @@ export async function transitionIssue(
   if (!current) throw new Error(`No such issue: ${input.issueId}`)
   const to = assertTransition(current.status, input.to)
 
+  // Clear the baton on a terminal move: a done/closed issue has no whose-turn.
+  // This rides the SAME write that emits status_changed, so the column and the
+  // event never disagree. The → building and handoff SET points live elsewhere
+  // (the orchestrator resolves the entrypoint; requestHandoff knows the
+  // target), but every clear is a transition, so it belongs here.
+  const terminal = to === 'done' || to === 'closed'
   const [row] = await db
     .update(issues)
-    .set({ status: to, updatedAt: new Date() })
+    .set({
+      status: to,
+      updatedAt: new Date(),
+      ...(terminal ? { batonHolderId: null } : {}),
+    })
     .where(eq(issues.id, input.issueId))
     .returning()
 
@@ -412,19 +422,56 @@ export async function setBuildContext(
     .where(eq(issues.id, issueId))
 }
 
+/**
+ * Set (or clear, with null) the baton holder — whose turn it is on the issue.
+ * A thin, single-column write the baton-move points call on the same durable
+ * pass that emits their event: the orchestrator on → building (the entrypoint
+ * agent), `requestHandoff` on a handoff (the target agent) or an owner ping
+ * (the issue owner). Terminal transitions clear it inline in `transitionIssue`
+ * instead, so they can't miss the write. Keeping the state machine
+ * (`assertTransition`) the single authority, this never decides legality — it
+ * only records who holds the baton after a move the caller already made.
+ */
+export async function setBatonHolder(
+  db: Database,
+  issueId: string,
+  holderId: string | null,
+): Promise<void> {
+  await db
+    .update(issues)
+    .set({ batonHolderId: holderId })
+    .where(eq(issues.id, issueId))
+}
+
 // --- Issue sessions: which agents have a hand on an issue ---------------------
 
 /**
- * Record an agent's session on an issue. One session per (issue, agent), for
- * the issue's whole life: a duplicate set (a resume, a replayed event racing a
- * live one) is a no-op that keeps the first session — the transcript an agent
- * already has is worth more than a fresh one.
+ * Claim the (issue, agent) slot for a session — the link row's composite PK is
+ * the arbiter of "one live session per (issue, agent)", enforced by the
+ * database, not by in-process discipline. Returns the sessionId that actually
+ * holds the slot: the caller's own on a win, the incumbent's when another path
+ * (a concurrent event, another process, a resume) got there first. A losing
+ * caller must use the returned winner and never fire its own candidate — the
+ * transcript an agent already has is worth more than a fresh one.
  */
-export async function recordIssueSession(
+export async function claimIssueSession(
   db: Database,
   input: { issueId: string; agentUserId: string; sessionId: string },
-): Promise<void> {
-  await db.insert(issueSessions).values(input).onConflictDoNothing()
+): Promise<string> {
+  const won = (
+    await db
+      .insert(issueSessions)
+      .values(input)
+      .onConflictDoNothing()
+      .returning({ sessionId: issueSessions.sessionId })
+  ).at(0)
+  if (won) return won.sessionId
+  const incumbent = await getIssueSession(db, input.issueId, input.agentUserId)
+  if (!incumbent)
+    throw new Error(
+      `issue session claim conflicted but no winner row exists (issue ${input.issueId})`,
+    )
+  return incumbent.sessionId
 }
 
 /** The session an agent holds on an issue, if it has one. */
@@ -457,6 +504,18 @@ export async function listIssueSessions(
 }
 
 /**
+ * Every session id any issue link points at — the reconcile sweep's "these
+ * are legitimate" set. A worktree session NOT in here is an orphan (a
+ * pre-arbitration duplicate spawn) and must never be resumed.
+ */
+export async function linkedSessionIds(db: Database): Promise<string[]> {
+  const rows = await db
+    .select({ sessionId: issueSessions.sessionId })
+    .from(issueSessions)
+  return rows.map((r) => r.sessionId)
+}
+
+/**
  * Write the latest builder progress line shown live on the board/thread, and
  * bump its activity clock (`statusLineAt`) — the "last real activity"
  * timestamp neither `updatedAt` (only moved by a transition/build-context
@@ -484,6 +543,18 @@ export async function setStatusLine(
 
 // --- View-data shaping (pure, so it's PGlite-testable, not welded to the doors) ---
 
+/**
+ * Who holds the baton, resolved for display: the handle to show plus the one
+ * distinction the night watch and the views care about — is the holder a
+ * HUMAN (the "waiting for input" case) or an agent (work in flight). The door
+ * joins users once and hands this in; the pure shapers never read the users
+ * table themselves.
+ */
+export interface BatonHolder {
+  handle: string
+  isHuman: boolean
+}
+
 /** A board card: an issue plus its author handle and comment count. */
 export interface BoardIssue {
   id: string
@@ -499,6 +570,8 @@ export interface BoardIssue {
   awaitingBackground: boolean
   /** Is one of this issue's agent sessions mid-turn right now, in THIS process? */
   sessionRunning: boolean
+  /** Whose turn it is (handle + human/agent), or null when no one holds it. */
+  batonHolder: BatonHolder | null
   updatedAt: string
 }
 
@@ -535,6 +608,8 @@ export interface IssueThread {
   awaitingBackground: boolean
   /** Is one of this issue's agent sessions mid-turn right now, in THIS process? */
   sessionRunning: boolean
+  /** Whose turn it is (handle + human/agent), or null when no one holds it. */
+  batonHolder: BatonHolder | null
   entries: ThreadEntry[]
 }
 
@@ -559,6 +634,7 @@ export function toBoardCard(
   authorHandle: string,
   commentCount: number,
   sessionRunning = false,
+  batonHolder: BatonHolder | null = null,
 ): BoardIssue {
   return {
     id: issue.id,
@@ -571,6 +647,7 @@ export function toBoardCard(
     statusLineAt: issue.statusLineAt?.toISOString() ?? null,
     awaitingBackground: issue.awaitingBackground,
     sessionRunning,
+    batonHolder,
     updatedAt: issue.updatedAt.toISOString(),
   }
 }
@@ -588,6 +665,7 @@ export function assembleThread(input: {
   comments: { id: string; authorHandle: string; body: string; at: string }[]
   statusChanges: StatusChange[]
   sessionRunning?: boolean
+  batonHolder?: BatonHolder | null
 }): IssueThread {
   const entries: ThreadEntry[] = [
     ...input.comments.map(
@@ -623,6 +701,7 @@ export function assembleThread(input: {
     statusLineAt: input.issue.statusLineAt?.toISOString() ?? null,
     awaitingBackground: input.issue.awaitingBackground,
     sessionRunning: input.sessionRunning ?? false,
+    batonHolder: input.batonHolder ?? null,
     entries,
   }
 }

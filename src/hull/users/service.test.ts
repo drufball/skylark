@@ -9,6 +9,7 @@ import {
   createUser,
   getUserByHandle,
   getUserById,
+  getUsersByIds,
   handleOf,
   listUsers,
   seedCrew,
@@ -136,6 +137,36 @@ describe('users service', () => {
       type: 'agent',
     })
     expect((await listUsers(db)).map((u) => u.id)).toEqual(['a', 'b'])
+  })
+
+  describe('getUsersByIds', () => {
+    it('batch-resolves the requested ids and ignores the rest', async () => {
+      await createUser(db, {
+        id: 'a',
+        handle: 'a',
+        displayName: 'A',
+        type: 'human',
+      })
+      await createUser(db, {
+        id: 'b',
+        handle: 'b',
+        displayName: 'B',
+        type: 'agent',
+      })
+      await createUser(db, {
+        id: 'c',
+        handle: 'c',
+        displayName: 'C',
+        type: 'agent',
+      })
+
+      const found = await getUsersByIds(db, ['a', 'c', 'no-such-id'])
+      expect(found.map((u) => u.id).sort()).toEqual(['a', 'c'])
+    })
+
+    it('short-circuits on an empty id list without querying', async () => {
+      expect(await getUsersByIds(db, [])).toEqual([])
+    })
   })
 
   describe('seedCrew', () => {

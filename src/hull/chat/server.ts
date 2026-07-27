@@ -8,13 +8,20 @@ import { listUsers } from '@hull/users/service'
 import {
   addMember,
   addMessage,
+  canAuthorSchedule,
   createChat,
+  createSchedule,
+  deleteSchedule,
   ensureChatVisible,
   getChat,
+  getSchedule,
   listChatSummaries,
   listMembers,
   listMessages,
+  listSchedules,
   removeMember,
+  scheduleTiming,
+  setScheduleEnabled,
   setTitle,
 } from './service'
 
@@ -116,6 +123,88 @@ export const postChatMessage = createServerFn({ method: 'POST' })
       return { ok: true }
     })
   })
+
+/** A chat's schedules — RLS-filtered to the current actor (a member). */
+export const listChatSchedules = createServerFn({ method: 'GET' })
+  .validator((chatId: string) => chatId)
+  .handler(({ data: chatId }) =>
+    withCurrentActor(async (tx) => {
+      await ensureChatVisible(tx, chatId)
+      return listSchedules(tx, chatId)
+    }),
+  )
+
+/**
+ * Create a schedule: a message queued to post itself later, one-shot (`fireAt`)
+ * or recurring (`intervalMinutes`). `authorId` defaults to you; naming another
+ * is allowed only for an agent member of the chat (never another human — a
+ * schedule posts in its author's name). Timing is validated at the door.
+ */
+export const createChatSchedule = createServerFn({ method: 'POST' })
+  .validator(
+    (input: {
+      chatId: string
+      body: string
+      authorId?: string
+      /** ISO timestamp for a one-shot fire; XOR intervalMinutes. */
+      fireAt?: string
+      /** Whole minutes between fires for a recurring schedule; XOR fireAt. */
+      intervalMinutes?: number
+    }) => input,
+  )
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await ensureChatVisible(tx, data.chatId)
+      const body = data.body.trim()
+      if (!body) throw new Error('a schedule needs a message body')
+      const authorId = data.authorId ?? me.id
+      const members = await listMembers(tx, data.chatId)
+      if (!canAuthorSchedule({ actorId: me.id, authorId, members })) {
+        throw new Error(
+          'a schedule may post only as yourself or an agent in this chat',
+        )
+      }
+      const timing = scheduleTiming({
+        now: new Date(),
+        fireAt: data.fireAt ? new Date(data.fireAt) : null,
+        intervalMinutes: data.intervalMinutes ?? null,
+      })
+      const row = await createSchedule(tx, {
+        id: uuidv7(),
+        chatId: data.chatId,
+        authorId,
+        body,
+        createdById: me.id,
+        ...timing,
+      })
+      return { id: row.id }
+    }),
+  )
+
+/** Turn a schedule on or off — RLS gates it to a member of the schedule's chat. */
+export const setChatScheduleEnabled = createServerFn({ method: 'POST' })
+  .validator((input: { scheduleId: string; enabled: boolean }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx) => {
+      // getSchedule is RLS-filtered → a non-member sees undefined (clean refusal).
+      if (!(await getSchedule(tx, data.scheduleId)))
+        throw new Error('not a member of this chat')
+      await setScheduleEnabled(tx, data.scheduleId, data.enabled)
+      return { ok: true }
+    }),
+  )
+
+/** Delete a schedule — RLS gates it to a member of the schedule's chat. */
+export const deleteChatSchedule = createServerFn({ method: 'POST' })
+  .validator((input: { scheduleId: string }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx) => {
+      if (!(await getSchedule(tx, data.scheduleId)))
+        throw new Error('not a member of this chat')
+      await deleteSchedule(tx, data.scheduleId)
+      return { ok: true }
+    }),
+  )
 
 /** Add or remove a member, or retitle — any member may, no per-row ACL yet. */
 export const updateChat = createServerFn({ method: 'POST' })

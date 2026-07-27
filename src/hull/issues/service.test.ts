@@ -14,6 +14,7 @@ import {
   generateNano,
   getIssue,
   getIssueSession,
+  linkedSessionIds,
   listComments,
   listIssues,
   listIssueSessions,
@@ -21,7 +22,8 @@ import {
   resolveIssueRef,
   resolveStatusWord,
   setBuildContext,
-  recordIssueSession,
+  setBatonHolder,
+  claimIssueSession,
   setStatusLine,
   toBoardCard,
   transitionIssue,
@@ -465,6 +467,49 @@ describe('transitionIssue', () => {
     expect(err?.from).toBe('open')
     expect(err?.to).toBe('done')
   })
+
+  it('clears the baton on → done (a terminal issue has no whose-turn)', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await setBatonHolder(db, issue.id, authorId)
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'done',
+      actorId: authorId,
+    })
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBeNull()
+  })
+
+  it('clears the baton on → closed', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    await setBatonHolder(db, issue.id, authorId)
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'closed',
+      actorId: authorId,
+    })
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBeNull()
+  })
+
+  it('leaves the baton untouched on a non-terminal move (→ open pause)', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'building',
+      actorId: authorId,
+    })
+    await setBatonHolder(db, issue.id, authorId)
+    await transitionIssue(db, {
+      issueId: issue.id,
+      to: 'open',
+      actorId: authorId,
+    })
+    expect(defined(await getIssue(db, issue.id)).batonHolderId).toBe(authorId)
+  })
 })
 
 describe('view-data shaping (pure)', () => {
@@ -480,6 +525,7 @@ describe('view-data shaping (pure)', () => {
       ownerId: 'u1',
       playbookId: null,
       visibility: 'public',
+      batonHolderId: null,
       branchName: 'add-widget-aa11',
       worktreePath: '/wt/add-widget-aa11',
       statusLine: 'on it',
@@ -506,6 +552,33 @@ describe('view-data shaping (pure)', () => {
   it('toBoardCard carries sessionRunning through when passed', () => {
     const card = toBoardCard(row(), 'drufball', 0, true)
     expect(card.sessionRunning).toBe(true)
+  })
+
+  it('toBoardCard defaults batonHolder to null and carries a passed holder', () => {
+    expect(toBoardCard(row(), 'drufball', 0).batonHolder).toBeNull()
+    const held = toBoardCard(row(), 'drufball', 0, false, {
+      handle: 'drufball',
+      isHuman: true,
+    })
+    expect(held.batonHolder).toEqual({ handle: 'drufball', isHuman: true })
+  })
+
+  it('assembleThread defaults batonHolder to null and carries a passed holder', () => {
+    const none = assembleThread({
+      issue: row(),
+      authorHandle: 'drufball',
+      comments: [],
+      statusChanges: [],
+    })
+    expect(none.batonHolder).toBeNull()
+    const held = assembleThread({
+      issue: row(),
+      authorHandle: 'drufball',
+      comments: [],
+      statusChanges: [],
+      batonHolder: { handle: 'builder', isHuman: false },
+    })
+    expect(held.batonHolder).toEqual({ handle: 'builder', isHuman: false })
   })
 
   it('assembleThread merges comments + status changes in id (chronological) order', () => {
@@ -606,7 +679,7 @@ describe('issue sessions — one per (issue, agent)', () => {
   it('records and reads back the session an agent holds on an issue', async () => {
     const issue = await createIssue(db, { title: 'x', authorId })
     const { user, session } = await agentWithSession('builder')
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: user.id,
       sessionId: session.id,
@@ -615,7 +688,7 @@ describe('issue sessions — one per (issue, agent)', () => {
     expect(link.sessionId).toBe(session.id)
   })
 
-  it('keeps one session per (issue, agent): a duplicate set is a no-op', async () => {
+  it('keeps one session per (issue, agent): the first claim wins, the loser is told', async () => {
     const issue = await createIssue(db, { title: 'x', authorId })
     const { user, session } = await agentWithSession('builder')
     const other = await createSession(db, {
@@ -623,18 +696,64 @@ describe('issue sessions — one per (issue, agent)', () => {
       model: 'claude-sonnet-5',
       agentUserId: user.id,
     })
-    await recordIssueSession(db, {
+    const first = await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: user.id,
       sessionId: session.id,
     })
-    await recordIssueSession(db, {
+    const second = await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: user.id,
       sessionId: other.id,
     })
+    // The winner hears its own id back; the loser hears the incumbent's — the
+    // arbitration a racing spawner uses to adopt the session that actually won.
+    expect(first).toBe(session.id)
+    expect(second).toBe(session.id)
     const link = defined(await getIssueSession(db, issue.id, user.id))
     expect(link.sessionId).toBe(session.id)
+  })
+
+  it('throws when the conflict is not the (issue, agent) slot — a session claimed twice', async () => {
+    // The insert can also conflict on the sessionId UNIQUE constraint: one
+    // session claimed for two different issues. There is no incumbent on the
+    // second (issue, agent) slot to adopt, so this is a real bug to surface,
+    // not a race to arbitrate.
+    const issue = await createIssue(db, { title: 'x', authorId })
+    const otherIssue = await createIssue(db, { title: 'y', authorId })
+    const { user, session } = await agentWithSession('builder')
+    await claimIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: user.id,
+      sessionId: session.id,
+    })
+    await expect(
+      claimIssueSession(db, {
+        issueId: otherIssue.id,
+        agentUserId: user.id,
+        sessionId: session.id,
+      }),
+    ).rejects.toThrow(/no winner row exists/)
+  })
+
+  it('lists every linked session id across all issues (the orphan-sweep allowlist)', async () => {
+    const issue = await createIssue(db, { title: 'x', authorId })
+    const otherIssue = await createIssue(db, { title: 'y', authorId })
+    const a = await agentWithSession('builder')
+    const b = await agentWithSession('babysitter')
+    await claimIssueSession(db, {
+      issueId: issue.id,
+      agentUserId: a.user.id,
+      sessionId: a.session.id,
+    })
+    await claimIssueSession(db, {
+      issueId: otherIssue.id,
+      agentUserId: b.user.id,
+      sessionId: b.session.id,
+    })
+    expect((await linkedSessionIds(db)).sort()).toEqual(
+      [a.session.id, b.session.id].sort(),
+    )
   })
 
   it('lists every hand on an issue, and nothing from other issues', async () => {
@@ -642,12 +761,12 @@ describe('issue sessions — one per (issue, agent)', () => {
     const bystander = await createIssue(db, { title: 'y', authorId })
     const a = await agentWithSession('builder')
     const b = await agentWithSession('babysitter')
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: a.user.id,
       sessionId: a.session.id,
     })
-    await recordIssueSession(db, {
+    await claimIssueSession(db, {
       issueId: issue.id,
       agentUserId: b.user.id,
       sessionId: b.session.id,

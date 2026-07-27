@@ -45,6 +45,11 @@ notifications, and the access gate that says who may see what.
 - **notifications service** (`notifications/`) — every user's inbox, fed by
   watches on ship-log topics; for an agent, a notification is a wake-up. See
   [`notifications/zine.md`](notifications/zine.md).
+- **watch service** (`watch/`) — the night watch: a ~60s sweep that nudges a
+  build gone silent and health-checks a long background wait, escalating to the
+  owner when a stall won't clear. Drives its interventions through the issues
+  orchestrator's own runtime and surfaces every one on the ship's log. See
+  [`watch/zine.md`](watch/zine.md).
 - **access gate** (`access/`) — `canSeeTopic` (`access/visibility.ts`), the one
   entitlement gate for "may this actor see X?". It probes the parent resource
   under the actor's RLS context, so the policies stay the single source of
@@ -94,6 +99,10 @@ into rigging or home. (drizzle-kit finds tables on its own by globbing every
 
 ## Changelog
 
+- **#q9d9** — The night watch ([`watch/zine.md`](watch/zine.md)): a stall-nudge
+  - background-health-check sweep, armed after reconcile, driving through the
+    issues orchestrator's runtime. Adds a fourth allowlisted cross-schema FK
+    pair (watch → issues, watch → agent) in `src/architecture.test.ts`.
 - **LLM gateway** — the local-model service retires; every model call routes
   through the LiteLLM gateway (a docker-compose service beside Postgres),
   configured in `litellm.config.yaml`.

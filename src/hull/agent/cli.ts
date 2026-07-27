@@ -4,6 +4,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
 import { systemDb } from '@hull/db/client'
 import { isMain, runCli } from '@hull/lib/cli'
 import { withCliActor } from '@hull/users/actor'
+import { getUsersByIds } from '@hull/users/service'
 
 import {
   listExtensions,
@@ -17,6 +18,7 @@ import {
   createSession,
   getMessages,
   getSession,
+  listFleet,
   listSessions,
   resolveSessionRef,
   titleFromMessage,
@@ -147,6 +149,85 @@ async function cmdList(args: string[]): Promise<void> {
     process.stdout.write(
       `${mark} ${DIM}${s.id}${RESET}  ${when}  ${s.title ?? '(untitled)'}\n`,
     )
+  }
+}
+
+/**
+ * Render the age of a timestamp as a short "Nm ago" string, relative to `now`
+ * (a parameter so it's testable without faking the clock). Clamps negative
+ * deltas (clock skew) to zero rather than printing a nonsensical "-5s ago".
+ */
+export function formatAge(date: Date, now: Date = new Date()): string {
+  const seconds = Math.max(
+    0,
+    Math.floor((now.getTime() - date.getTime()) / 1000),
+  )
+  if (seconds < 60) return `${String(seconds)}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${String(minutes)}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${String(hours)}h ago`
+  const days = Math.floor(hours / 24)
+  return `${String(days)}d ago`
+}
+
+const RUNNING_CAVEAT =
+  "a crash can leave a session stuck on running — can't confirm from the DB alone that it's still alive"
+
+/**
+ * One view of every agent session, sorted by most-recent activity — the query
+ * the night watch used to run by hand (issue #7an8, part of #q5ia): status,
+ * agent handle (or "unattributed"), title, cwd, how long since it last spoke,
+ * and any outstanding background jobs. `running` rows carry an explicit
+ * caveat rather than a guess at liveness — see `RUNNING_CAVEAT`. Read-only.
+ */
+async function cmdFleet(): Promise<void> {
+  const { fleet, handleById } = await withCliActor(async (tx) => {
+    const fleet = await listFleet(tx)
+    const agentIds = [
+      ...new Set(
+        fleet
+          .map((f) => f.session.agentUserId)
+          .filter((id): id is string => id !== null),
+      ),
+    ]
+    const users = await getUsersByIds(tx, agentIds)
+    return {
+      fleet,
+      handleById: new Map(users.map((u) => [u.id, u.handle])),
+    }
+  })
+
+  if (fleet.length === 0) {
+    process.stdout.write('No sessions.\n')
+    return
+  }
+
+  const now = new Date()
+  for (const { session, jobs } of fleet) {
+    const mark =
+      session.status === 'running'
+        ? '●'
+        : session.status === 'error'
+          ? '✗'
+          : '○'
+    const who = session.agentUserId
+      ? `@${handleById.get(session.agentUserId) ?? '?'}`
+      : '(unattributed)'
+    const cwd = session.cwd ?? '(repo root)'
+    process.stdout.write(
+      `${mark} ${who}  ${session.title ?? '(untitled)'}  ` +
+        `${DIM}${cwd} · ${formatAge(session.lastMessageAt, now)}${RESET}\n`,
+    )
+    if (session.status === 'running')
+      process.stdout.write(`  ${DIM}⚠ ${RUNNING_CAVEAT}${RESET}\n`)
+    if (session.status === 'error' && session.error)
+      process.stdout.write(`  ${DIM}error: ${session.error}${RESET}\n`)
+    for (const job of jobs) {
+      process.stdout.write(
+        `  ${DIM}job: ${job.label} · ${job.command} · ${formatAge(job.createdAt, now)}${RESET}\n`,
+      )
+    }
   }
 }
 
@@ -295,6 +376,8 @@ async function main(): Promise<void> {
       return cmdSend(args)
     case 'list':
       return cmdList(args)
+    case 'fleet':
+      return cmdFleet()
     case 'show':
       return cmdShow(args)
     case 'cancel':
@@ -305,10 +388,12 @@ async function main(): Promise<void> {
       return cmdExtensions(args)
     default:
       process.stdout.write(
-        'usage: agent <new|send|list|show|cancel|seed|extensions> …\n' +
+        'usage: agent <new|send|list|fleet|show|cancel|seed|extensions> …\n' +
           '  new <message> [--model <id>]   start a session and send the first message\n' +
           '  send <session-id> <message>    send a message (queued if mid-turn)\n' +
           '  list [--running] [--since D]   list sessions, newest first\n' +
+          '  fleet                          every session: status, agent, title, cwd,\n' +
+          '                                  last activity, and outstanding background jobs\n' +
           '  show <session-id> [--tail N]   header, counts, and a transcript tail (default 10)\n' +
           '  cancel <session-id>            cancel a running session\n' +
           '  seed                           seed the standard agent config + extensions\n' +

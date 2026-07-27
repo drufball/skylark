@@ -22,7 +22,16 @@ const PARAMS = Type.Object({
     description:
       'A short label for what you are waiting on (e.g. "PR #12 CI").',
   }),
+  checkInMinutes: Type.Optional(
+    Type.Number({
+      description:
+        'Optional: how often (in minutes) the night watch should wake you to health-check this wait. Defaults to 10. Raise it for a genuinely long, quiet wait so you are not pinged too often.',
+    }),
+  ),
 })
+
+/** One minute in milliseconds — the check-in override is given in minutes. */
+const MS_PER_MINUTE = 60_000
 
 export function createBackgroundTool(
   sessionId: string,
@@ -46,6 +55,12 @@ export function createBackgroundTool(
         command: params.command,
         label: params.label,
         cwd,
+        // A positive minutes override becomes a per-job ms interval on the row;
+        // anything else (absent, zero, negative) leaves it null → watch default.
+        checkInIntervalMs:
+          typeof params.checkInMinutes === 'number' && params.checkInMinutes > 0
+            ? Math.round(params.checkInMinutes * MS_PER_MINUTE)
+            : null,
       })
       return {
         content: [

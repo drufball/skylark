@@ -27,9 +27,17 @@ import { describe, expect, it } from 'vitest'
  * - Declared FKs between service schemas (referential integrity is worth the
  *   coupling on a small ship). Allowed ONLY from the owning service's own
  *   schema.ts: issues → agent, chat → agent. Issues knows nothing about chat —
- *   an agent finds the right conversation itself (see the chat waker).
+ *   an agent finds the right conversation itself (see the chat waker). The
+ *   night watch keys its OWN memory tables by the issue and the background job
+ *   it tracks, cascade-deleting so its memory can't outlive them: watch →
+ *   issues, watch → agent.
  */
-const SCHEMA_FK_ALLOWLIST = new Set(['issues -> agent', 'chat -> agent'])
+const SCHEMA_FK_ALLOWLIST = new Set([
+  'issues -> agent',
+  'chat -> agent',
+  'watch -> issues',
+  'watch -> agent',
+])
 
 const SRC = join(import.meta.dirname)
 

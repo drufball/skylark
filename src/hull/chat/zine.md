@@ -57,10 +57,26 @@ the rigging.
   `systemDb` with `createServerRuntime` (live pi.dev sessions, or the fake when
   `SKYLARK_FAKE_RUNTIME` is set), subscribes it to the ship's log, arms the
   waker, and ensures the notifications reactor runs. `v8 ignore`d.
+- **Schedule** — a row in `chat_schedules`: a message queued to post itself into
+  a chat later, one-shot (`fireAt`) or recurring (`intervalMinutes` with a
+  `nextFireAt` advanced each fire), owned entirely by chat. It fires by posting
+  a chat message AS its `authorId` — nothing else — so the reply rules do the
+  rest. Schedules ride chat membership under RLS (migration 0027), so every
+  member sees them: no invisible clockwork. Pure decision logic in `service.ts`
+  (`canAuthorSchedule`, `scheduleTiming`, `isScheduleDue`, `advanceNextFire`);
+  firing is `fireDueSchedules`.
+- **The schedule sweep** — `orchestrator-live.ts` arms a recurring sweep (30s,
+  on `systemDb`) that drains `fireDueSchedules`. Built on the shared
+  `hull/lib/interval-sweep.ts` helper (an unref'd interval with an injected
+  clock + timer, errors swallowed and logged) — the same helper the files sweep
+  rides. `v8 ignore`d live wiring; the fire decisions are PGlite-tested.
 - **Doors** — `server.ts` (the web doors; the front-door route is the chat UI)
   and `cli.ts` (`npm run chat`: `list`, `show <chatId> [--limit N]`,
   `post <chatId> <message>` — how a woken agent finds a chat and posts to it
-  from its bash tool, mirroring the issues CLI's conventions exactly).
+  from its bash tool, mirroring the issues CLI's conventions exactly — plus
+  `schedule new|list|rm` to manage scheduled messages from bash). The chat view
+  carries a modest schedules affordance (list + create + enable/disable +
+  delete); the CLI is the primary door for v1.
 
 ## Structure
 
@@ -94,6 +110,23 @@ nothing if none fits. Then the batch is marked read. This is what closes the
 planning loop: file → build → woken to review, post an update to the right chat,
 and file the next piece — the routing judgment now lives with the agent, not the
 plumbing.
+
+**A schedule, end to end.** A member creates a schedule (web door or
+`npm run chat -- schedule new`) → the create door checks the **author rule**
+(the row's `authorId` must be the creating actor themself, or an **agent**
+member of the chat — never another human) and the timing (exactly one of a
+one-shot `fireAt` or a recurring `intervalMinutes` at/above the five-minute
+floor) → the row lands, visible to every member. The live schedule sweep (30s,
+`systemDb`) drains `fireDueSchedules`: for each due enabled row, in ONE
+transaction, it posts a chat message AS the author — **nothing else** — AND
+advances the row (consuming a one-shot by disabling it, kept as a record, or
+advancing a recurring row's `nextFireAt`), so a crash between the two can't
+refire it. After the commit it emits `chat.message_posted`, so the ordinary
+reply path takes over: a **human**-authored fire draws agent replies (a
+recurring task); an **agent**-authored one draws none (a standing announcement —
+agents never trigger agents). This is the deliberate semantic: the author of the
+schedule, not any new machinery, decides whether a fire is a task or an
+announcement.
 
 **Identity.** Every door resolves the acting user with `currentActor()` (see the
 users zine) — you never tell the system it's you. Creating a chat always
@@ -144,8 +177,48 @@ agent.
   `reply`'s "unseen since the agent last spoke" check makes it idempotent, so a
   caught-up chat is untouched.
 
+- **Firing is `addMessage` as the author, nothing else.** A schedule doesn't
+  reimplement any reply logic — it posts, and posting already does the right
+  thing. The author rule is what makes the semantic clean: because a schedule
+  posts in its author's name, a human-authored one is a recurring task and an
+  agent-authored one is a recurring announcement, purely by whose name is on it
+  — and you may never put a schedule in another human's mouth.
+- **A fire posts and advances atomically.** `fireDueSchedules` writes the
+  message and advances the schedule (recurring → next slot, one-shot → disabled)
+  in **one transaction**, then emits the `chat.message_posted` event only after
+  it commits. So a crash between posting and advancing can't leave a row still
+  due and refire it (no double post); a dropped emit only delays the live reply,
+  which startup reconcile re-drives. Each row fires in its own transaction with
+  its own try/catch, so one bad fire is logged and the sweep carries on rather
+  than starving every later schedule.
+- **Missed fires reconcile conservatively; the sweep is enough.** A row due
+  while the ship was down fires **once** on the next sweep, and a recurring row
+  advances past every missed slot to the next future one (`advanceNextFire`) —
+  no backfill spam, no separate boot reconciler. The periodic sweep is the
+  recovery path (pinned by a test that a long-overdue recurring row posts once,
+  not once per missed slot).
+- **The author rule is an app-door invariant, not RLS.** Unlike a chat message
+  (whose `authorId` is always the actor), a schedule's `authorId` is chosen by
+  the caller — so `canAuthorSchedule` at both doors (server.ts, cli.ts) is the
+  sole guard against putting words in another human's mouth. RLS gates only
+  visibility by membership; every write path MUST run the author check. Same for
+  the timing XOR (`scheduleTiming`). Stated loudly here and in schema.ts so a
+  future door can't quietly drop it.
+- **The sweep timer is a shared, injected helper.** `hull/lib/interval-sweep.ts`
+  owns the "unref'd interval, arm-once at the caller, swallow+log a failed tick"
+  pattern with an injected clock and timer, so it's unit-tested without real
+  time; both the chat schedule sweep and the files sweep ride it. arm-once stays
+  the caller's job (the live shell's module singleton).
+
 ## Changelog
 
+- **#l07u — Scheduled chat messages.** `chat_schedules` (one-shot or recurring),
+  owned by chat, riding membership under RLS (migration 0027). Fires via chat's
+  own `addMessage` as the author, so reply rules make a human-authored fire a
+  task and an agent-authored one an announcement. CRUD web doors +
+  `npm run chat -- schedule new|list|rm`, a modest schedules affordance in the
+  chat view, and a shared `hull/lib/interval-sweep` helper the files sweep now
+  shares too.
 - **Decouple issues from chat** — `wake` now drives the agent's own inbox
   session (found by a well-known title) instead of a chat determined by
   `issues.originChatId` (removed). The waker debounces one wake per agent,

@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 
@@ -61,6 +61,19 @@ export async function getUserByHandle(
 /** Everyone aboard, oldest first (UUIDv7 ids are time-ordered). */
 export async function listUsers(db: Database): Promise<UserRow[]> {
   return db.select().from(users).orderBy(asc(users.id))
+}
+
+/**
+ * Batch lookup by id — one query instead of N `getUserById` calls in a loop,
+ * for a caller joining a list of rows to their handles (the fleet view's
+ * session → agent join). Empty input short-circuits without touching the DB.
+ */
+export async function getUsersByIds(
+  db: Database,
+  ids: string[],
+): Promise<UserRow[]> {
+  if (ids.length === 0) return []
+  return db.select().from(users).where(inArray(users.id, ids))
 }
 
 /** The fallback handle when an id resolves to no user (a deleted/unknown actor). */

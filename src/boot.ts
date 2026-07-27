@@ -32,6 +32,7 @@ import { ensureChatOrchestrator } from '@hull/chat/orchestrator-live'
 import { ensureOrchestrator } from '@hull/issues/orchestrator-live'
 import { ensureNotificationsReactor } from '@hull/notifications/live'
 import { liveFilesService } from '@hull/files/live'
+import { ensureWatchService } from '@hull/watch/live'
 
 /* v8 ignore start -- live wiring exercised by the running app */
 
@@ -76,7 +77,12 @@ export function bootAllReactors(): void {
   if (registry.booted) return
   registry.booted = true
 
-  // Issues orchestrator: reconcile marooned builds, react to ship-log events
+  // Issues orchestrator: reconcile marooned builds, react to ship-log events.
+  // Its reconcile also sweeps background jobs stranded by the reload (#v6ft),
+  // resuming each owed session with a "job lost" message — deliberately THERE,
+  // at the tail of the issues reconcile on its runtime instance, not as a
+  // separate call here: the ordering vs the stranded-'running' cancels is the
+  // point (see reconcile() in @hull/issues/orchestrator).
   void ensureOrchestrator().catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`boot: issues orchestrator failed: ${message}`)
@@ -90,6 +96,13 @@ export function bootAllReactors(): void {
 
   // Files service: sweep staging branch to main on idle
   liveFilesService()
+
+  // Night watch: a ~60s sweep that nudges stalled builds and health-checks long
+  // background waits. Armed AFTER the issues orchestrator (above) on purpose —
+  // it drives its interventions through that orchestrator's own runtime, and
+  // its interval floor means the first tick fires well after reconcile settles,
+  // so it never acts on pre-crash state.
+  ensureWatchService()
 }
 
 /**

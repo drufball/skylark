@@ -495,6 +495,52 @@ describe('agent runtime', () => {
     expect(defined(await getSession(db, 's1')).status).toBe('idle')
   })
 
+  it('a budget-killed tool call leaves the session consistent: turn ends, errored result persists, status idle', async () => {
+    // When a foreground tool call blows its wall-clock budget (tool-budget.ts,
+    // #83ph), the wrapper rejects and pi's agent loop converts the throw into
+    // an isError toolResult message and CARRIES ON — the turn itself completes
+    // normally. From the runtime's side that must look like any other turn:
+    // the transcript (errored tool result included) is persisted, the status
+    // returns to idle, and the error path is never taken.
+    await createSession(db, { id: 's1', model: 'm' })
+    const killedResult = {
+      role: 'toolResult',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+      content: [
+        {
+          type: 'text',
+          text: 'bash was killed after running past its 10m foreground budget.',
+        },
+      ],
+      isError: true,
+      timestamp: 0,
+    } as unknown as AgentMessage
+    fake.onPrompt = (text) => {
+      fake.append(msg('user', text))
+      fake.append(killedResult)
+      fake.append(msg('assistant', 'that hung — backgrounding it instead'))
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+
+    const result = await runtime.runTurn('s1', 'run the tests')
+
+    expect(messagesOf(result).map((m) => m.role)).toEqual([
+      'user',
+      'toolResult',
+      'assistant',
+    ])
+    const rows = await getMessages(db, 's1')
+    expect(rows.map((r) => r.role)).toEqual(['user', 'toolResult', 'assistant'])
+    const row = defined(await getSession(db, 's1'))
+    expect(row.status).toBe('idle')
+    expect(row.error).toBeNull()
+  })
+
   it('queues a message when a turn is already in flight', async () => {
     await createSession(db, { id: 's1', model: 'm' })
     const gate = deferred()
@@ -729,5 +775,73 @@ describe('agent runtime', () => {
     await createSession(db, { id: 's1', model: 'm' })
     await runtime.reconcileJobs()
     expect(fake.promptCalls).toEqual([])
+  })
+
+  it('a second turn racing a cold boot queues as a followUp — never a double prompt (#69iz)', async () => {
+    // The exact #69iz boot race: the issues reconcile fires the entrypoint
+    // turn (its boot parked in-flight), then the job sweep resumes the SAME
+    // session for a lost job. Both share ONE boot (single-flight ensureEntry).
+    // When the boot resolves, the loser must WAIT for the winner's prompt to
+    // go live and then queue as a followUp — NOT read isStreaming===false
+    // across the boot gap and prompt the one live session a second time.
+    await createSession(db, { id: 's1', model: 'm' })
+    const bootGate = deferred()
+    const promptGate = deferred()
+    let boots = 0
+    // Block the winner's turn open so it's still streaming when the loser runs.
+    fake.onPrompt = async (text) => {
+      await promptGate.promise
+      fake.append(msg('assistant', `did: ${text}`))
+      fake.emit({
+        type: 'agent_end',
+        messages: fake.messages,
+        willRetry: false,
+      })
+    }
+    const racing = createAgentRuntime({
+      db,
+      factory: async () => {
+        boots++
+        await bootGate.promise
+        return fake
+      },
+      emit: () => Promise.resolve(),
+    })
+
+    const first = racing.runTurn('s1', 'reconcile-seeded turn')
+    const second = racing.runTurn('s1', 'job lost')
+    bootGate.resolve()
+    // The winner starts streaming; the loser queues onto it.
+    await until(() => fake.followUpCalls.length > 0)
+
+    // ONE boot, and the one live session is driven ONCE (prompt) with the
+    // second message queued (followUp) — not prompted twice.
+    expect(boots).toBe(1)
+    expect(fake.promptCalls).toEqual(['reconcile-seeded turn'])
+    expect(fake.followUpCalls).toEqual(['job lost'])
+
+    promptGate.resolve()
+    const [r1, r2] = await Promise.all([first, second])
+    expect(r1.queued).toBe(false)
+    expect(r2.queued).toBe(true)
+  })
+
+  it('a failed boot is not cached — the next turn boots fresh', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    let calls = 0
+    const flaky = createAgentRuntime({
+      db,
+      factory: () => {
+        calls++
+        return calls === 1
+          ? Promise.reject(new Error('boot boom'))
+          : Promise.resolve(fake)
+      },
+      emit: () => Promise.resolve(),
+    })
+
+    await expect(flaky.runTurn('s1', 'x')).rejects.toThrow('boot boom')
+    await expect(flaky.runTurn('s1', 'y')).resolves.toBeDefined()
+    expect(calls).toBe(2)
   })
 })

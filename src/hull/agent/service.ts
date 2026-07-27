@@ -98,15 +98,19 @@ export async function resolveSessionRef(
  * List sessions, newest activity first. Filters compose:
  * - `running`: only sessions with a turn in flight.
  * - `since`: only sessions whose last message is at or after this time.
+ * - `cwdUnder`: only sessions whose cwd starts with this path prefix (how the
+ *   issues orchestrator finds worktree sessions without reading this table).
  */
 export async function listSessions(
   db: Database,
-  filters: { running?: true; since?: Date } = {},
+  filters: { running?: true; since?: Date; cwdUnder?: string } = {},
 ): Promise<AgentSessionRow[]> {
   const conditions = []
   if (filters.running) conditions.push(eq(agentSessions.status, 'running'))
   if (filters.since)
     conditions.push(gte(agentSessions.lastMessageAt, filters.since))
+  if (filters.cwdUnder)
+    conditions.push(like(agentSessions.cwd, `${filters.cwdUnder}%`))
 
   return db
     .select()
@@ -217,6 +221,8 @@ export async function recordBackgroundJob(
     label: string
     cwd: string
     pid: number
+    /** Optional per-call watch check-in interval (ms); null → watch default. */
+    checkInIntervalMs?: number | null
   },
 ): Promise<BackgroundJobRow> {
   const [row] = await db
@@ -228,6 +234,7 @@ export async function recordBackgroundJob(
       label: input.label,
       cwd: input.cwd,
       pid: input.pid,
+      checkInIntervalMs: input.checkInIntervalMs ?? null,
     })
     .returning()
   return row
@@ -242,6 +249,38 @@ export async function listOutstandingBackgroundJobs(
   db: Database,
 ): Promise<BackgroundJobRow[]> {
   return db.select().from(backgroundJobs).orderBy(asc(backgroundJobs.id))
+}
+
+export interface FleetSession {
+  session: AgentSessionRow
+  jobs: BackgroundJobRow[]
+}
+
+/**
+ * The fleet view: every session with its own outstanding background jobs
+ * attached, newest activity first — the query the night watch ran by hand a
+ * dozen times (issue #7an8, part of #q5ia). Scoped to this service's own two
+ * tables (agent_sessions + background_jobs); the agentUserId → handle join is
+ * cross-service and stays in the CLI, same convention as `issue show`'s
+ * author/owner lookup.
+ */
+export async function listFleet(db: Database): Promise<FleetSession[]> {
+  const [sessions, jobs] = await Promise.all([
+    listSessions(db),
+    listOutstandingBackgroundJobs(db),
+  ])
+
+  const jobsBySession = new Map<string, BackgroundJobRow[]>()
+  for (const job of jobs) {
+    const existing = jobsBySession.get(job.sessionId)
+    if (existing) existing.push(job)
+    else jobsBySession.set(job.sessionId, [job])
+  }
+
+  return sessions.map((session) => ({
+    session,
+    jobs: jobsBySession.get(session.id) ?? [],
+  }))
 }
 
 /**

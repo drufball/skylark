@@ -21,6 +21,7 @@ function thread(over: Partial<IssueThread> = {}): IssueThread {
     statusLineAt: null,
     awaitingBackground: false,
     sessionRunning: false,
+    batonHolder: null,
     entries: [],
     ...over,
   }
@@ -94,6 +95,24 @@ describe('IssueThreadView', () => {
     expect(screen.getByText('add-widget-aa11')).toBeTruthy()
     fireEvent.click(screen.getByText('Pause'))
     expect(onSetStatus).toHaveBeenCalledWith('open')
+  })
+
+  it('surfaces the baton holder in the header (human reads as waiting for input)', () => {
+    const { unmount } = renderView({
+      thread: thread({
+        status: 'building',
+        batonHolder: { handle: 'dru', isHuman: true },
+      }),
+    })
+    expect(screen.getByText('waiting on @dru')).toBeTruthy()
+    unmount()
+    renderView({
+      thread: thread({
+        status: 'building',
+        batonHolder: { handle: 'builder', isHuman: false },
+      }),
+    })
+    expect(screen.getByText('@builder')).toBeTruthy()
   })
 
   it('shows a waiting line when the session paused for a background job', () => {
