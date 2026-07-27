@@ -1,5 +1,5 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
-import { and, asc, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, lte, or } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import { emitEvent } from '@hull/events/bus'
@@ -88,6 +88,25 @@ export function targetsForMessage(input: {
     .map((a) => a.userId)
 }
 
+/**
+ * The later of two message ids, with null meaning "nothing yet". Message ids are
+ * UUIDv7, so lexicographic order IS chronological order — the same fact
+ * `listMessages`'s `order by id` already rides on.
+ *
+ * This is how an agent member's seen-watermark is resolved: the MAX of the
+ * `lastSeenMessageId` the orchestrator advances and the last message the agent
+ * itself authored. Two halves, deliberately, so a crash between the two writes
+ * is safe in either order — see `messagesSinceAgent`.
+ */
+export function laterMessageId(
+  a: string | null,
+  b: string | null,
+): string | null {
+  if (a === null) return b
+  if (b === null) return a
+  return a > b ? a : b
+}
+
 /** Render chat messages into a transcript prompt for an agent's session. */
 export function formatTranscript(
   messages: { handle: string; body: string }[],
@@ -154,6 +173,8 @@ export interface ChatMemberView {
   sessionId: string | null
   /** The agent's latest live progress line, persisted so it survives navigation. */
   progressLine: string | null
+  /** How far this member's turns have read the chat (see `messagesSinceAgent`). */
+  lastSeenMessageId: string | null
 }
 
 export async function listMembers(
@@ -168,6 +189,7 @@ export async function listMembers(
       type: users.type,
       sessionId: chatMembers.sessionId,
       progressLine: chatMembers.progressLine,
+      lastSeenMessageId: chatMembers.lastSeenMessageId,
     })
     .from(chatMembers)
     .innerJoin(users, eq(chatMembers.userId, users.id))
@@ -318,12 +340,35 @@ export async function addMessage(
   return row
 }
 
-/** Messages posted after the agent's last message here (all of them if none). */
+/**
+ * Messages this member's turns haven't read yet (all of them if none) — what a
+ * reply turn is fed.
+ *
+ * The watermark is the LATER of two things, and both halves are load-bearing:
+ *
+ * - **`lastSeenMessageId`**, advanced by the orchestrator when a reply turn
+ *   ends. Since an agent speaks by calling `chat_post` itself, a turn may end
+ *   with nothing said; without this half, a silent turn leaves no mark and the
+ *   same messages are re-fed on every later reply, forever.
+ * - **the last message the agent AUTHORED.** Without this half, a crash between
+ *   an agent's post committing and the watermark write would re-drive a turn
+ *   that already spoke — a duplicate message in the crew's face.
+ *
+ * Taking the max means neither crash ordering hurts: lose the watermark write
+ * and the post still covers it; end silently and the watermark still covers it.
+ * That is what keeps `reconcile`/`resumeChat` idempotent.
+ */
 export async function messagesSinceAgent(
   db: Database,
   chatId: string,
   agentUserId: string,
 ): Promise<ChatMessageView[]> {
+  const memberRows = await db
+    .select({ lastSeenMessageId: chatMembers.lastSeenMessageId })
+    .from(chatMembers)
+    .where(
+      and(eq(chatMembers.chatId, chatId), eq(chatMembers.userId, agentUserId)),
+    )
   const lastRows = await db
     .select({ id: chatMessages.id })
     .from(chatMessages)
@@ -336,10 +381,13 @@ export async function messagesSinceAgent(
     .orderBy(desc(chatMessages.id))
     .limit(1)
 
+  const watermark = laterMessageId(
+    memberRows.at(0)?.lastSeenMessageId ?? null,
+    lastRows.at(0)?.id ?? null,
+  )
   const all = await listMessages(db, chatId)
-  if (lastRows.length === 0) return all
-  const lastId = lastRows[0].id
-  return all.filter((m) => m.id > lastId)
+  if (watermark === null) return all
+  return all.filter((m) => m.id > watermark)
 }
 
 export async function addMember(
@@ -379,6 +427,66 @@ export async function setMemberSession(
     .update(chatMembers)
     .set({ sessionId })
     .where(and(eq(chatMembers.chatId, chatId), eq(chatMembers.userId, userId)))
+}
+
+/**
+ * Advance an agent member's seen watermark to `messageId` — the durable mark
+ * that this member's turn READ the chat up to there, whether or not it chose to
+ * say anything. Called by the orchestrator at turn end.
+ *
+ * **Monotonic**: a stale advance is ignored (`last_seen_message_id < messageId`
+ * in the where). Two turns can finish out of order — a queued call returns as
+ * soon as its prompt is folded into the turn already in flight, which then
+ * finishes later with an EARLIER read tail — and a watermark that walked
+ * backwards would re-feed messages the agent has already answered.
+ */
+export async function setMemberSeen(
+  db: Database,
+  chatId: string,
+  userId: string,
+  messageId: string,
+): Promise<void> {
+  await db
+    .update(chatMembers)
+    .set({ lastSeenMessageId: messageId })
+    .where(
+      and(
+        eq(chatMembers.chatId, chatId),
+        eq(chatMembers.userId, userId),
+        or(
+          isNull(chatMembers.lastSeenMessageId),
+          lt(chatMembers.lastSeenMessageId, messageId),
+        ),
+      ),
+    )
+}
+
+/**
+ * Which chat a backing agent session speaks for, and under whose handle — how
+ * the agent-facing chat tools (session-tools.ts) find their chat from nothing
+ * but the session they were registered on.
+ *
+ * Matched on BOTH the session id and the agent id, so a session id can never be
+ * used to speak as a different member. Run under the agent's own actor: RLS then
+ * makes membership the outer gate too. Undefined for a session that backs no
+ * chat membership at all (an inbox session, a builder's) — the tools simply
+ * don't exist there.
+ */
+export async function findChatForSession(
+  db: Database,
+  input: { sessionId: string; agentUserId: string },
+): Promise<{ chatId: string; handle: string } | undefined> {
+  const [row] = await db
+    .select({ chatId: chatMembers.chatId, handle: users.handle })
+    .from(chatMembers)
+    .innerJoin(users, eq(chatMembers.userId, users.id))
+    .where(
+      and(
+        eq(chatMembers.sessionId, input.sessionId),
+        eq(chatMembers.userId, input.agentUserId),
+      ),
+    )
+  return row
 }
 
 /**

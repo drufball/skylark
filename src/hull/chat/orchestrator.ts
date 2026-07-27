@@ -12,11 +12,9 @@ import { actorCmd } from '@hull/lib/actor-cmd'
 import { createSession, findAgentSessionByTitle } from '@hull/agent/service'
 import { getUserById } from '@hull/users/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
-import { toChatItems } from '@hull/agent/transcript'
 import { chatProgressLine } from '@hull/agent/progress'
 
 import {
-  addMessage,
   formatTranscript,
   getMessage,
   listAllChats,
@@ -24,6 +22,7 @@ import {
   listMessages,
   messagesSinceAgent,
   setMemberProgress,
+  setMemberSeen,
   setMemberSession,
   targetsForMessage,
   type ChatMemberView,
@@ -36,52 +35,58 @@ import {
 } from './topic'
 
 /**
- * The chat orchestrator: when a human posts to a chat, it decides which agent
- * members should answer (1:1 → the agent always; group → only on @mention) and
- * drives each one's backing agent session to produce a reply, which it posts
- * back as a chat message authored by that agent.
+ * The chat orchestrator: **dispatch, not ventriloquism.** When a human posts to
+ * a chat it decides which agent members should answer (1:1 → the agent always;
+ * group → only on @mention), feeds each one the messages it hasn't read, and
+ * runs a turn. It does NOT put words in the agent's mouth: the agent speaks for
+ * itself, by calling the `chat_post` tool registered on its own session
+ * (session-tools.ts). Chat posts nothing on any agent's behalf.
+ *
+ * That inversion is the point. Lifting the assistant's text out of a finished
+ * turn meant a codec sat between an agent and its own words — one that had to
+ * track every SDK message-shape change, that could only speak once, at the very
+ * end, and that couldn't tell "the agent had nothing to say" from "the shape
+ * changed". Now the agent decides what is worth saying, can say it mid-turn, and
+ * can raise a widget through the same door. What the orchestrator still owns is
+ * everything ABOUT dispatch: who answers, what they're shown, the progress
+ * bubble, and how far they've read.
  *
  * It reacts to the ship's log, not to an inline call: every posted message emits
  * a durable `chat.message_posted` event, and `handleBusNote` drives the reply
- * off the bus — the same path whether the message came from the web door or
- * another process (the chat CLI), mirroring the issues orchestrator. `reconcile`
+ * off the bus — the same path whether the message came from the web door,
+ * another process (the chat CLI), or an agent's own `chat_post`. `reconcile`
  * re-drives any human message left unanswered by a restart.
  *
  * `wake` is the other entrance: when the waker delivers an agent's unread
  * notifications, the orchestrator drives one turn on the agent's own INBOX
  * session — a bare session owned by the agent, bound to no chat, cwd the repo
- * root. The turn is briefed on the updates and told to decide for itself which
- * conversation they belong in, using the chat CLI to search its chats and post
- * there; nothing is posted on the agent's behalf.
+ * root. It backs no chat membership, so it gets no `chat_post` tool: routing an
+ * update means FINDING the right chat first, which is the chat CLI's job.
  *
- * The clean chat transcript and the agent's full tool-call transcript are two
- * surfaces over one conversation: we feed the agent the chat messages it hasn't
- * seen, run a turn, and lift only the assistant's *text* back into the chat —
- * thinking and tool calls stay in the agent session (visible in the Agents
- * view). While the turn runs we translate its events into `chat.agent_progress`
- * so the chat UI can show a live "working…" placeholder, replaced by the message
- * when the turn ends.
+ * The clean chat transcript and the agent's full tool-call transcript are still
+ * two surfaces over one conversation — but now the seam between them is the
+ * agent's own tool call, not a filter chat runs over the transcript. While the
+ * turn runs we translate its events into `chat.agent_progress` so the chat UI
+ * can show a live "working…" line; that line means only "this agent is mid-turn"
+ * and never "a reply is coming" (see driveTurn).
  *
- * The agent runtime is injected so the decision + reply flow is unit-tested
+ * The agent runtime is injected so the decision + dispatch flow is unit-tested
  * against PGlite with a fake runtime — no network, no real pi session.
  */
 
 /** The slice of the agent runtime the chat orchestrator drives. */
 export type ChatAgentRuntime = RunsTurns
 
-/** Lift the assistant's text out of the messages a turn produced. */
-export function assistantTextFrom(messages: unknown[]): string {
-  return toChatItems(messages)
-    .filter((item) => item.kind === 'assistant')
-    .map((item) => item.text)
-    .join('\n\n')
-    .trim()
-}
-
 /**
- * The situational header every agent turn opens with: which chat this is, who
- * the agent is, and the concrete command for filing work. Repeated per turn
- * (cheap, and it survives session compaction).
+ * The situational header every agent turn opens with: who the agent is, which
+ * chat this is, **how to speak**, and the concrete command for filing work.
+ * Repeated per turn (cheap, and it survives session compaction).
+ *
+ * The speaking instruction is the load-bearing part, and it is not decoration.
+ * Chat no longer lifts an agent's text into the conversation, so an agent that
+ * doesn't call `chat_post` says NOTHING AT ALL. This header is the only thing
+ * standing between a resident agent and total silence — if you edit it, verify a
+ * real turn still speaks, not just that the tests pass.
  */
 export function turnContext(input: {
   chatId: string
@@ -97,11 +102,23 @@ export function turnContext(input: {
     '"<details>"',
   )
   return `[You are @${input.handle} in chat ${input.chatId}.
+
+HOW TO SPEAK: call the \`chat_post\` tool. That is the ONLY way anything reaches
+the crew — text you write outside a tool call stays in your own session
+transcript and nobody in the chat ever sees it. Post as soon as you have
+something useful (you may post several times in one turn rather than saving it
+all for the end). If you genuinely have nothing to add, end the turn without
+posting: silence is allowed, and the crew is shown that you read it.
+
+If you need a decision and you know the possible answers, call \`chat_widget\`
+with action "raise" instead of typing the question — the crew gets tappable
+options above the composer and their answer arrives as an ordinary message.
+Better than "yes or no?" on a phone.
+
 To file work for the ship, use bash:
   ${cmd}
 As filed work moves you will be woken on your own inbox session with the
-updates — post follow-ups back to this chat with the chat CLI
-(\`npm run chat -- post ${input.chatId} "<update>"\`).]`
+updates — post follow-ups back to this chat with \`chat_post\`.]`
 }
 
 /**
@@ -194,10 +211,43 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
   }
 
   /**
+   * The turn is over: clear the durable line AND say so on the bus.
+   *
+   * The announcement is not optional. A posted message used to double as
+   * "the turn ended" for a live tab — the reply always arrived last — and after
+   * the inversion it doesn't mean that at all: the agent posts from inside its
+   * turn and may keep working, or may finish having said nothing. Observed live
+   * before this existed: a silent turn left the status line spinning for five
+   * minutes, until the page was reloaded. An empty line is the end-of-turn
+   * signal (see topic.ts).
+   */
+  async function clearProgress(
+    chatId: string,
+    agentUserId: string,
+  ): Promise<void> {
+    const payload: ChatAgentProgressPayload = { chatId, agentUserId, line: '' }
+    notifyOnly({
+      type: CHAT_AGENT_PROGRESS,
+      source: 'chat',
+      topic: chatTopic(chatId),
+      audience: MEMBERS_AUDIENCE,
+      payload,
+    })
+    await setMemberProgress(db, chatId, agentUserId, null)
+  }
+
+  /**
    * Drive one turn of an agent member's backing session with `prompt`, showing
-   * live progress in the chat and posting the assistant's text back as the
-   * agent's message. The shared spine of `reply` (a human spoke) and `wake`
-   * (a notification arrived) — the two differ only in what the prompt says.
+   * a live progress line in the chat while it runs. **Nothing is posted here** —
+   * whatever the agent wanted to say it already said, mid-turn, through its own
+   * `chat_post` tool.
+   *
+   * The progress line means exactly one thing: **this agent is mid-turn.** It
+   * cannot mean "a reply is coming", because the agent may have posted twenty
+   * seconds ago and still be working, or may never post at all. So the bubble is
+   * cleared when the turn ENDS, and a message appearing while it still spins is
+   * correct, not a glitch. (Before the inversion the message always arrived last,
+   * which let the bubble pretend to be a promise.)
    */
   async function driveTurn(
     chatId: string,
@@ -206,12 +256,12 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
   ): Promise<void> {
     const sessionId = await ensureSession(chatId, agent)
 
-    // Whether THIS call owns the bubble it started (so `finally` should
-    // clear it): true unless the result comes back `queued` — a queued call's
-    // prompt was folded into a turn already in flight, and that turn (not
-    // this one) still owns the progress line, so clearing it here would blank
-    // an active "working…" out from under it. Defaults true so a THROWN turn
-    // (this call's own) still clears its bubble on the way out.
+    // Whether THIS call owns the bubble it started (so `finally` should clear
+    // it): true unless the result comes back `queued` — a queued call's prompt
+    // was folded into a turn already in flight, and that turn (not this one) is
+    // the one still mid-turn, so clearing it here would blank an active
+    // "working…" out from under it. Defaults true so a THROWN turn (this call's
+    // own) still clears its bubble on the way out.
     let ownsTurn = true
     try {
       // One "thinking…" up front, then a line per meaningful step — deduped, so
@@ -232,32 +282,32 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
         }
       })
       if (result.queued) ownsTurn = false
-
-      // Queued: the prompt was folded into a turn already in flight on this
-      // session, whose eventual reply covers it — post nothing here, or the
-      // agent would double-speak (and an empty result is NOT "the agent had
-      // nothing to say").
-      if (result.queued) return
-
-      const text = assistantTextFrom(result.messages)
-      if (text) {
-        await addMessage(db, {
-          id: uuidv7(),
-          chatId,
-          authorId: agent.userId,
-          body: text,
-        })
-      }
     } finally {
-      // The bubble is scoped to the turn that owns it: whether it finished,
-      // produced nothing, or threw, there's no "working…" left to show once
-      // ITS driveTurn returns — but a queued call must leave the actively
-      // running turn's bubble alone.
-      if (ownsTurn) await setMemberProgress(db, chatId, agent.userId, null)
+      // The status line is scoped to the turn that owns it: whether it finished,
+      // said nothing, or threw, this agent is no longer mid-turn once ITS
+      // driveTurn returns — but a queued call must leave the actively running
+      // turn's line alone.
+      if (ownsTurn) await clearProgress(chatId, agent.userId)
     }
   }
 
-  /** Run one agent's reply: feed unseen messages, take a turn, post the text. */
+  /**
+   * Dispatch one agent's turn: feed it the messages it hasn't read, run the
+   * turn, then mark how far it read.
+   *
+   * The watermark advance is what makes silence survivable. An agent speaks
+   * through its own tool now, so a turn that ends with no post is an ordinary
+   * outcome — and with no mark of its own, those messages would be unseen
+   * forever and re-fed on every later reply. We advance to the tail we FED (not
+   * to whatever is newest now), so a message that landed mid-turn stays unseen
+   * and draws its own turn.
+   *
+   * Advanced only on a turn that completed: a thrown turn leaves the watermark
+   * where it was, so the work is re-driven rather than silently dropped. A
+   * QUEUED turn does advance — its prompt was folded into the turn already in
+   * flight, which means the agent was shown these messages (and `setMemberSeen`
+   * is monotonic, so the two finishing out of order is harmless).
+   */
   async function reply(chatId: string, agentUserId: string): Promise<void> {
     const members = await listMembers(db, chatId)
     const agent = members.find((m) => m.userId === agentUserId)
@@ -265,6 +315,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
 
     const unseen = await messagesSinceAgent(db, chatId, agentUserId)
     if (unseen.length === 0) return
+    const readThrough = unseen[unseen.length - 1].id
     const prompt = `${turnContext({
       chatId,
       handle: agent.handle,
@@ -273,6 +324,7 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
       unseen.map((m) => ({ handle: m.authorHandle, body: m.body })),
     )}`
     await driveTurn(chatId, agent, prompt)
+    await setMemberSeen(db, chatId, agentUserId, readThrough)
   }
 
   /**
@@ -306,7 +358,9 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
    * agent's own inbox session. The turn's instructions (inboxTurnContext) tell
    * the agent to route the update itself — find the chat where the work was
    * planned via the chat CLI and post there — so nothing is posted on its
-   * behalf; the assistant text stays in the session (the Agents view).
+   * behalf. The inbox session backs no chat membership, so it gets no
+   * `chat_post` tool (session-tools.ts): the CLI is the right door here
+   * precisely because routing means FINDING a chat before speaking into one.
    * A failed turn rejects, which is what keeps the waker's batch unread for a
    * retry. Humans are never woken — their inbox has the bell.
    */
@@ -324,8 +378,11 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
 
   /**
    * React to a freshly-posted message: figure out which agents should answer
-   * and run each reply. Agents answer in sequence (a small crew), each reply
-   * landing as its own chat message + event.
+   * and run each turn. Agents take their turns in sequence (a small crew), and
+   * each one says whatever it decides to say through its own `chat_post` — so
+   * one agent's post is a new posted-message event the others may then hear,
+   * except that `targetsForMessage` gives an agent-authored message no targets
+   * at all. Agents never trigger agents, however wide the door gets.
    */
   async function respond(input: {
     chatId: string

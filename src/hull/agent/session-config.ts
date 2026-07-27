@@ -73,9 +73,37 @@ function resolveAgainst(cwd: string, path: string): string {
 }
 
 /**
+ * The session's active tool set: the config's allowlist PLUS the tools this
+ * session was given by the runtime (`background`, and chat's `chat_post` /
+ * `chat_widget`). `null` means "pi's defaults", and pi activates custom tools
+ * alongside them, so there's nothing to add.
+ *
+ * The allowlist and contributed tools answer different questions, and conflating
+ * them fails silently in the worst way. `tools` is a config field a human wrote
+ * to say **which of the ship's abilities this agent may use** — the chat pilot
+ * gets `['read','bash']` so it can operate the ship but never modify it. A
+ * contributed tool isn't an ability the config was weighing: it's the door the
+ * RUNTIME just handed this particular session, on purpose, a moment ago.
+ * Filtering it out means pi registers the tool, the model is told about it in the
+ * prompt, calls it — and gets back "Tool chat_post not found". Which is exactly
+ * what happened the first time a real `read+bash` chat agent tried to speak: it
+ * fell back to shelling out to the chat CLI and then told the crew, in the chat,
+ * that it had no such tool. (Same bug had `background` inert for every read+bash
+ * agent — the babysitter's whole waiting story — so this fixes that too.)
+ */
+export function activeTools(
+  allowlist: string[] | null,
+  contributed: string[],
+): string[] | undefined {
+  if (allowlist === null) return undefined
+  return [...new Set([...allowlist, ...contributed])]
+}
+
+/**
  * Map a resolved agent config + working directory to pi.dev session options.
  *
- * - `tools` allowlist → `tools`; null → undefined (pi's default coding tools).
+ * - `tools` allowlist → `tools`, widened by the session's contributed tool names
+ *   (see `activeTools`); null → undefined (pi's default coding tools).
  * - `readContextFiles===false` → `noContextFiles: true` and no context files;
  *   true → CLAUDE.md fed as context files.
  * - `useRepoSkills===false` → `noSkills: true` and no skill paths; true →
@@ -87,11 +115,13 @@ export function resolveSessionOptions(
   config: AgentConfig,
   cwd: string,
   deps: Partial<SessionConfigDeps> = {},
+  /** Names of the tools the runtime is registering on this session. */
+  contributedTools: string[] = [],
 ): SessionOptions {
   const { skillDirs, readContextFiles } = { ...defaultDeps, ...deps }
   return {
     session: {
-      tools: config.tools ?? undefined,
+      tools: activeTools(config.tools, contributedTools),
       cwd,
     },
     loader: {

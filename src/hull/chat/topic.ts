@@ -35,15 +35,22 @@ export function chatIdFromTopic(topic: string): string | null {
 export const CHAT_MESSAGE_POSTED = 'chat.message_posted'
 
 /**
- * The event the chat orchestrator emits while an agent is working on a reply
- * (progress lines riding the ship's log, rendered as a "working…" placeholder
- * in the UI until the message_posted event replaces it with the real message).
+ * The event the chat orchestrator emits while an agent is mid-turn — progress
+ * lines riding the ship's log, rendered as a "working…" status line in the UI.
+ * A **blank** line is the turn's end (see the payload), which is what takes the
+ * status line back down.
  */
 export const CHAT_AGENT_PROGRESS = 'chat.agent_progress'
 
 /**
  * The payload shape for `chat.agent_progress` events — which chat, which agent,
- * and the current progress line (e.g., "reading memory" or "calling tool: bash").
+ * and the current progress line (e.g., "thinking…" or "using bash…").
+ *
+ * An **empty `line` means the turn is over**: take the status line down. It has
+ * to be said explicitly, because a posted message no longer implies it — an
+ * agent speaks from inside its turn now, so it may post and keep working for
+ * another minute, and it may finish having posted nothing at all. Without an
+ * end-of-turn signal a silent turn would leave a live tab spinning forever.
  */
 export interface ChatAgentProgressPayload {
   chatId: string

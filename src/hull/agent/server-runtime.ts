@@ -8,6 +8,7 @@ import {
   createAgentRuntime,
   createPiSession,
   type SessionFactory,
+  type SessionToolsProvider,
 } from './runtime'
 
 /**
@@ -34,11 +35,20 @@ export function liveAgentMemoryLoader(db: Database): AgentMemoryLoader {
  * chat + issue orchestrators. Centralised so the factory choice (live vs fake)
  * has exactly one home and the three sites can't drift. (The CLI builds its own
  * always-live runtime directly; it's interactive and never part of a smoke run.)
+ *
+ * `sessionTools` is the host's chance to contribute tools of its own — the chat
+ * orchestrator passes `createChatSessionTools`, which is how an agent gets a
+ * `chat_post` door on the session that speaks for a chat. Passed in rather than
+ * imported here so the agent service keeps knowing nothing about chat.
  */
-export function createServerRuntime(db: Database): AgentRuntime {
+export function createServerRuntime(
+  db: Database,
+  sessionTools?: SessionToolsProvider,
+): AgentRuntime {
   return createAgentRuntime({
     db,
     factory: resolveSessionFactory(),
     memory: liveAgentMemoryLoader(db),
+    sessionTools,
   })
 }

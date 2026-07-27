@@ -1,5 +1,9 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
-import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
+import {
+  type AgentSessionEvent,
+  defineTool,
+} from '@earendil-works/pi-coding-agent'
+import { Type } from 'typebox'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { uuidv7 } from '@earendil-works/pi-agent-core'
@@ -10,7 +14,12 @@ import type { AppendEventInput } from '@hull/events/service'
 import { createUser } from '@hull/users/service'
 
 import { registerExtension } from './agent-config'
-import { createAgentRuntime, type PiSession, type TurnResult } from './runtime'
+import {
+  createAgentRuntime,
+  type PiSession,
+  type SessionToolContext,
+  type TurnResult,
+} from './runtime'
 import type { AgentConfig } from './session-config'
 import {
   appendMessage,
@@ -493,6 +502,73 @@ describe('agent runtime', () => {
 
     expect(statusDuringTurn).toBe('running')
     expect(defined(await getSession(db, 's1')).status).toBe('idle')
+  })
+
+  it('boots a session with the built-in background tool plus whatever the host contributes', async () => {
+    // The seam that gives chat an agent-facing door (chat_post) without the
+    // agent service importing chat: the HOST hands the runtime a provider, and
+    // the runtime resolves it from the session row at boot.
+    const agent = await createUser(db, {
+      id: uuidv7(),
+      handle: 'tilde',
+      displayName: 'Tilde',
+      type: 'agent',
+    })
+    await createSession(db, {
+      id: 's1',
+      model: 'm',
+      agentUserId: agent.id,
+      cwd: '/tmp/w',
+    })
+    let seen: SessionToolContext | undefined
+    let registered: string[] = []
+    const hosted = createAgentRuntime({
+      db,
+      emit: () => Promise.resolve(),
+      factory: (_config, _cwd, _model, customTools) => {
+        registered = (customTools ?? []).map((t) => t.name)
+        return Promise.resolve(fake)
+      },
+      sessionTools: (session) => {
+        seen = session
+        return Promise.resolve([
+          defineTool({
+            name: 'chat_post',
+            label: 'Post',
+            description: 'post',
+            parameters: Type.Object({}),
+            execute: () => Promise.resolve({ content: [], details: undefined }),
+          }),
+        ])
+      },
+    })
+
+    await hosted.runTurn('s1', 'hi')
+
+    expect(seen).toEqual({
+      sessionId: 's1',
+      agentUserId: agent.id,
+      cwd: '/tmp/w',
+    })
+    // `background` is built in and comes first; the host's tools follow.
+    expect(registered).toEqual(['background', 'chat_post'])
+  })
+
+  it('boots with only the built-in tool when no provider is wired', async () => {
+    await createSession(db, { id: 's1', model: 'm' })
+    let registered: string[] = []
+    const bare = createAgentRuntime({
+      db,
+      emit: () => Promise.resolve(),
+      factory: (_config, _cwd, _model, customTools) => {
+        registered = (customTools ?? []).map((t) => t.name)
+        return Promise.resolve(fake)
+      },
+    })
+
+    await bare.runTurn('s1', 'hi')
+
+    expect(registered).toEqual(['background'])
   })
 
   it('a budget-killed tool call leaves the session consistent: turn ends, errored result persists, status idle', async () => {

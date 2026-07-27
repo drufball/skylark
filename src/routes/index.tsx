@@ -139,13 +139,28 @@ function ChatRoute() {
       if (event.type === CHAT_AGENT_PROGRESS) {
         const progress = readProgress(event.payload)
         if (progress) {
-          const handle =
-            members.find((m) => m.userId === progress.agentUserId)?.handle ??
-            '?'
-          setWorking({ chatId: progress.chatId, handle, line: progress.line })
+          // A blank line is the end of the turn — the agent isn't mid-turn any
+          // more, so the status line comes down. This is the ONLY thing that
+          // takes it down now: a posted message can't, since an agent posts
+          // from inside its turn and may keep working (or may never post).
+          if (!progress.line) {
+            setWorking(null)
+            // The turn ending is exactly when the agent's seen-watermark moved,
+            // so refetch: it's what turns an unexplained silence into
+            // "Seen by @tilde". A silent turn posts no message, so nothing else
+            // would ever invalidate here.
+            void router.invalidate()
+          } else {
+            const handle =
+              members.find((m) => m.userId === progress.agentUserId)?.handle ??
+              '?'
+            setWorking({ chatId: progress.chatId, handle, line: progress.line })
+          }
         }
       } else if (event.type === 'chat.message_posted') {
-        setWorking(null)
+        // Deliberately does NOT clear `working`: a message landing mid-turn is
+        // correct and common now, and blanking the status line here would make
+        // the bubble flicker off and back on for the rest of the turn.
         void router.invalidate()
       } else if (event.type === CHAT_WIDGET_CHANGED) {
         // A widget was raised, answered, waved away or moved. It rides the same
@@ -217,6 +232,7 @@ function ChatRoute() {
     handle: m.handle,
     type: m.type,
     progressLine: m.progressLine,
+    lastSeenMessageId: m.lastSeenMessageId,
   }))
   const messageItems: ChatMsg[] = (thread?.messages ?? []).map((m) => ({
     id: m.id,

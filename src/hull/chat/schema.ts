@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -64,6 +65,27 @@ export const chatMembers = pgTable(
      * isn't mid-turn.
      */
     progressLine: text('progress_line'),
+    /**
+     * How far this member's turns have READ the chat — advanced by the
+     * orchestrator when a reply turn ends, whether or not the agent chose to
+     * speak. Needed because an agent now speaks by calling `chat_post` from its
+     * own turn, so "the agent took a turn and said nothing" is a first-class
+     * outcome: without a watermark of its own, a silent turn would leave the
+     * same messages unseen forever and re-feed them on every later reply.
+     *
+     * NOT the whole watermark on its own. `messagesSinceAgent` resolves the
+     * watermark as max(this column, the last message this member AUTHORED) — so
+     * a crash between an agent's post landing and this write cannot re-drive a
+     * turn that already spoke. See the note there.
+     *
+     * `set null` on delete rather than cascade: losing the watermark re-feeds
+     * some history (chatty, recoverable), where cascading the member row away
+     * would drop somebody out of a conversation (not).
+     */
+    lastSeenMessageId: text('last_seen_message_id').references(
+      (): AnyPgColumn => chatMessages.id,
+      { onDelete: 'set null' },
+    ),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

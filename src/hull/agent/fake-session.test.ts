@@ -1,10 +1,21 @@
+import {
+  defineTool,
+  type ToolDefinition,
+} from '@earendil-works/pi-coding-agent'
+import { Type } from 'typebox'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
 import { freshDb } from '@hull/db/test-db'
 import { FAKE_RUNTIME_ENV } from '@hull/lib/env'
 
-import { createFakeSession, fakeReply } from './fake-session'
+import {
+  createFakeSession,
+  FAKE_WIDGET_MARKER,
+  FAKE_WIDGET_QUESTION,
+  fakeReply,
+  fakeToolCall,
+} from './fake-session'
 import { resolveSessionFactory } from './server-runtime'
 import { createAgentRuntime, createPiSession } from './runtime'
 import { createSession, getMessages } from './service'
@@ -34,6 +45,29 @@ describe('resolveSessionFactory', () => {
   })
 })
 
+describe('fakeToolCall', () => {
+  it('speaks through chat_post by default', () => {
+    // Since chat stopped lifting an agent's text, the fake HAS to call the tool
+    // or a fake-runtime chat is silent — a smoke run of a mute ship.
+    expect(fakeToolCall('say hi')).toEqual({
+      name: 'chat_post',
+      args: { body: '[fake agent] say hi' },
+    })
+  })
+
+  it('raises a widget when the prompt carries the marker', () => {
+    // The only way to drive an agent RAISING a widget with no model behind it.
+    expect(fakeToolCall(`ship it? ${FAKE_WIDGET_MARKER}`)).toEqual({
+      name: 'chat_widget',
+      args: {
+        action: 'raise',
+        question: FAKE_WIDGET_QUESTION,
+        options: ['Yes', 'No'],
+      },
+    })
+  })
+})
+
 describe('the fake session surface', () => {
   it('emits the turn boundaries on prompt and stays inert elsewhere', async () => {
     const session = await createFakeSession()
@@ -41,6 +75,8 @@ describe('the fake session surface', () => {
     const unsubscribe = session.subscribe((e) => events.push(e.type))
 
     await session.prompt('build this\nand more')
+    // No chat tools registered (a builder's session, an inbox session): nothing
+    // to speak through, so the turn is just the prompt and its assistant text.
     expect(session.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(events).toEqual(['turn_end', 'agent_end'])
 
@@ -53,6 +89,71 @@ describe('the fake session surface', () => {
     expect(() => {
       session.dispose()
     }).not.toThrow()
+  })
+})
+
+describe('the fake session speaking through a chat tool', () => {
+  /** A stand-in for chat_post that just records what it was told to say. */
+  function recordingPost(said: string[]): ToolDefinition {
+    return defineTool({
+      name: 'chat_post',
+      label: 'post',
+      description: 'post',
+      parameters: Type.Object({ body: Type.String() }),
+      execute: (_id, params) => {
+        said.push(params.body)
+        return Promise.resolve({
+          content: [{ type: 'text' as const, text: 'posted' }],
+          details: undefined,
+        })
+      },
+    })
+  }
+
+  it('calls the tool and records the call + result in the transcript', async () => {
+    const said: string[] = []
+    const session = await createFakeSession(undefined, undefined, undefined, [
+      recordingPost(said),
+    ])
+    const tools: string[] = []
+    session.subscribe((e) => {
+      if (e.type === 'tool_execution_start') tools.push(e.toolName)
+    })
+
+    await session.prompt('hello there')
+
+    expect(said).toEqual(['[fake agent] hello there'])
+    // The call and its result are in the transcript, so the Agents monitor view
+    // shows the same shape a real turn does.
+    expect(session.messages.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'toolResult',
+      'assistant',
+    ])
+    // And it streams a tool event, so the chat's progress line moves.
+    expect(tools).toEqual(['chat_post'])
+  })
+
+  it('carries on when the tool throws, recording the failure', async () => {
+    const boom = defineTool({
+      name: 'chat_post',
+      label: 'post',
+      description: 'post',
+      parameters: Type.Object({ body: Type.String() }),
+      execute: () => Promise.reject(new Error('no such chat')),
+    })
+    const session = await createFakeSession(undefined, undefined, undefined, [
+      boom,
+    ])
+
+    await expect(session.prompt('hello')).resolves.toBeUndefined()
+    expect(session.messages.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'toolResult',
+      'assistant',
+    ])
   })
 })
 

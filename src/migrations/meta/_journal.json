@@ -225,6 +225,13 @@
       "when": 1785168439354,
       "tag": "0031_chat_widgets_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785172806939,
+      "tag": "0032_simple_leper_queen",
+      "breakpoints": true
     }
   ]
 }

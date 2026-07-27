@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveSessionOptions, type AgentConfig } from './session-config'
+import {
+  activeTools,
+  resolveSessionOptions,
+  type AgentConfig,
+} from './session-config'
 
 const chat: AgentConfig = {
   systemPrompt: 'pilot',
@@ -20,6 +24,34 @@ const builder: AgentConfig = {
   model: null,
 }
 
+describe('activeTools', () => {
+  it("widens an allowlist with the session's own contributed tools", () => {
+    // The bug this exists for: a read+bash chat agent was handed `chat_post`,
+    // told about it in its prompt, called it, and got "Tool chat_post not
+    // found" — because the config's allowlist filtered out a tool the RUNTIME
+    // had just deliberately given that session. Same for `background` on every
+    // read+bash agent, the babysitter's whole waiting story included.
+    expect(
+      activeTools(['read', 'bash'], ['background', 'chat_post', 'chat_widget']),
+    ).toEqual(['read', 'bash', 'background', 'chat_post', 'chat_widget'])
+  })
+
+  it('leaves "pi defaults" alone — pi activates custom tools alongside them', () => {
+    expect(activeTools(null, ['background'])).toBeUndefined()
+  })
+
+  it('does not duplicate a name the allowlist already carries', () => {
+    expect(activeTools(['read', 'background'], ['background'])).toEqual([
+      'read',
+      'background',
+    ])
+  })
+
+  it('is just the allowlist when nothing was contributed', () => {
+    expect(activeTools(['read'], [])).toEqual(['read'])
+  })
+})
+
 describe('resolveSessionOptions', () => {
   it('maps an explicit tool allowlist to `tools`', () => {
     const { session } = resolveSessionOptions(chat, '/repo')
@@ -27,9 +59,17 @@ describe('resolveSessionOptions', () => {
     expect(session.cwd).toBe('/repo')
   })
 
+  it("widens the allowlist with the session's contributed tools", () => {
+    const { session } = resolveSessionOptions(chat, '/repo', {}, ['chat_post'])
+    expect(session.tools).toEqual(['read', 'bash', 'chat_post'])
+  })
+
   it('maps null tools to no allowlist (pi defaults to full coding tools)', () => {
     const { session } = resolveSessionOptions(builder, '/repo')
     expect(session.tools).toBeUndefined()
+    expect(
+      resolveSessionOptions(builder, '/repo', {}, ['chat_post']).session.tools,
+    ).toBeUndefined()
   })
 
   it("passes the config's system prompt to the resource loader", () => {

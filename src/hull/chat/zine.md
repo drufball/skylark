@@ -8,18 +8,23 @@ Chat is the ship's front door: conversations between the crew — humans and
 agents. A chat is a set of **members**, and **membership is visibility**: only
 members see a chat, and an added member sees the whole history (no per-message
 ACL). Agents are members too; when one needs to speak, the chat orchestrator
-drives its backing agent session and posts the reply back as a chat message.
+drives its backing agent session — and **the agent speaks for itself**, by
+calling `chat_post` from inside its own turn. Chat posts nothing on anybody's
+behalf.
 
 A chat also carries **widgets** — live little views the crew keeps open
 together, in a stack above the composer. A widget instance is not data; it's a
-piece of the conversation.
+piece of the conversation. Agents raise them from their own turns too
+(`chat_widget`), which is how a question with known answers becomes one tap
+instead of a sentence.
 
 The one idea that shapes everything: **the clean chat transcript and the agent's
-full tool-call transcript are two surfaces over one conversation.** Chat shows
-only the assistant's _text_; the thinking and tool calls stay in the agent
-session (visible in the Agents view). Chat lives in the hull — it's load-bearing
-and drives the ship's residents, like the issues board does — with its view in
-the rigging.
+full tool-call transcript are two surfaces over one conversation.** The seam
+between them is the agent's own tool call: what it decides to say crosses into
+the chat, and its thinking, reading and building stay in the agent session
+(visible in the Agents view). Chat lives in the hull — it's load-bearing and
+drives the ship's residents, like the issues board does — with its view in the
+rigging.
 
 ## Components
 
@@ -27,24 +32,37 @@ the rigging.
   activity clock that orders the sidebar. Named by its members when untitled.
 - **Member** — a row in `chat_members`, one per (chat, user). The visibility
   list. For an agent member, `sessionId` points at its backing agent session for
-  this chat (created lazily on first reply, kept for continuity).
+  this chat (created lazily on first reply, kept for continuity), and
+  `lastSeenMessageId` is how far its turns have READ (migration 0032) — advanced
+  at turn end whether or not it chose to speak.
 - **Message** — a row in `chat_messages`: a member's text, ordered by UUIDv7 id.
 - **Service logic** (`service.ts`) — pure persistence + the pure response rules
   (`parseMentions`, `targetsForMessage`, `formatTranscript`). Touches only its
   own tables (plus a read-join onto users for display).
-- **Orchestrator** (`orchestrator.ts`) — turns a posted message into agent
-  replies: who should answer, drive each one's session, lift the assistant text
-  back into the chat. `handleBusNote` is its ship-log subscription (a posted
+- **Orchestrator** (`orchestrator.ts`) — **dispatch, not ventriloquism.** It
+  turns a posted message into agent turns: who should answer, feed each one what
+  it hasn't read, run the turn, show a progress line, mark how far it read. It
+  never posts a message. `handleBusNote` is its ship-log subscription (a posted
   message drives the reply); `wake` runs a briefing turn when a notification
   arrives; `reconcile` is startup recovery. Injected runtime, so the decisions
   are unit-tested against PGlite with a fake.
+- **Session tools** (`session-tools.ts`) — the agent-facing door: `chat_post`
+  (say something) and `chat_widget` (raise/reorder/dismiss a widget), registered
+  on the backing session by the runtime's `sessionTools` seam. Every call runs
+  under the AGENT's own actor, so it goes through the same membership policy a
+  human's tap does. A session that backs no chat membership gets no tools at
+  all.
 - **turnContext** — the situational header every reply turn opens with: who the
-  agent is, which chat this is, and the concrete
-  `npm run issue -- new … --body …` command for filing work. Repeated per turn —
-  cheap, and it survives session compaction. `inboxTurnContext` is its
-  counterpart for a wake turn: it opens instead with "this is your inbox, not a
-  chat" and the chat-CLI commands (`list`/`show`/`post`) for finding and
-  updating the right conversation.
+  agent is, which chat this is, **how to speak** (`chat_post` is the only way
+  anything reaches the crew; silence is allowed), the structured alternative
+  (`chat_widget`), and the concrete `npm run issue -- new … --body …` command
+  for filing work. Repeated per turn — cheap, and it survives session
+  compaction. This header is the only thing standing between a resident agent
+  and total silence, so it is load-bearing prose, not decoration.
+  `inboxTurnContext` is its counterpart for a wake turn: it opens instead with
+  "this is your inbox, not a chat" and the chat-CLI commands
+  (`list`/`show`/`post`) for finding and updating the right conversation — an
+  inbox session has no chat, so it has no `chat_post` either.
 - **The waker** (`waker.ts`) — the bridge from notifications to a sleeping
   agent: debounces a flurry (10s) into ONE wake per agent (not per chat — the
   waker knows nothing about chat), and drives the orchestrator's `wake` with the
@@ -91,16 +109,16 @@ the rigging.
   posts.
 - **Dismissal** — `dismissedAt` set. The widget leaves the stack; the row
   survives as history — what was asked, of whom, and when it stopped being open.
-- **Doors** — `server.ts` (the web doors; the front-door route is the chat UI)
-  and `cli.ts` (`npm run chat`: `list`, `show <chatId> [--limit N]`,
-  `post <chatId> <message>` — how a woken agent finds a chat and posts to it
-  from its bash tool, mirroring the issues CLI's conventions exactly — plus
-  `schedule new|list|rm` to manage scheduled messages from bash, and
-  `widget new|list|answer|dismiss|reorder` to put a live view in front of the
-  crew). The chat view carries a modest schedules affordance (list + create +
-  enable/disable + delete); the CLI is the primary door for v1. The **web**
-  widget doors are only what a browser needs — read the stack, answer, wave away
-  — because raising and reordering are agent moves and the CLI is their door.
+- **Doors** — three, and each has a body it belongs to. `server.ts` (the **web**
+  doors; the front-door route is the chat UI: read the stack, answer, wave
+  away). `session-tools.ts` (the **agent** doors, from inside a turn:
+  `chat_post`, `chat_widget`). `cli.ts` (`npm run chat`, the **human/debug**
+  door and the only one a session with no chat has: `list`,
+  `show <chatId> [--limit N]`, `post <chatId> <message>` — how a woken agent on
+  its inbox session finds a chat and posts to it from bash — plus
+  `schedule new|list|rm` and `widget new|list|answer|dismiss|reorder`). The chat
+  view carries a modest schedules affordance (list + create + enable/disable +
+  delete).
 
 ## Structure
 
@@ -109,16 +127,26 @@ the rigging.
 audience `members`) → the durable row + `pg_notify` reach the server's LISTEN
 connection, which fans onto `shipLogBus` → the orchestrator's `handleBusNote`
 reads the event, picks the target agents, and for each: ensures a backing
-session, feeds it the messages it hasn't seen, runs a turn (streaming
-`chat.agent_progress` for the live "working…" placeholder), then posts the
-assistant's text as a new chat message — another `chat.message_posted` the
-browser hears over SSE. The reply runs **off the bus, not inline**: the same
-handler would hear a message posted from another process.
+session, feeds it the messages it hasn't read, and runs a turn (streaming
+`chat.agent_progress` for the live "working…" line). **Whatever the agent
+decides to say, it says itself, mid-turn, by calling `chat_post`** — which
+writes an ordinary message row and emits its own `chat.message_posted`, so the
+browser hears it over SSE the instant it lands rather than at the end of the
+turn. When the turn ends the orchestrator clears the progress line and advances
+the member's `lastSeenMessageId`. The reply runs **off the bus, not inline**:
+the same handler would hear a message posted from another process.
 
 **Who answers.** Only a human's message triggers a reply (agents never trigger
-agents, so a reply can't cascade into a loop). In a **1:1** (one human + one
-agent) the agent always answers; in a **group** only the agents whose handle is
-`@mentioned` do.
+agents, so a reply can't cascade into a loop — including an agent's own post
+that @mentions another agent, since `targetsForMessage` filters on the author,
+not the text). In a **1:1** (one human + one agent) the agent always answers; in
+a **group** only the agents whose handle is `@mentioned` do.
+
+**How far an agent has read.** `messagesSinceAgent` resolves a watermark as the
+**later of two things**: the `lastSeenMessageId` the orchestrator advances at
+turn end, and the last message the agent itself authored. Both halves earn their
+keep, and the pair is what makes either crash ordering safe — see the decision
+below.
 
 **A wake, end to end.** An agent files an issue from a chat
 (`npm run issue -- new …`, no chat reference recorded — issues know nothing
@@ -152,18 +180,22 @@ agents never trigger agents). This is the deliberate semantic: the author of the
 schedule, not any new machinery, decides whether a fire is a task or an
 announcement.
 
-**A widget, end to end.** An actor raises one (`npm run chat -- widget new`, or
-a web door) → the row lands in the actor's own name and a `chat.widget_changed`
-event goes out on the chat's **existing** `chat:<id>` topic, so every member's
-open browser refreshes the stack off the stream it was already listening on. The
-view renders each row through `parseProps`: a good blob becomes a **compact**
-tile (the question, clamped to two lines) that expands into tappable option
-buttons; a bad blob or an unknown kind becomes an honest tile that says which it
-is and can still be dismissed. Answering **posts an ordinary chat message as the
-answering actor** and sets `dismissedAt` — in ONE transaction, the dismissal
-conditional on `dismissed_at is null` so a double submit rolls back instead of
-posting twice. Then the ordinary reply path takes over, with no widget-specific
-machinery anywhere in it.
+**A widget, end to end.** An actor raises one — an **agent from its own turn**
+(`chat_widget`, the usual case), or a human from `npm run chat -- widget new` →
+the row lands in the actor's own name and a `chat.widget_changed` event goes out
+on the chat's **existing** `chat:<id>` topic, so every member's open browser
+refreshes the stack off the stream it was already listening on. The view renders
+each row through `parseProps`: a good blob becomes a **compact** tile (the
+question, clamped to two lines) that expands into tappable option buttons; a bad
+blob or an unknown kind becomes an honest tile that says which it is and can
+still be dismissed. Answering **posts an ordinary chat message as the answering
+actor** and sets `dismissedAt` — in ONE transaction, the dismissal conditional
+on `dismissed_at is null` so a double submit rolls back instead of posting
+twice. Then the ordinary reply path takes over, with no widget-specific
+machinery anywhere in it: the answer is just a message, so the agent's next turn
+sees it in its unread tail and answers with `chat_post`. **That loop — an agent
+raises a question, a thumb taps it on a phone, the answer arrives as a message,
+the agent responds — is the whole thesis of the project in one interaction.**
 
 **Identity.** Every door resolves the acting user with `currentActor()` (see the
 users zine) — you never tell the system it's you. Creating a chat always
@@ -189,9 +221,48 @@ agent.
   conversation, so we feed it only the messages posted since it last spoke. The
   session is recorded on the membership row and reused across turns for
   continuity; the chat transcript and the session transcript stay distinct.
-- **Only assistant text crosses into the chat.** Thinking and tool calls stay in
-  the agent session. The chat is for people; the session monitor (Agents view)
-  is for watching the work.
+- **The agent speaks; chat does not speak for it.** Chat used to filter a
+  finished turn's transcript for assistant text and post that into the
+  conversation. That was a codec sitting between an agent and its own words: it
+  had to track every SDK message-shape change, it could only speak once and only
+  at the very end, and it could not tell "the agent had nothing to say" from
+  "the shape changed under us". Now the agent calls `chat_post` from inside its
+  turn. What crosses into the chat is what the agent CHOSE to say — not what a
+  filter could recognise. `toChatItems` still exists, but only the Agents
+  monitor view uses it (to render a full transcript); chat has no opinion about
+  transcript shapes at all any more.
+- **A session tool, not the CLI — because the CLI would make speaking
+  BUDGETED.** `npm run chat -- post` was right there and it is the wrong door
+  for a chat turn. It runs in the bash tool, and every foreground tool call is
+  wrapped by the wall-clock tool budget (agent/tool-budget.ts): speaking would
+  be budgeted like a build, and an agent whose post lost that race would go
+  **mute, with nothing in the chat to say why** — a silent failure that is agony
+  to debug. A registered tool is also one insert on a connection we already
+  hold, instead of a child process, npm's startup, a fresh connection and an
+  actor resolve per reply; and the call lands in the session transcript, which
+  is exactly where "two surfaces over one conversation" says it belongs. (Honest
+  edge: the budget still wraps `chat_post` too, since exempting it would need
+  chat to reach into the agent's exemption list. A single insert cannot
+  plausibly spend ten minutes, and if it somehow did the agent gets an errored
+  tool result it can see and retry — which is the difference that matters.) The
+  CLI stays as the human/debug door, and remains the ONLY door on an inbox
+  session, which has no chat to speak into.
+- **The agent's door runs as the agent, never on `systemDb`.** The orchestrator
+  is fixed plumbing and rides the superuser connection; the tools it registers
+  do not. `createChatSessionTools` is handed `withActor`, so an agent's post,
+  raise, reorder and even the "which chat is this session for?" lookup all run
+  under that agent's own RLS context. So the agent's door is gated by exactly
+  the policy a human's tap is gated by (membership is visibility,
+  migration 0007) rather than by code remembering to check — and an LLM-driven
+  path never touches `systemDb`.
+- **Tools are contributed by the host, not imported by the agent service.** The
+  runtime gained a `sessionTools` seam (`SessionToolsProvider`) and chat passes
+  its own provider in `orchestrator-live.ts`. The dependency direction stays
+  chat → agent, with no chat import anywhere in the hull's agent service. The
+  provider resolves at session BOOT, from the membership row that points at the
+  session — so a session that backs no chat (an inbox session, a builder's) gets
+  an empty list and the tool simply doesn't exist there, rather than existing
+  and failing when called.
 - **The reply is event-driven, not inline — and that is the point.** Posting is
   durable the instant the row is written; the reply is driven off the ship's log
   by `handleBusNote`, not by an inline call from the web door. Same reasoning as
@@ -211,8 +282,43 @@ agent.
   `chat.message_posted` event reaches the subscription only live, so a human
   message posted just before a restart would leave a reply owed but undriven. On
   boot, `reconcile` re-drives the reply to each chat's latest human message;
-  `reply`'s "unseen since the agent last spoke" check makes it idempotent, so a
-  caught-up chat is untouched.
+  `reply`'s "unread by this agent" check makes it idempotent, so a caught-up
+  chat is untouched.
+- **The seen watermark is TWO halves, `max`'d — and that's what makes both crash
+  orderings safe.** `messagesSinceAgent` takes the later of
+  `chat_members.last_seen_message_id` (advanced by the orchestrator at turn end)
+  and the last message the agent itself authored. Each half covers the other's
+  crash:
+  - Lose the **watermark write** after the agent's post committed → the post is
+    still the watermark, so reconcile does not re-drive a turn that already
+    spoke. **No duplicate message in the crew's face** — the outcome we chose to
+    be safe against, because a doubled reply is visible, confusing and
+    unfixable, while a re-read is merely wasteful.
+  - Lose the **post** because the turn ended in silence → the watermark still
+    marks what was read, so those messages aren't re-fed forever. Before the
+    inversion a silent turn was rare; now it's first-class, which is exactly why
+    the column had to exist.
+  - Both are pinned by tests, in both orderings. The advance is **monotonic** (a
+    stale write is ignored), because a queued call returns before the turn it
+    was folded into and the two can finish out of order. And it advances to the
+    tail the turn was FED, not to whatever is newest — a message that landed
+    mid-turn was never shown to the agent, so it draws its own turn.
+- **The progress line means "mid-turn", and nothing more.** It used to double as
+  a promise: the reply always arrived last, so "working…" reliably meant "a
+  message is coming". After the inversion an agent may post at second 5 and keep
+  working until second 40, or work for a minute and say nothing. So the bubble
+  is a status line, not an empty message envelope — the copy reads
+  `@tilde is working — using bash…`, never "typing…" — and a message appearing
+  above a still-spinning line is CORRECT rather than a glitch. It clears when
+  the turn ends.
+- **Silence is deliberate; nothing is auto-posted to cover it.** A turn that
+  ends without a post posts nothing — a fallback "ok!" would reinstate the exact
+  ventriloquism this slice deleted, and would put words in an agent's mouth that
+  it declined to say. What the thread shows instead is the one fact we actually
+  have, from the watermark we already keep: **`Seen by @tilde`**, when an
+  agent's turn read the last message and didn't answer it. It's a read receipt,
+  not a message: no row, no author, no transcript entry — so unexplained silence
+  stops reading as a broken ship without anyone pretending to speak.
 
 - **Firing is `addMessage` as the author, nothing else.** A schedule doesn't
   reimplement any reply logic — it posts, and posting already does the right
@@ -247,6 +353,12 @@ agent.
   time; both the chat schedule sweep and the files sweep ride it. arm-once stays
   the caller's job (the live shell's module singleton).
 
+- **Raising is the raiser's move, so the raiser needs a door.** Slice #cse1 left
+  `add`/`reorder` CLI-only, which meant the one actor with judgment about when
+  to interrupt a human couldn't do it from its own turn — the affordance existed
+  for everyone except its intended user. `chat_widget` is that door. The web
+  doors stay only what a BROWSER needs (read, answer, wave away), so there's no
+  unused server fn sitting there for something a browser never does.
 - **A service must never raise a widget.** Only an **actor with judgment** — an
   agent or a human, through a door, from its own turn — puts a widget in front
   of a person. No service reaches into `chat_widgets` to ask something on its
@@ -298,6 +410,20 @@ agent.
 
 ## Changelog
 
+- **#cse2 — The agent speaks for itself.** The orchestrator stops lifting
+  assistant text out of a finished turn (`assistantTextFrom` is gone, and chat
+  no longer imports `toChatItems`) and becomes pure dispatch. Two session tools
+  — `chat_post` and `chat_widget` (`session-tools.ts`) — are registered on a
+  chat's backing session through the runtime's new `sessionTools` seam, and run
+  under the agent's own actor, so the agent decides what to say, can say it
+  mid-turn, and can raise the widget slice #cse1 gave it no door for.
+  `turnContext` was rewritten to teach it (an agent that isn't told goes
+  silent). `chat_members.last_seen_message_id` (migration 0032) makes a silent
+  turn survivable; the watermark resolves as max(column, the agent's own last
+  post) so neither crash ordering doubles a reply or re-feeds forever. The
+  progress line narrows to "this agent is mid-turn" and reads as a status, and
+  silence shows a `Seen by @tilde` receipt instead of an auto-posted filler. The
+  fake session now calls the tool too, so a fake-runtime ship isn't mute.
 - **#cse1 — Widgets in chat.** `chat_widgets` (migration 0030, RLS 0031) owned
   by chat: a `kind` + opaque `props`, stacked above the composer, ordered by
   `stackOrder`, dismissed rows kept as history. One kind, `choice`. Prop parsing
