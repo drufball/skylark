@@ -643,8 +643,10 @@ function ChatWidget({
               ? 'This ship doesn’t know this widget kind'
               : 'These props don’t parse'}
           </p>
+          {/* `detail` carries the technical half either way — the offending
+              kind, or which field is wrong. */}
           <p className="truncate text-xs text-muted-foreground">
-            {parsed.fault === 'unknown-kind' ? widget.kind : parsed.detail}
+            {parsed.detail}
           </p>
         </div>
         {dismiss}

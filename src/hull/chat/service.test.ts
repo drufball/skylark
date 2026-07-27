@@ -816,9 +816,12 @@ describe('widget persistence + answering', () => {
       topicPatterns: [chatTopic(chatId)],
       audience: 'members',
     })
+    // The literal, not the constant: it's a wire format the browser dispatches
+    // on (routes/index.tsx), so renaming it silently would break the live stack.
+    expect(CHAT_WIDGET_CHANGED).toBe('chat.widget_changed')
     expect(
       events
-        .filter((e) => e.type === CHAT_WIDGET_CHANGED)
+        .filter((e) => e.type === 'chat.widget_changed')
         .map((e) => (e.payload as { change: string }).change),
     ).toEqual(['raised', 'reordered', 'answered', 'raised', 'dismissed'])
     // Private, like every chat event: nothing on the public audience.

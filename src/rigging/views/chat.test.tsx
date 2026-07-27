@@ -393,7 +393,14 @@ function choiceWidget(over: Partial<WidgetItem> = {}): WidgetItem {
 
 describe('ChatView widget stack', () => {
   it('shows nothing at all when there are no widgets', () => {
-    renderView({ activeId: 'c1', widgets: [], onAnswerWidget: vi.fn() })
+    // Both callbacks wired, so an EMPTY list is the only reason the band is
+    // gone — no chrome for a shelf with nothing on it.
+    renderView({
+      activeId: 'c1',
+      widgets: [],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
     expect(screen.queryByTestId('widget-stack')).toBeNull()
   })
 
