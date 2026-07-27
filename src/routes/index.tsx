@@ -7,19 +7,23 @@ import {
 import { useCallback, useMemo, useState } from 'react'
 
 import {
+  answerChatWidget,
   createChatFn,
   createChatSchedule,
   deleteChatSchedule,
+  dismissChatWidget,
   getChatThread,
   listChatCrew,
   listChats,
   listChatSchedules,
+  listChatWidgets,
   postChatMessage,
   setChatScheduleEnabled,
   updateChat,
 } from '@hull/chat/server'
 import {
   CHAT_AGENT_PROGRESS,
+  CHAT_WIDGET_CHANGED,
   chatTopic,
   type ChatAgentProgressPayload,
 } from '@hull/chat/topic'
@@ -31,6 +35,7 @@ import {
   type CrewMember,
   type NewSchedule,
   type ScheduleItem,
+  type WidgetItem,
   workingFromMembers,
 } from '@rigging/views/chat'
 import { Dock } from '@rigging/views/dock'
@@ -65,12 +70,15 @@ export const Route = createFileRoute('/')({
     const thread = activeId ? await getChatThread({ data: activeId }) : null
     const schedules =
       thread && activeId ? await listChatSchedules({ data: activeId }) : []
+    const widgets =
+      thread && activeId ? await listChatWidgets({ data: activeId }) : []
     return {
       me,
       chats,
       crew,
       thread,
       schedules,
+      widgets,
       activeId: thread ? activeId : undefined,
     }
   },
@@ -92,7 +100,8 @@ function readProgress(payload: unknown): ChatAgentProgressPayload | null {
 
 function ChatRoute() {
   const { new: composing } = Route.useSearch()
-  const { me, chats, crew, thread, schedules, activeId } = Route.useLoaderData()
+  const { me, chats, crew, thread, schedules, widgets, activeId } =
+    Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
   const { busy, run } = useServerAction()
@@ -137,6 +146,11 @@ function ChatRoute() {
         }
       } else if (event.type === 'chat.message_posted') {
         setWorking(null)
+        void router.invalidate()
+      } else if (event.type === CHAT_WIDGET_CHANGED) {
+        // A widget was raised, answered, waved away or moved. It rides the same
+        // chat:<id> topic as messages, so the stack refreshes off the stream
+        // we're already listening on — no new transport.
         void router.invalidate()
       }
     },
@@ -183,6 +197,16 @@ function ChatRoute() {
     await router.invalidate()
   }
 
+  async function answerWidget(widgetId: string, value: string) {
+    await run(() => answerChatWidget({ data: { widgetId, value } }))
+    await router.invalidate()
+  }
+
+  async function dismissWidget(widgetId: string) {
+    await run(() => dismissChatWidget({ data: { widgetId } }))
+    await router.invalidate()
+  }
+
   const chatItems: ChatListItem[] = chats.map((c) => ({
     id: c.id,
     title: c.title,
@@ -205,6 +229,12 @@ function ChatRoute() {
     handle: c.handle,
     displayName: c.displayName,
     type: c.type,
+  }))
+  const widgetItems: WidgetItem[] = widgets.map((w) => ({
+    id: w.id,
+    kind: w.kind,
+    props: w.props,
+    createdByHandle: w.createdByHandle,
   }))
   const scheduleItems: ScheduleItem[] = schedules.map((s) => ({
     id: s.id,
@@ -267,6 +297,13 @@ function ChatRoute() {
         }}
         onDeleteSchedule={(id) => {
           void removeSchedule(id)
+        }}
+        widgets={widgetItems}
+        onAnswerWidget={(widgetId, value) => {
+          void answerWidget(widgetId, value)
+        }}
+        onDismissWidget={(widgetId) => {
+          void dismissWidget(widgetId)
         }}
       />
     </Dock>

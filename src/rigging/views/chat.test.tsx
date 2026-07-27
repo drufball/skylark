@@ -7,6 +7,7 @@ import {
   type ChatViewProps,
   chatName,
   scheduleSummary,
+  type WidgetItem,
   workingFromMembers,
 } from './chat'
 import { classTokensOf } from './test-support'
@@ -376,6 +377,264 @@ describe('ChatView', () => {
     fireEvent.click(screen.getByLabelText('Schedules'))
     fireEvent.click(screen.getByLabelText('Disable schedule s1'))
     expect(onToggleSchedule).toHaveBeenCalledWith('s1', false)
+  })
+})
+
+/** A choice widget as the loader hands it over. */
+function choiceWidget(over: Partial<WidgetItem> = {}): WidgetItem {
+  return {
+    id: 'w1',
+    kind: 'choice',
+    props: { question: 'Ship the new theme?', options: ['Yes', 'No'] },
+    createdByHandle: 'tilde',
+    ...over,
+  }
+}
+
+describe('ChatView widget stack', () => {
+  it('shows nothing at all when there are no widgets', () => {
+    // Both callbacks wired, so an EMPTY list is the only reason the band is
+    // gone — no chrome for a shelf with nothing on it.
+    renderView({
+      activeId: 'c1',
+      widgets: [],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    expect(screen.queryByTestId('widget-stack')).toBeNull()
+  })
+
+  it('shows no stack without the widget callbacks, even with widgets', () => {
+    renderView({ activeId: 'c1', widgets: [choiceWidget()] })
+    expect(screen.queryByTestId('widget-stack')).toBeNull()
+  })
+
+  it('renders a compact tile — the question, no answer buttons yet', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    expect(screen.getByText('Ship the new theme?')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
+  })
+
+  it('expands a compact tile on click, revealing the options', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'No' })).toBeTruthy()
+  })
+
+  it('answers with the tapped option', () => {
+    const onAnswerWidget = vi.fn()
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget,
+      onDismissWidget: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByRole('button', { name: 'No' }))
+    expect(onAnswerWidget).toHaveBeenCalledWith('w1', 'No')
+  })
+
+  it('answers only once per tap-through, even on a double tap', () => {
+    // The stack is refreshed by the server's own event; until it arrives the
+    // buttons must not fire a second answer the door would reject.
+    const onAnswerWidget = vi.fn()
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget,
+      onDismissWidget: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-offers the options if the answer did not take', () => {
+    // A spent widget normally vanishes because the server says it did. If the
+    // answer FAILED, the widget is still in the stack — and must be answerable
+    // again rather than sitting there with dead buttons forever.
+    const onAnswerWidget = vi.fn()
+    const props: Partial<ChatViewProps> = {
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget,
+      onDismissWidget: vi.fn(),
+    }
+    const { rerender } = renderView({ ...props, busy: false })
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
+
+    function paint(busy: boolean) {
+      rerender(
+        <ChatView
+          chats={[]}
+          title={null}
+          members={[]}
+          messages={[]}
+          working={null}
+          crew={[]}
+          composing={false}
+          busy={busy}
+          onSelect={vi.fn()}
+          onNew={vi.fn()}
+          onSend={vi.fn()}
+          onCreate={vi.fn()}
+          onAddMember={vi.fn()}
+          onRemoveMember={vi.fn()}
+          {...props}
+        />,
+      )
+    }
+    paint(true) // the request is in flight — still spent
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
+
+    paint(false) // it came back, and the widget is STILL here → answerable
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(2)
+  })
+
+  it('dismisses a widget', () => {
+    const onDismissWidget = vi.fn()
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget,
+    })
+    fireEvent.click(screen.getByLabelText('Dismiss widget w1'))
+    expect(onDismissWidget).toHaveBeenCalledWith('w1')
+  })
+
+  it('expands only one widget at a time, so the stack can’t swallow the thread', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [
+        choiceWidget({ id: 'w1', props: { question: 'A?', options: ['Ay'] } }),
+        choiceWidget({ id: 'w2', props: { question: 'B?', options: ['Bee'] } }),
+      ],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    expect(screen.getByRole('button', { name: 'Ay' })).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Open widget w2'))
+    expect(screen.getByRole('button', { name: 'Bee' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Ay' })).toBeNull()
+  })
+
+  it('collapses an expanded widget when its header is clicked again', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
+  })
+
+  it('caps the stack’s height and scrolls it, so the thread always stays visible', () => {
+    const { container } = renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    const stack = container.querySelector('[data-testid="widget-stack"]')
+    expect(stack?.className).toContain('max-h-')
+    expect(stack?.className).toContain('overflow-y-auto')
+  })
+
+  it('says so honestly when the props do not parse — and offers no answers', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget({ props: { question: 'Ship it?' } })],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    expect(screen.getByText(/don’t parse/i)).toBeTruthy()
+    expect(screen.getByText(/options must be a non-empty array/i)).toBeTruthy()
+    // Nothing to answer: the tile doesn't expand into invented buttons.
+    expect(screen.queryByLabelText('Open widget w1')).toBeNull()
+  })
+
+  it('says so honestly when it doesn’t know the kind, naming it', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget({ kind: 'orrery' })],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    expect(screen.getByText(/doesn’t know this widget kind/i)).toBeTruthy()
+    expect(screen.getByText(/orrery/)).toBeTruthy()
+  })
+
+  it('lets you dismiss a widget it cannot render — never a dead end', () => {
+    const onDismissWidget = vi.fn()
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget({ kind: 'orrery' })],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget,
+    })
+    fireEvent.click(screen.getByLabelText('Dismiss widget w1'))
+    expect(onDismissWidget).toHaveBeenCalledWith('w1')
+  })
+
+  it('renders the widgets in the order given, and truncates a long question', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [
+        choiceWidget({
+          id: 'w1',
+          props: { question: 'First?', options: ['Ok'] },
+        }),
+        choiceWidget({
+          id: 'w2',
+          props: { question: 'Second?', options: ['Ok'] },
+        }),
+      ],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    const questions = screen.getAllByTestId('widget-question')
+    expect(questions.map((q) => q.textContent)).toEqual(['First?', 'Second?'])
+    // Compact means compact: at most two clamped lines, so several widgets
+    // can't push the message thread off a phone screen.
+    expect(questions[0].className).toContain('line-clamp-2')
+  })
+
+  it('gives every widget control a thumb-sized tap target', () => {
+    renderView({
+      activeId: 'c1',
+      widgets: [choiceWidget()],
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    // 44px is the floor a thumb needs; min-h-11 is 2.75rem = 44px.
+    expect(classTokensOf('Ship the new theme?', 'button')).toContain('min-h-11')
+    expect(screen.getByLabelText('Dismiss widget w1').className).toContain(
+      'min-h-11',
+    )
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    expect(screen.getByRole('button', { name: 'Yes' }).className).toContain(
+      'min-h-11',
+    )
   })
 })
 

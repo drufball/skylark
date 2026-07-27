@@ -2,19 +2,23 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
-import { asActor, freshDb } from '@hull/db/test-db'
+import { asActor, defined, freshDb } from '@hull/db/test-db'
 import { createUser } from '@hull/users/service'
 
 import {
   addMessage,
+  addWidget,
+  answerWidget,
   createChat,
   createSchedule,
   ensureChatVisible,
   getChat,
   getSchedule,
+  getWidget,
   listChatSummaries,
   listMembers,
   listMessages,
+  listOpenWidgets,
   listSchedules,
 } from './service'
 
@@ -182,6 +186,79 @@ describe('chat access (RLS)', () => {
         }),
       ),
     ).rejects.toThrow()
+  })
+
+  it('widgets ride membership: a member raises + reads, a non-member is blocked', async () => {
+    // alice is in c1 → may raise a widget there and see it in the stack.
+    const raised = await asActor(db, alice, (tx) =>
+      addWidget(tx, {
+        id: uuidv7(),
+        chatId: c1,
+        kind: 'choice',
+        props: { question: 'Ship it?', options: ['Yes', 'No'] },
+        createdById: alice,
+      }),
+    )
+    const seen = await asActor(db, alice, (tx) => listOpenWidgets(tx, c1))
+    expect(seen.map((w) => w.id)).toEqual([raised.id])
+
+    // alice is NOT in c2 → the WITH CHECK policy rejects the insert.
+    await expect(
+      asActor(db, alice, (tx) =>
+        addWidget(tx, {
+          id: uuidv7(),
+          chatId: c2,
+          kind: 'choice',
+          props: { question: 'sneak', options: ['Yes'] },
+          createdById: alice,
+        }),
+      ),
+    ).rejects.toThrow()
+  })
+
+  it('hides a non-member chat’s widgets entirely, and refuses to answer one', async () => {
+    const id = uuidv7()
+    // Arrange as superuser (RLS bypassed): a widget on bob-only c2.
+    await addWidget(db, {
+      id,
+      chatId: c2,
+      kind: 'choice',
+      props: { question: 'Private?', options: ['Yes', 'No'] },
+      createdById: bob,
+    })
+    // alice is not in c2 → sees neither the stack nor the row…
+    expect(await asActor(db, alice, (tx) => listOpenWidgets(tx, c2))).toEqual(
+      [],
+    )
+    expect(await asActor(db, alice, (tx) => getWidget(tx, id))).toBeUndefined()
+    expect(await asActor(db, bob, (tx) => getWidget(tx, id))).toBeDefined()
+
+    // …so answering it is a clean refusal, and puts no message in bob's chat.
+    await expect(
+      asActor(db, alice, (tx) =>
+        answerWidget(tx, { widgetId: id, actorId: alice, value: 'Yes' }),
+      ),
+    ).rejects.toThrow(/no such widget/)
+    expect(await listMessages(db, c2)).toHaveLength(1) // just bob's original
+    expect(defined(await getWidget(db, id)).dismissedAt).toBeNull()
+  })
+
+  it('lets a member answer a widget in their own chat', async () => {
+    const id = uuidv7()
+    await addWidget(db, {
+      id,
+      chatId: c1,
+      kind: 'choice',
+      props: { question: 'Ship it?', options: ['Yes', 'No'] },
+      createdById: bob,
+    })
+    const message = await asActor(db, alice, (tx) =>
+      answerWidget(tx, { widgetId: id, actorId: alice, value: 'Yes' }),
+    )
+    expect(message.authorId).toBe(alice)
+    expect(await asActor(db, alice, (tx) => listOpenWidgets(tx, c1))).toEqual(
+      [],
+    )
   })
 
   it('hides a non-member chat’s schedules entirely', async () => {

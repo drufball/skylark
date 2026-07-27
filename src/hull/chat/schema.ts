@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -10,6 +11,8 @@ import {
 
 import { agentSessions } from '@hull/agent/schema'
 import { users } from '@hull/users/schema'
+
+import type { JsonValue } from './widgets'
 
 // The chat service owns these tables. A chat is a conversation between a set of
 // users (humans and agents); membership IS visibility — only members see a chat,
@@ -145,7 +148,72 @@ export const chatSchedules = pgTable(
   ],
 )
 
+/**
+ * A live little view kept open inside a chat — a poll to answer, a meter to
+ * watch. **A widget instance is not data, it's a piece of the conversation:** a
+ * lens some crew agreed to keep open together. So its lifetime is the
+ * conversation's lifetime (the cascade below, not a cleanup job), its access is
+ * the conversation's access (chat membership under RLS, migration 0031), and its
+ * CONTENTS are fetched fresh on render — never stored here.
+ *
+ * A widget instance always lives in exactly one chat; nothing else ever owns
+ * one. That's why this table sits in the chat service rather than a service of
+ * its own: half the row's identity IS a chat id, so owning it here needs no new
+ * cross-service coupling.
+ *
+ * The row knows nothing about specific kinds. `kind` and `props` are opaque
+ * strings/JSON to it; what they mean is `widgets.ts`'s `parseProps`, which is
+ * total — an unparseable blob or a kind this ship no longer knows renders an
+ * honest tile, never a crash. Rows outliving their definitions is expected, not
+ * a bug.
+ *
+ * `dismissedAt` is set when an ephemeral widget is answered or waved away: the
+ * widget leaves the stack, but the row survives as history — what was asked, of
+ * whom, and when it stopped being open.
+ *
+ * NOTE: only an ACTOR with judgment raises a widget — an agent or a human,
+ * through a door, from its own turn. No service reaches in here to put something
+ * in front of a human; that rule is what keeps the service graph untangled (see
+ * chat/zine.md).
+ */
+export const chatWidgets = pgTable(
+  'chat_widgets',
+  {
+    id: text('id').primaryKey(),
+    /** The one chat this widget lives in — cascade, so it can never be orphaned. */
+    chatId: text('chat_id')
+      .notNull()
+      .references(() => chats.id, { onDelete: 'cascade' }),
+    /** Which widget this is — opaque here; `widgets.ts` gives it meaning. */
+    kind: text('kind').notNull(),
+    /** The kind's own configuration — opaque here; validated by `parseProps`. */
+    props: jsonb('props').$type<JsonValue>().notNull(),
+    /** Where it renders. Only 'stack' (above the composer) exists; a canvas comes later. */
+    placement: text('placement').notNull().default('stack'),
+    /** Position within the placement, low first. Agents may write this to reorder. */
+    stackOrder: integer('stack_order').notNull().default(0),
+    /** Set when answered or waved away: out of the stack, kept as history. */
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+    /** Which member put it here (audit) — a widget is always somebody's judgment. */
+    createdById: text('created_by_id')
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // The stack read: one chat's widgets, in the order they render.
+    index('chat_widgets_chat_idx').on(
+      table.chatId,
+      table.placement,
+      table.stackOrder,
+    ),
+  ],
+)
+
 export type ChatRow = typeof chats.$inferSelect
 export type ChatMemberRow = typeof chatMembers.$inferSelect
 export type ChatMessageRow = typeof chatMessages.$inferSelect
 export type ChatScheduleRow = typeof chatSchedules.$inferSelect
+export type ChatWidgetRow = typeof chatWidgets.$inferSelect

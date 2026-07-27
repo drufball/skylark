@@ -8,16 +8,19 @@ import { listUsers } from '@hull/users/service'
 import {
   addMember,
   addMessage,
+  answerWidget,
   canAuthorSchedule,
   createChat,
   createSchedule,
   deleteSchedule,
+  dismissWidget,
   ensureChatVisible,
   getChat,
   getSchedule,
   listChatSummaries,
   listMembers,
   listMessages,
+  listOpenWidgets,
   listSchedules,
   removeMember,
   scheduleTiming,
@@ -202,6 +205,58 @@ export const deleteChatSchedule = createServerFn({ method: 'POST' })
       if (!(await getSchedule(tx, data.scheduleId)))
         throw new Error('not a member of this chat')
       await deleteSchedule(tx, data.scheduleId)
+      return { ok: true }
+    }),
+  )
+
+// --- Widgets ---------------------------------------------------------------
+//
+// The stack of live little views a chat keeps open above its composer. Every
+// door is RLS-gated by chat membership, like the rest of chat: the widget read
+// IS the access check. Nothing here decides to raise a widget on its own — an
+// actor asks, through a door, from their own turn.
+//
+// The web doors are the ones a BROWSER needs: read the stack, answer, wave away.
+// Raising and reordering are agent moves, and their door is the chat CLI
+// (`npm run chat -- widget new|reorder`) — the same split the schedules slice
+// made, and the reason there's no unused server fn sitting here.
+
+/** The active widget stack for a chat — dismissed ones already excluded. */
+export const listChatWidgets = createServerFn({ method: 'GET' })
+  .validator((chatId: string) => chatId)
+  .handler(({ data: chatId }) =>
+    withCurrentActor(async (tx) => {
+      await ensureChatVisible(tx, chatId)
+      return listOpenWidgets(tx, chatId)
+    }),
+  )
+
+/**
+ * Answer a widget: posts an ORDINARY chat message as the current actor and
+ * dismisses the widget, atomically. Because it's an ordinary message, the reply
+ * rules, unseen diffing and SSE delivery need nothing new — so the orchestrator
+ * has to be subscribed first, exactly like postChatMessage.
+ */
+export const answerChatWidget = createServerFn({ method: 'POST' })
+  .validator((input: { widgetId: string; value: string }) => input)
+  .handler(async ({ data }) => {
+    await bootOrchestrator()
+    return withCurrentActor(async (tx, me) => {
+      await answerWidget(tx, {
+        widgetId: data.widgetId,
+        actorId: me.id,
+        value: data.value,
+      })
+      return { ok: true }
+    })
+  })
+
+/** Wave a widget away unanswered — out of the stack, kept as history. */
+export const dismissChatWidget = createServerFn({ method: 'POST' })
+  .validator((input: { widgetId: string }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await dismissWidget(tx, { widgetId: data.widgetId, actorId: me.id })
       return { ok: true }
     }),
   )

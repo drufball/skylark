@@ -1,6 +1,6 @@
 # Chat
 
-_chat zine — issue #67_
+_chat zine — issue #cse1_
 
 ## tl;dr
 
@@ -9,6 +9,10 @@ agents. A chat is a set of **members**, and **membership is visibility**: only
 members see a chat, and an added member sees the whole history (no per-message
 ACL). Agents are members too; when one needs to speak, the chat orchestrator
 drives its backing agent session and posts the reply back as a chat message.
+
+A chat also carries **widgets** — live little views the crew keeps open
+together, in a stack above the composer. A widget instance is not data; it's a
+piece of the conversation.
 
 The one idea that shapes everything: **the clean chat transcript and the agent's
 full tool-call transcript are two surfaces over one conversation.** Chat shows
@@ -27,7 +31,7 @@ the rigging.
 - **Message** — a row in `chat_messages`: a member's text, ordered by UUIDv7 id.
 - **Service logic** (`service.ts`) — pure persistence + the pure response rules
   (`parseMentions`, `targetsForMessage`, `formatTranscript`). Touches only its
-  own three tables (plus a read-join onto users for display).
+  own tables (plus a read-join onto users for display).
 - **Orchestrator** (`orchestrator.ts`) — turns a posted message into agent
   replies: who should answer, drive each one's session, lift the assistant text
   back into the chat. `handleBusNote` is its ship-log subscription (a posted
@@ -70,13 +74,33 @@ the rigging.
   `hull/lib/interval-sweep.ts` helper (an unref'd interval with an injected
   clock + timer, errors swallowed and logged) — the same helper the files sweep
   rides. `v8 ignore`d live wiring; the fire decisions are PGlite-tested.
+- **Widget** — a row in `chat_widgets`: a live little view kept open inside one
+  chat. A `kind` plus an opaque `props` blob, a `placement` (only `stack` so far
+  — above the composer), a `stackOrder`, and a nullable `dismissedAt`. A widget
+  instance **always lives in exactly one chat**; nothing else ever owns one, so
+  its lifetime is the conversation's lifetime (an FK cascade, not a cleanup job)
+  and its access is the conversation's access (membership under RLS, migration
+  0031). Its CONTENTS are fetched fresh on render and never stored on the row.
+- **Widget kinds** (`widgets.ts`) — the pure, node-free meaning of a `props`
+  blob, shared by the doors and the view. `parseProps(kind, json)` is **total**:
+  it returns a fully-typed `props` or an honest refusal (`unknown-kind` /
+  `bad-props`), never a throw. One kind so far: **`choice`**
+  (`{ question, options[] }`; yes/no is just `options: ['Yes','No']`), which
+  needs nothing from any other service. `answerOptions` is the whitelist an
+  answer is checked against; `answerMessageBody` composes the message an answer
+  posts.
+- **Dismissal** — `dismissedAt` set. The widget leaves the stack; the row
+  survives as history — what was asked, of whom, and when it stopped being open.
 - **Doors** — `server.ts` (the web doors; the front-door route is the chat UI)
   and `cli.ts` (`npm run chat`: `list`, `show <chatId> [--limit N]`,
   `post <chatId> <message>` — how a woken agent finds a chat and posts to it
   from its bash tool, mirroring the issues CLI's conventions exactly — plus
-  `schedule new|list|rm` to manage scheduled messages from bash). The chat view
-  carries a modest schedules affordance (list + create + enable/disable +
-  delete); the CLI is the primary door for v1.
+  `schedule new|list|rm` to manage scheduled messages from bash, and
+  `widget new|list|answer|dismiss|reorder` to put a live view in front of the
+  crew). The chat view carries a modest schedules affordance (list + create +
+  enable/disable + delete); the CLI is the primary door for v1. The **web**
+  widget doors are only what a browser needs — read the stack, answer, wave away
+  — because raising and reordering are agent moves and the CLI is their door.
 
 ## Structure
 
@@ -127,6 +151,19 @@ recurring task); an **agent**-authored one draws none (a standing announcement �
 agents never trigger agents). This is the deliberate semantic: the author of the
 schedule, not any new machinery, decides whether a fire is a task or an
 announcement.
+
+**A widget, end to end.** An actor raises one (`npm run chat -- widget new`, or
+a web door) → the row lands in the actor's own name and a `chat.widget_changed`
+event goes out on the chat's **existing** `chat:<id>` topic, so every member's
+open browser refreshes the stack off the stream it was already listening on. The
+view renders each row through `parseProps`: a good blob becomes a **compact**
+tile (the question, clamped to two lines) that expands into tappable option
+buttons; a bad blob or an unknown kind becomes an honest tile that says which it
+is and can still be dismissed. Answering **posts an ordinary chat message as the
+answering actor** and sets `dismissedAt` — in ONE transaction, the dismissal
+conditional on `dismissed_at is null` so a double submit rolls back instead of
+posting twice. Then the ordinary reply path takes over, with no widget-specific
+machinery anywhere in it.
 
 **Identity.** Every door resolves the acting user with `currentActor()` (see the
 users zine) — you never tell the system it's you. Creating a chat always
@@ -210,8 +247,66 @@ agent.
   time; both the chat schedule sweep and the files sweep ride it. arm-once stays
   the caller's job (the live shell's module singleton).
 
+- **A service must never raise a widget.** Only an **actor with judgment** — an
+  agent or a human, through a door, from its own turn — puts a widget in front
+  of a person. No service reaches into `chat_widgets` to ask something on its
+  own behalf, and none ever should: the moment one does, every service that
+  wants a human's attention needs a path into chat, and the graph re-tangles
+  (which is exactly what `architecture.test.ts`'s ban on issues→chat imports
+  exists to prevent). A service that needs an answer emits on the ship's log; an
+  agent hears it, decides it's worth interrupting a human for, and raises the
+  widget itself. The `createdById` column is that rule made visible — every
+  widget has somebody's name on it.
+- **Widgets live in chat, not in a service of their own.** Half a widget row's
+  identity IS a chat id: a widget instance always belongs to exactly one chat
+  and nothing else ever owns one. Owning the table here means no new entry in
+  `SCHEMA_FK_ALLOWLIST` and no new cross-service coupling — and the
+  never-orphaned invariant is a plain `on delete cascade` rather than a sweep.
+- **A widget instance is not data — it's a piece of the conversation.** It's a
+  lens some crew agreed to keep open together, so it inherits the conversation's
+  lifetime, the conversation's access, and nothing else. Its **contents are
+  fetched fresh on render and never stored on the row** — the row holds only
+  what the crew chose (which lens, configured how), never a snapshot of what the
+  lens was showing. A widget that persisted its contents would be a stale cache
+  nobody asked for.
+- **Answering posts an ORDINARY chat message — that's the whole feature.** No
+  answer table, no answer delivery path. Because the answer is a chat message
+  authored by the answering actor, the unseen-message diffing, reply targeting,
+  the no-agent-cascade rule, RLS, SSE delivery and startup reconcile all apply
+  with **zero new code** — the same reasoning that makes a schedule fire by
+  calling `addMessage` and nothing else. The message quotes the question above
+  the answer, so the transcript still reads as a question-and-answer long after
+  the widget row has left the stack.
+- **The row knows nothing about kinds, and `parseProps` never throws.** `kind`
+  and `props` are opaque to the table, and a bad blob is stored, not refused —
+  because whoever wrote it (usually an agent) has to be able to SEE what they
+  got wrong, and a rejected write teaches them nothing. So the two honest
+  failure tiles ("these props don't parse", "this ship doesn't know this widget
+  kind") are designed states, not error handling: later slices let kinds be
+  defined per ship, so rows WILL outlive their definitions and must say so out
+  loud.
+- **Widget changes ride the chat's existing topic.** `chat.widget_changed` goes
+  out on `chat:<id>`, the topic every member's browser already subscribes to for
+  messages — so the stack goes live with no new transport, no new subscription,
+  and no polling. Every mutation announces itself from the SERVICE, not the
+  door, so a second door can't ship a change nobody's browser hears.
+- **The stack is a shelf, not a second pane.** It's height-capped and
+  scrollable, and only one widget expands at a time, so however many widgets are
+  open they cannot push the message thread off a phone screen. A widget lives
+  above the composer — where the next thing you'd touch belongs — and never
+  becomes its own route, pane or screen.
+
 ## Changelog
 
+- **#cse1 — Widgets in chat.** `chat_widgets` (migration 0030, RLS 0031) owned
+  by chat: a `kind` + opaque `props`, stacked above the composer, ordered by
+  `stackOrder`, dismissed rows kept as history. One kind, `choice`. Prop parsing
+  is pure and total (`widgets.ts`), so a malformed blob or an unknown kind
+  renders an honest tile. Answering posts an ordinary chat message as the
+  answering actor and dismisses the widget atomically, so every existing
+  reply/delivery rule applies untouched. Web doors for read/answer/dismiss,
+  `npm run chat -- widget new|list|answer|dismiss|reorder` for the rest, live
+  over the existing `chat:<id>` topic.
 - **#l07u — Scheduled chat messages.** `chat_schedules` (one-shot or recurring),
   owned by chat, riding membership under RLS (migration 0027). Fires via chat's
   own `addMessage` as the author, so reply rules make a human-authored fire a
