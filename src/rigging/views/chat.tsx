@@ -48,6 +48,12 @@ export interface ChatMemberItem {
    * navigation reloads the thread instead of catching a live SSE event.
    */
   progressLine?: string | null
+  /**
+   * How far this member's turns have read the chat. Only interesting for agents,
+   * and only to answer one question honestly: did it read this and choose not to
+   * speak? (See `seenByHandles`.)
+   */
+  lastSeenMessageId?: string | null
 }
 
 export interface CrewMember {
@@ -163,6 +169,50 @@ export function workingFromMembers(
   return inProgress?.progressLine
     ? { handle: inProgress.handle, line: inProgress.progressLine }
     : null
+}
+
+/**
+ * What the live indicator says. It means ONE thing — this agent is mid-turn —
+ * and it must not imply a second: an agent speaks by posting from inside its own
+ * turn, so it may have said its piece already and still be working for another
+ * half-minute, or it may finish having said nothing at all. So this reads as a
+ * state ("@tilde is working"), never as a promise ("@tilde is typing…"), and it
+ * is rendered as a status line rather than an empty message bubble waiting to be
+ * filled in.
+ */
+export function workingLabel(working: {
+  handle: string
+  line: string
+}): string {
+  return `@${working.handle} is working — ${working.line}`
+}
+
+/**
+ * Which agents have READ the last thing said without answering it — the quiet
+ * counterpart to a reply.
+ *
+ * Silence is a real outcome now (an agent that calls no `chat_post` says
+ * nothing), and unexplained silence reads as a broken ship. Rather than
+ * auto-posting a filler message — which is exactly the ventriloquism the
+ * orchestrator stopped doing — the thread states the fact it actually has: this
+ * agent's turn read the conversation this far. An agent that answered isn't
+ * listed, because its own message is already the receipt.
+ */
+export function seenByHandles(
+  members: ChatMemberItem[],
+  messages: ChatMsg[],
+): string[] {
+  const last = messages.at(-1)
+  if (!last) return []
+  return members
+    .filter(
+      (m) =>
+        m.type === 'agent' &&
+        m.handle !== last.authorHandle &&
+        m.lastSeenMessageId != null &&
+        m.lastSeenMessageId >= last.id,
+    )
+    .map((m) => m.handle)
 }
 
 export function ChatView(props: ChatViewProps) {
@@ -360,7 +410,11 @@ function ActiveChat({
             onDeleteSchedule={onDeleteSchedule}
           />
         )}
-      <Messages messages={messages} working={working} />
+      <Messages
+        messages={messages}
+        working={working}
+        seenBy={seenByHandles(members, messages)}
+      />
       {onAnswerWidget && onDismissWidget && widgets && widgets.length > 0 && (
         <WidgetStack
           widgets={widgets}
@@ -714,7 +768,8 @@ function ChatWidget({
 function Messages({
   messages,
   working,
-}: Pick<ChatViewProps, 'messages' | 'working'>) {
+  seenBy,
+}: Pick<ChatViewProps, 'messages' | 'working'> & { seenBy: string[] }) {
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 p-6">
@@ -743,16 +798,27 @@ function Messages({
             </div>
           </div>
         ))}
+        {/* A status line, not a message-shaped bubble: the agent is mid-turn,
+            which is all this can honestly claim. It may already have posted
+            above and still be working; it may finish without posting at all. */}
         {working && (
-          <div className="flex flex-col items-start gap-0.5">
-            <span className="text-xs text-muted-foreground">
-              @{working.handle}
-            </span>
-            <div className="flex items-center gap-2 rounded-2xl bg-muted px-4 py-2 text-sm text-muted-foreground">
-              <span className="inline-block size-2 animate-pulse rounded-full bg-current" />
-              {working.line}
-            </div>
-          </div>
+          <p
+            data-testid="agent-working"
+            className="flex items-center gap-2 self-start text-xs text-muted-foreground"
+          >
+            <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-current" />
+            {workingLabel(working)}
+          </p>
+        )}
+        {/* Nobody is mid-turn and an agent read the last message without
+            answering. Saying so beats an auto-posted "ok!" nobody meant. */}
+        {!working && seenBy.length > 0 && (
+          <p
+            data-testid="agent-seen"
+            className="self-start text-xs text-muted-foreground"
+          >
+            Seen by {seenBy.map((h) => `@${h}`).join(', ')}
+          </p>
         )}
       </div>
     </ScrollArea>

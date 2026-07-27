@@ -20,9 +20,11 @@ import {
   createSchedule,
   deleteSchedule,
   dismissWidget,
+  findChatForSession,
   fireDueSchedules,
   formatTranscript,
   getChat,
+  laterMessageId,
   getSchedule,
   getWidget,
   isScheduleDue,
@@ -40,6 +42,7 @@ import {
   removeMember,
   scheduleTiming,
   setMemberProgress,
+  setMemberSeen,
   setMemberSession,
   setScheduleEnabled,
   setTitle,
@@ -121,6 +124,20 @@ describe('formatTranscript', () => {
         { handle: 'tilde', body: 'hi' },
       ]),
     ).toBe('@dru: hello\n@tilde: hi')
+  })
+})
+
+describe('laterMessageId', () => {
+  it('picks the later id, treating null as "nothing yet"', () => {
+    // Message ids are UUIDv7, so lexicographic order IS chronological order.
+    const early = '0190aaaa-0000-7000-8000-000000000000'
+    const late = '0190bbbb-0000-7000-8000-000000000000'
+    expect(laterMessageId(early, late)).toBe(late)
+    expect(laterMessageId(late, early)).toBe(late)
+    expect(laterMessageId(null, early)).toBe(early)
+    expect(laterMessageId(early, null)).toBe(early)
+    expect(laterMessageId(null, null)).toBeNull()
+    expect(laterMessageId(early, early)).toBe(early)
   })
 })
 
@@ -238,6 +255,131 @@ describe('chat persistence', () => {
     })
     const unseen = await messagesSinceAgent(db, id, tilde)
     expect(unseen.map((m) => m.body)).toEqual(['one'])
+  })
+
+  it('treats the seen watermark as read even when the agent said nothing', async () => {
+    // The whole reason the column exists: an agent now speaks by calling
+    // chat_post, so a turn can legitimately end with no message of its own. The
+    // orchestrator marks what that turn READ, or these messages stay unseen
+    // forever and get re-fed on every later reply.
+    const id = await makeChat()
+    const first = uuidv7()
+    await addMessage(db, { id: first, chatId: id, authorId: dru, body: 'one' })
+    await setMemberSeen(db, id, tilde, first)
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId: id,
+      authorId: dru,
+      body: 'two',
+    })
+
+    const unseen = await messagesSinceAgent(db, id, tilde)
+    expect(unseen.map((m) => m.body)).toEqual(['two'])
+  })
+
+  it("falls back to the agent's own last post when the watermark write was lost", async () => {
+    // The other crash ordering: the agent's chat_post committed but the
+    // watermark write never landed. The post itself is the watermark, so the
+    // messages it answered are not re-fed — no duplicate reply.
+    const id = await makeChat()
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId: id,
+      authorId: dru,
+      body: 'one',
+    })
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId: id,
+      authorId: tilde,
+      body: 'spoke, then the ship died',
+    })
+
+    expect(await messagesSinceAgent(db, id, tilde)).toEqual([])
+  })
+
+  it('resolves the watermark as the LATER of the column and the last post', async () => {
+    // Both halves are present and they disagree: whichever is later wins, in
+    // both directions, so neither half can drag the watermark backwards.
+    const id = await makeChat()
+    const one = uuidv7()
+    await addMessage(db, { id: one, chatId: id, authorId: dru, body: 'one' })
+    const post = uuidv7()
+    await addMessage(db, {
+      id: post,
+      chatId: id,
+      authorId: tilde,
+      body: 'said',
+    })
+    const three = uuidv7()
+    await addMessage(db, {
+      id: three,
+      chatId: id,
+      authorId: dru,
+      body: 'three',
+    })
+
+    // Column behind the post → the post wins.
+    await setMemberSeen(db, id, tilde, one)
+    expect(
+      (await messagesSinceAgent(db, id, tilde)).map((m) => m.body),
+    ).toEqual(['three'])
+    // Column ahead of the post → the column wins.
+    await setMemberSeen(db, id, tilde, three)
+    expect(await messagesSinceAgent(db, id, tilde)).toEqual([])
+  })
+
+  it('never walks the seen watermark backwards', async () => {
+    // Two turns can finish out of order (a queued call returns before the turn
+    // it was folded into). The advance is monotonic so the later one sticks.
+    const id = await makeChat()
+    const first = uuidv7()
+    await addMessage(db, { id: first, chatId: id, authorId: dru, body: 'one' })
+    const second = uuidv7()
+    await addMessage(db, { id: second, chatId: id, authorId: dru, body: 'two' })
+
+    await setMemberSeen(db, id, tilde, second)
+    await setMemberSeen(db, id, tilde, first) // stale, must not take
+    expect(await messagesSinceAgent(db, id, tilde)).toEqual([])
+  })
+
+  it('reports the seen watermark on the roster', async () => {
+    const id = await makeChat()
+    const only = uuidv7()
+    await addMessage(db, { id: only, chatId: id, authorId: dru, body: 'one' })
+    expect(
+      (await listMembers(db, id)).find((m) => m.userId === tilde)
+        ?.lastSeenMessageId,
+    ).toBeNull()
+    await setMemberSeen(db, id, tilde, only)
+    expect(
+      (await listMembers(db, id)).find((m) => m.userId === tilde)
+        ?.lastSeenMessageId,
+    ).toBe(only)
+  })
+
+  it('finds the chat a backing session speaks for, as that agent', async () => {
+    const id = await makeChat()
+    const sessionId = uuidv7()
+    await createSession(db, { id: sessionId, model: 'm', agentUserId: tilde })
+    await setMemberSession(db, id, tilde, sessionId)
+
+    expect(
+      await findChatForSession(db, { sessionId, agentUserId: tilde }),
+    ).toEqual({ chatId: id, handle: 'tilde' })
+    // Another member's identity can't borrow the session: the row must be BOTH
+    // the named session's and the named agent's.
+    expect(
+      await findChatForSession(db, { sessionId, agentUserId: dru }),
+    ).toBeUndefined()
+    // A session that backs no chat membership at all (an inbox session, a
+    // builder's) resolves to nothing — the chat tools simply don't exist there.
+    expect(
+      await findChatForSession(db, {
+        sessionId: 'no-such',
+        agentUserId: tilde,
+      }),
+    ).toBeUndefined()
   })
 
   it('adds and removes members and retitles', async () => {

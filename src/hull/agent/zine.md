@@ -91,6 +91,15 @@ the **full** history, even across compaction (see Decisions).
   `checkInMinutes`, stored on the row as `check_in_interval_ms` — a hint the
   night watch (hull/watch) reads to pace its health-check wakes; null means the
   watch's default. The on-close resume is unchanged by it.
+- **Host-contributed session tools** (`SessionToolsProvider` in `runtime.ts`) —
+  the seam a HOST uses to register tools that only make sense on some sessions.
+  `background` is built in (every session gets it); chat passes
+  `createChatSessionTools`, which gives a chat's backing session `chat_post` and
+  `chat_widget` and gives every other session nothing. Resolved once, at session
+  boot, from facts about the session row (`SessionToolContext`: id, agentUserId,
+  cwd) — the only moment a tool CAN be registered. **Injected, not imported**:
+  the agent service stays ignorant of chat, and the dependency stays chat →
+  agent.
 - **Tool budget** (`tool-budget.ts`) — a wall-clock budget for foreground tool
   calls: past it (default 10 minutes; `SKYLARK_TOOL_BUDGET_MS` overrides) the
   call's own AbortSignal fires — pi's bash tool kills its whole process tree —
@@ -107,7 +116,10 @@ the **full** history, even across compaction (see Decisions).
   place every host (agent door, chat + issues orchestrators) builds a runtime:
   live pi.dev sessions normally, a deterministic fake when
   `SKYLARK_FAKE_RUNTIME` is set — which is how the real server smoke-tests chat
-  and build flows with no network.
+  and build flows with no network. It also forwards the host's optional
+  `sessionTools` provider. The fake session **calls those tools**, because since
+  the chat inversion an agent that never calls `chat_post` says nothing: a fake
+  that only appended assistant text would leave every fake-runtime chat mute.
 - **Ship's-log announcements** — the runtime emits `agent.status` and
   `agent.message` on topic `session:<id>` as a turn runs, which is what the
   session monitor and progress consumers subscribe to.
@@ -262,6 +274,24 @@ idle session, because the truth is in the database, not the registry.
   factory defaults rather than pi's user settings (a customized `~/.pi` shell
   prefix or image-resize setting wouldn't reach them — irrelevant on a ship,
   noted for honesty).
+- **A service that wants an agent-facing door contributes a TOOL, and the
+  runtime never learns whose it is.** Chat needed an agent to be able to speak
+  into a conversation from inside its own turn. The tempting answer was the chat
+  CLI in the bash tool — and it's the wrong one, because `withToolBudgets` wraps
+  every foreground call, so speaking would become budgeted work and a post that
+  lost that race would leave the agent **mute with no error anywhere a human
+  looks** (plus a child process, npm's startup, a new connection and an actor
+  resolve per reply). So the runtime grew `sessionTools` instead: a provider the
+  HOST hands in, keyed on the session, resolved at boot. The runtime knows only
+  "here are some extra ToolDefinitions"; chat owns what they mean and runs them
+  under the agent's own actor. Any later service that needs a door of its own
+  gets one the same way, with no import into this service and no new registry to
+  keep. Full reasoning lives in [`../chat/zine.md`](../chat/zine.md).
+  - Honest edge: contributed tools ARE budget-wrapped like any other (only
+    `background` is exempt). For a single insert that's harmless, and a budget
+    kill surfaces as an errored tool result the agent can react to — the
+    visibility the bash path lacked. Exempting them would mean chat reaching
+    into this service's exemption list, which is a worse trade.
 - **Extensions are referenced by registry, not by path.** An agent names
   extensions by id (`extensionIds`); the `extensions` table maps id →
   repo-relative path. The registry is the single place an agent (and the future
@@ -280,6 +310,14 @@ idle session, because the truth is in the database, not the registry.
 
 ## Changelog
 
+- **#cse2 — host-contributed session tools.** `createAgentRuntime` takes an
+  optional `sessionTools` provider (`SessionToolsProvider`), resolved per
+  session at boot and registered alongside the built-in `background` tool;
+  `createServerRuntime` forwards it. Chat uses it to give an agent `chat_post`
+  and `chat_widget` on the session that speaks for a chat — the door that
+  replaced chat lifting assistant text out of finished turns.
+  `createFakeSession` now takes the custom tools and calls them, so the
+  fake-runtime path speaks like a real agent instead of going silent.
 - **#q9d9** — The `background` tool gained an optional `checkInMinutes`, stored
   on the row as `check_in_interval_ms` (nullable) — a per-job pacing hint the
   night watch (hull/watch) reads for its health-check wakes. The on-close resume

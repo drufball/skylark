@@ -81,6 +81,10 @@ export const getChatThread = createServerFn({ method: 'GET' })
           handle: m.handle,
           type: m.type,
           progressLine: m.progressLine,
+          // How far this member's turns have read — what lets the thread say
+          // "seen by @tilde" when an agent read something and chose not to
+          // answer, rather than leaving the silence looking like a fault.
+          lastSeenMessageId: m.lastSeenMessageId,
         })),
         messages,
         meId: me.id,

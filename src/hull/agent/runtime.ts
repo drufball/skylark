@@ -102,6 +102,35 @@ export interface RunsTurns {
 }
 
 /**
+ * What a host needs to know about a session to decide which extra tools it
+ * should boot with. Structural on purpose — the runtime hands out facts about
+ * the session row, never the row type itself, so a contributing service (chat)
+ * doesn't import the agent's schema.
+ */
+export interface SessionToolContext {
+  sessionId: string
+  /** Which crew member this session acts as; null for an unattributed session. */
+  agentUserId: string | null
+  /** Where the session's tools operate — the resolved cwd, never null. */
+  cwd: string
+}
+
+/**
+ * Extra per-session tools contributed by whoever HOSTS the runtime, resolved
+ * from the session at boot. The `background` tool is built in (every session
+ * gets it); this is the seam for tools that only make sense on some sessions —
+ * chat's `chat_post`/`chat_widget`, which exist only on a session that backs a
+ * chat membership and return `[]` everywhere else.
+ *
+ * Injected rather than imported so the direction of dependency stays honest: the
+ * agent service knows nothing about chat, chat contributes its own door (see
+ * hull/chat/session-tools.ts, wired in hull/chat/orchestrator-live.ts).
+ */
+export type SessionToolsProvider = (
+  session: SessionToolContext,
+) => Promise<ToolDefinition[]>
+
+/**
  * The slice of pi.dev's AgentSession the runtime drives. Narrowing to this makes
  * the runtime testable with a fake — the real createAgentSession result
  * satisfies it structurally.
@@ -177,7 +206,16 @@ export const createPiSession: SessionFactory = async (
   model,
   customTools,
 ) => {
-  const options = resolveSessionOptions(config, cwd)
+  // The config's tool allowlist has to be widened by the tools THIS session was
+  // handed (`background`, chat's `chat_post`), or pi registers them, tells the
+  // model about them, and then answers a call with "Tool not found" — see
+  // `activeTools`.
+  const options = resolveSessionOptions(
+    config,
+    cwd,
+    {},
+    (customTools ?? []).map((tool) => tool.name),
+  )
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.loader.cwd,
@@ -276,6 +314,11 @@ export function createAgentRuntime(deps: {
    * Omitted → sessions boot on their config alone.
    */
   memory?: AgentMemoryLoader
+  /**
+   * Extra tools the host contributes per session (chat's `chat_post`).
+   * Omitted → every session boots with the built-in set plus `background`.
+   */
+  sessionTools?: SessionToolsProvider
 }) {
   const { db, factory } = deps
 
@@ -429,8 +472,20 @@ export function createAgentRuntime(deps: {
       if (memory) config = withAgentMemory(config, memory)
     }
     const cwd = row.cwd ?? process.cwd()
+    // Host-contributed tools are resolved from the session row, once, at boot —
+    // which is the only moment a tool CAN be registered. A chat's backing
+    // session keeps the same (chat, agent) forever, so there's nothing to
+    // re-resolve later; a session that backs no chat gets an empty list.
+    const contributed = deps.sessionTools
+      ? await deps.sessionTools({
+          sessionId,
+          agentUserId: row.agentUserId,
+          cwd,
+        })
+      : []
     const session = await factory(config, cwd, row.model, [
       createBackgroundTool(sessionId, cwd, jobs),
+      ...contributed,
     ])
     const history = (await getMessages(db, sessionId)).map(
       (r) => r.message as AgentMessage,

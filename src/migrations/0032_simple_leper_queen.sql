@@ -1,0 +1,2 @@
+ALTER TABLE "chat_members" ADD COLUMN "last_seen_message_id" text;--> statement-breakpoint
+ALTER TABLE "chat_members" ADD CONSTRAINT "chat_members_last_seen_message_id_chat_messages_id_fk" FOREIGN KEY ("last_seen_message_id") REFERENCES "public"."chat_messages"("id") ON DELETE set null ON UPDATE no action;

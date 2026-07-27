@@ -1,5 +1,6 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '@hull/db/client'
@@ -9,18 +10,16 @@ import { listEventsSince } from '@hull/events/service'
 import { defined, freshDb } from '@hull/db/test-db'
 import { createUser } from '@hull/users/service'
 
-import {
-  assistantTextFrom,
-  type ChatAgentRuntime,
-  createChatOrchestrator,
-} from './orchestrator'
+import { type ChatAgentRuntime, createChatOrchestrator } from './orchestrator'
 import {
   addMessage,
   createChat,
   listMembers,
   listMessages,
+  messagesSinceAgent,
   setMemberProgress,
 } from './service'
+import { chatMembers } from './schema'
 import { CHAT_MESSAGE_POSTED, chatTopic } from './topic'
 
 // Pin DEFAULT_MODEL to a sentinel so the assertion below checks the ambient
@@ -41,47 +40,37 @@ async function postedEventId(db: Database, chatId: string): Promise<string> {
   return defined(events.find((e) => e.type === CHAT_MESSAGE_POSTED)).id
 }
 
-describe('assistantTextFrom', () => {
-  it('lifts only assistant text out of a transcript tail', () => {
-    const messages = [
-      { role: 'assistant', content: [{ type: 'text', text: 'hello there' }] },
-      { role: 'toolResult', toolName: 'read', content: 'file contents' },
-    ]
-    expect(assistantTextFrom(messages)).toBe('hello there')
+/**
+ * Post as the agent whose backing session this is — what the real `chat_post`
+ * tool does (chat's own addMessage, authored by the agent, resolved from nothing
+ * but the session it was registered on). The fakes below use it so a "reply" in
+ * these tests travels the same path a live agent's words do: the agent speaks,
+ * the orchestrator never does.
+ */
+async function postAsAgent(
+  db: Database,
+  sessionId: string,
+  body: string,
+): Promise<void> {
+  const [member] = await db
+    .select()
+    .from(chatMembers)
+    .where(eq(chatMembers.sessionId, sessionId))
+  await addMessage(db, {
+    id: uuidv7(),
+    chatId: member.chatId,
+    authorId: member.userId,
+    body,
   })
-
-  it('joins multiple assistant turns with a blank line, dropping tool steps between', () => {
-    // Pins the '\n\n' separator and the assistant-only filter: a tool result
-    // sandwiched between two assistant texts must not appear, and the two texts
-    // must be separated by a blank line (not concatenated).
-    const messages = [
-      { role: 'assistant', content: [{ type: 'text', text: 'first' }] },
-      { role: 'toolResult', toolName: 'read', content: 'ignored' },
-      { role: 'assistant', content: [{ type: 'text', text: 'second' }] },
-    ]
-    expect(assistantTextFrom(messages)).toBe('first\n\nsecond')
-  })
-
-  it('trims surrounding whitespace off the lifted text', () => {
-    const messages = [
-      { role: 'assistant', content: [{ type: 'text', text: '  spaced  ' }] },
-    ]
-    expect(assistantTextFrom(messages)).toBe('spaced')
-  })
-
-  it('is empty when the tail has no assistant text', () => {
-    const messages = [
-      { role: 'toolResult', toolName: 'read', content: 'only a tool result' },
-    ]
-    expect(assistantTextFrom(messages)).toBe('')
-  })
-})
+}
 
 /**
- * A fake runtime that, on a turn, optionally streams one progress event and then
- * returns the assistant messages it produced. No network, no real pi session.
+ * A fake runtime standing in for an agent that speaks for itself: on a turn it
+ * streams one progress event, records a transcript message, and posts `replyText`
+ * into the chat through the same door `chat_post` uses. No network, no real pi
+ * session — and nothing for the orchestrator to lift.
  */
-function fakeRuntime(db: Database, replyText: string): ChatAgentRuntime {
+function speakingRuntime(db: Database, replyText: string): ChatAgentRuntime {
   return {
     async runTurn(sessionId, _text, onEvent) {
       onEvent?.({
@@ -92,12 +81,27 @@ function fakeRuntime(db: Database, replyText: string): ChatAgentRuntime {
         role: 'assistant',
         content: [{ type: 'text', text: replyText }],
       }
-      await appendMessage(db, {
-        sessionId,
-        role: 'assistant',
-        message,
-      })
+      await appendMessage(db, { sessionId, role: 'assistant', message })
+      await postAsAgent(db, sessionId, replyText)
       return { queued: false, messages: [message as never] }
+    },
+  }
+}
+
+/**
+ * A fake runtime for an agent that takes its turn and decides to say nothing —
+ * an ordinary outcome now that speaking is the agent's own move. Its transcript
+ * is full of assistant text; none of it may reach the chat.
+ */
+function silentRuntime(db: Database): ChatAgentRuntime {
+  return {
+    async runTurn(sessionId) {
+      const message = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'thinking to myself, not to them' }],
+      }
+      await appendMessage(db, { sessionId, role: 'assistant', message })
+      return { queued: false as const, messages: [message as never] }
     },
   }
 }
@@ -147,7 +151,7 @@ describe('chat orchestrator', () => {
 
     const orch = createChatOrchestrator({
       db,
-      runtime: fakeRuntime(db, 'hi dru'),
+      runtime: speakingRuntime(db, 'hi dru'),
     })
     await orch.respond({ chatId, authorId: dru, body: 'hello tilde' })
 
@@ -178,7 +182,7 @@ describe('chat orchestrator', () => {
 
     const orch = createChatOrchestrator({
       db,
-      runtime: fakeRuntime(db, 'hi dru'),
+      runtime: speakingRuntime(db, 'hi dru'),
     })
     await orch.respond({ chatId, authorId: dru, body: 'hello tilde' })
 
@@ -228,23 +232,20 @@ describe('chat orchestrator', () => {
     expect(after.find((m) => m.userId === tilde)?.progressLine).toBeNull()
   })
 
-  it('clears the persisted progress line even when the turn produces no text', async () => {
+  it('clears the persisted progress line when the turn ends without speaking', async () => {
+    // Silence is deliberate, not ghosting: the bubble comes DOWN (there is no
+    // reply coming), and nothing is auto-posted in the agent's place — that
+    // would be the ventriloquism this slice deleted.
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
     await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
 
-    const silent: ChatAgentRuntime = {
-      runTurn: async (sessionId) => {
-        const message = { role: 'toolResult', toolName: 'read', content: 'x' }
-        await appendMessage(db, { sessionId, role: 'toolResult', message })
-        return { queued: false as const, messages: [message as never] }
-      },
-    }
-    const orch = createChatOrchestrator({ db, runtime: silent })
+    const orch = createChatOrchestrator({ db, runtime: silentRuntime(db) })
     await orch.respond({ chatId, authorId: dru, body: 'hi' })
 
     const members = await listMembers(db, chatId)
     expect(members.find((m) => m.userId === tilde)?.progressLine).toBeNull()
+    expect(await listMessages(db, chatId)).toHaveLength(1) // only the human's
   })
 
   it('clears the persisted progress line even when the turn throws', async () => {
@@ -335,15 +336,81 @@ describe('chat orchestrator', () => {
     }
 
     // The leading "thinking…", then one line per *distinct* step: the repeated
-    // 'read' collapses, and the line-less turn boundary adds nothing.
-    expect(lines).toEqual(['thinking…', 'using read…', 'using write…'])
+    // 'read' collapses, and the line-less turn boundary adds nothing. Then the
+    // blank end-of-turn line — see the next test for why it has to be there.
+    expect(lines).toEqual([
+      'thinking…',
+      'using read…',
+      'using write…',
+      '', // the turn ended
+    ])
+  })
+
+  it('announces the END of a silent turn, so a live tab stops spinning', async () => {
+    // Found live: a turn that said nothing left the "working…" line spinning
+    // for five minutes in an open browser. A posted message used to double as
+    // "the turn is over" — after the inversion it doesn't (the agent posts
+    // mid-turn, or never), so the end has to be said out loud on the bus.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'fyi' })
+
+    const lines: string[] = []
+    const unsubscribe = shipLogBus.subscribe((note) => {
+      if (note.type === 'chat.agent_progress') {
+        lines.push((note.ephemeral?.payload as { line: string }).line)
+      }
+    })
+    const orch = createChatOrchestrator({ db, runtime: silentRuntime(db) })
+    try {
+      await orch.respond({ chatId, authorId: dru, body: 'fyi' })
+    } finally {
+      unsubscribe()
+    }
+
+    expect(lines.at(-1)).toBe('')
+    // And the durable half agrees, for a tab that reloads instead of listening.
+    expect(
+      (await listMembers(db, chatId)).find((m) => m.userId === tilde)
+        ?.progressLine,
+    ).toBeNull()
+  })
+
+  it('does not announce an end-of-turn on a queued call', async () => {
+    // The turn that's actually running still owns the status line; saying "the
+    // turn ended" here would blank an active one out from under it.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+    await setMemberProgress(db, chatId, tilde, 'using bash…')
+
+    const lines: string[] = []
+    const unsubscribe = shipLogBus.subscribe((note) => {
+      if (note.type === 'chat.agent_progress') {
+        lines.push((note.ephemeral?.payload as { line: string }).line)
+      }
+    })
+    const queued: ChatAgentRuntime = {
+      runTurn: () => Promise.resolve({ queued: true }),
+    }
+    const orch = createChatOrchestrator({ db, runtime: queued })
+    try {
+      await orch.respond({ chatId, authorId: dru, body: 'hi' })
+    } finally {
+      unsubscribe()
+    }
+
+    expect(lines).not.toContain('')
   })
 
   it('reuses the backing session across turns', async () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'ok') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'ok'),
+    })
     await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'one' })
     await orch.respond({ chatId, authorId: dru, body: 'one' })
     const first = defined(
@@ -360,28 +427,94 @@ describe('chat orchestrator', () => {
     expect(second).toBe(first)
   })
 
-  it('posts nothing when the agent produces no text', async () => {
+  it('never speaks for the agent, however much text the turn produced', async () => {
+    // THE pin on the inversion. A turn whose transcript is nothing but
+    // assistant prose must leave the chat untouched: chat has no codec over the
+    // transcript any more, so words reach the crew only when the agent itself
+    // calls chat_post. If this test ever goes green with a message in the chat,
+    // the ventriloquist is back.
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
     await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
 
-    // A runtime whose turn appends only a tool result — no assistant text.
-    const silent: ChatAgentRuntime = {
-      runTurn: async (sessionId) => {
-        const message = { role: 'toolResult', toolName: 'read', content: 'x' }
-        await appendMessage(db, {
-          sessionId,
-          role: 'toolResult',
-          message,
-        })
-        return { queued: false as const, messages: [message as never] }
-      },
+    const chatty: ChatAgentRuntime = {
+      runTurn: () =>
+        Promise.resolve({
+          queued: false as const,
+          messages: [
+            {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'this must NOT reach the chat' }],
+            },
+          ] as never[],
+        }),
     }
-    const orch = createChatOrchestrator({ db, runtime: silent })
+    const orch = createChatOrchestrator({ db, runtime: chatty })
     await orch.respond({ chatId, authorId: dru, body: 'hi' })
 
-    // Only the human's message — no empty agent message posted.
-    expect(await listMessages(db, chatId)).toHaveLength(1)
+    expect(await listMessages(db, chatId)).toHaveLength(1) // only the human's
+  })
+
+  it('posts more than once in a turn when the agent does — chat adds nothing', async () => {
+    // The agent decides how much to say and when. Two posts mid-turn arrive as
+    // two ordinary messages, in order, with no "one reply per turn" ceiling —
+    // which the old lift-and-post codec structurally imposed.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'look?' })
+
+    const chatty: ChatAgentRuntime = {
+      async runTurn(sessionId) {
+        await postAsAgent(db, sessionId, 'looking now')
+        await postAsAgent(db, sessionId, 'found it')
+        return { queued: false as const, messages: [] }
+      },
+    }
+    const orch = createChatOrchestrator({ db, runtime: chatty })
+    await orch.respond({ chatId, authorId: dru, body: 'look?' })
+
+    expect((await listMessages(db, chatId)).map((m) => m.body)).toEqual([
+      'look?',
+      'looking now',
+      'found it',
+    ])
+  })
+
+  it("an agent's own post @mentioning another agent triggers nobody", async () => {
+    // The inversion widens the path to this door — an agent's words are now a
+    // real posted message travelling the whole reply path — so nail it down.
+    // `targetsForMessage` filters on the AUTHOR, not the text: only a human's
+    // message triggers a reply, so no cascade, no infinite loop, no bill.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde, bix] })
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: dru,
+      body: 'thoughts @tilde?',
+    })
+
+    // Tilde answers and hands off in the same breath — the tempting thing an
+    // agent will absolutely try.
+    const handsOff: ChatAgentRuntime = {
+      async runTurn(sessionId) {
+        await postAsAgent(db, sessionId, 'my take. what do you think @bix?')
+        return { queued: false as const, messages: [] }
+      },
+    }
+    const orch = createChatOrchestrator({ db, runtime: handsOff })
+    await orch.respond({ chatId, authorId: dru, body: 'thoughts @tilde?' })
+    // Drive the reply path over tilde's OWN message, exactly as the bus would.
+    const spoke = defined((await listMessages(db, chatId)).at(-1))
+    await orch.respond({
+      chatId,
+      authorId: spoke.authorId,
+      body: spoke.body,
+    })
+
+    const authors = (await listMessages(db, chatId)).map((m) => m.authorHandle)
+    expect(authors).toEqual(['dru', 'tilde'])
+    expect(authors).not.toContain('bix')
   })
 
   it('posts nothing (and logs no error) when the turn was queued mid-flight', async () => {
@@ -442,7 +575,7 @@ describe('chat orchestrator', () => {
 
     const orch = createChatOrchestrator({
       db,
-      runtime: fakeRuntime(db, 'my take'),
+      runtime: speakingRuntime(db, 'my take'),
     })
     await orch.respond({ chatId, authorId: dru, body: 'thoughts @bix?' })
 
@@ -461,42 +594,131 @@ describe('chat orchestrator', () => {
       body: 'hi all',
     })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     await orch.respond({ chatId, authorId: dru, body: 'hi all' })
 
     expect(await listMessages(db, chatId)).toHaveLength(1) // only the human's
   })
 
-  it('uses the messages returned by runTurn instead of rereading them', async () => {
+  it('marks how far a SILENT turn read, so those messages are never re-fed', async () => {
+    // Without the watermark this is the forever bug: a turn that says nothing
+    // leaves no trace, so every later reply re-feeds the same history and the
+    // agent answers a conversation it already read.
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    const orch = createChatOrchestrator({ db, runtime: silentRuntime(db) })
+    await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+    expect(await messagesSinceAgent(db, chatId, tilde)).toEqual([])
+    const seen = (await listMembers(db, chatId)).find((m) => m.userId === tilde)
+    expect(seen?.lastSeenMessageId).toBe(
+      defined((await listMessages(db, chatId)).at(0)).id,
+    )
+  })
+
+  it('marks only the tail it FED, leaving a message that landed mid-turn unseen', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'first' })
+
+    // The human types again while the agent is working. That message was never
+    // in the prompt, so it must draw its own turn rather than being marked read.
+    const interrupting: ChatAgentRuntime = {
+      async runTurn() {
+        await addMessage(db, {
+          id: uuidv7(),
+          chatId,
+          authorId: dru,
+          body: 'actually, also this',
+        })
+        return { queued: false as const, messages: [] }
+      },
+    }
+    const orch = createChatOrchestrator({ db, runtime: interrupting })
+    await orch.respond({ chatId, authorId: dru, body: 'first' })
+
+    expect(
+      (await messagesSinceAgent(db, chatId, tilde)).map((m) => m.body),
+    ).toEqual(['actually, also this'])
+  })
+
+  it('leaves the watermark alone when the turn throws, so the work is re-driven', async () => {
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    const throwing: ChatAgentRuntime = {
+      runTurn: () => Promise.reject(new Error('turn failed')),
+    }
+    const orch = createChatOrchestrator({ db, runtime: throwing })
+    await expect(
+      orch.respond({ chatId, authorId: dru, body: 'hi' }),
+    ).rejects.toThrow('turn failed')
+
+    expect(
+      (await messagesSinceAgent(db, chatId, tilde)).map((m) => m.body),
+    ).toEqual(['hi'])
+  })
+
+  it('does not re-drive a turn that already spoke but lost its watermark write', async () => {
+    // The crash ordering the two-halved watermark exists for: the agent's
+    // chat_post committed, then the ship died before the watermark landed. The
+    // POST is the second half of the watermark, so reconcile leaves it alone —
+    // the crew never sees the same reply twice.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+    // Post as the agent WITHOUT any watermark write — exactly the crash state.
     await addMessage(db, {
       id: uuidv7(),
       chatId,
-      authorId: dru,
-      body: 'hi',
+      authorId: tilde,
+      body: 'already answered',
     })
+    expect(
+      (await listMembers(db, chatId)).find((m) => m.userId === tilde)
+        ?.lastSeenMessageId,
+    ).toBeNull()
 
-    // A runtime that returns messages directly, demonstrating the orchestrator
-    // uses the return value instead of slicing the durable log.
-    const directReturn: ChatAgentRuntime = {
-      runTurn: () =>
-        Promise.resolve({
-          queued: false as const,
-          messages: [
-            {
-              role: 'assistant',
-              content: [{ type: 'text', text: 'from return value' }],
-            },
-          ] as never[],
-        }),
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'second time!'),
+    })
+    await orch.reconcile()
+
+    expect((await listMessages(db, chatId)).map((m) => m.body)).toEqual([
+      'hi',
+      'already answered',
+    ])
+  })
+
+  it('reconcile stays idempotent after a silent turn', async () => {
+    // The other crash ordering, and the one the column exists for: the turn
+    // said nothing and only the watermark marks it. Reconcile must not re-drive
+    // it on every boot.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    let turns = 0
+    const counting: ChatAgentRuntime = {
+      runTurn: () => {
+        turns++
+        return Promise.resolve({ queued: false as const, messages: [] })
+      },
     }
+    const orch = createChatOrchestrator({ db, runtime: counting })
+    await orch.reconcile()
+    await orch.reconcile()
+    await orch.reconcile()
 
-    const orch = createChatOrchestrator({ db, runtime: directReturn })
-    await orch.respond({ chatId, authorId: dru, body: 'hi' })
-
-    const messages = await listMessages(db, chatId)
-    expect(messages[1].body).toBe('from return value')
+    expect(turns).toBe(1)
+    expect(await listMessages(db, chatId)).toHaveLength(1)
   })
 
   it('drives a reply when a chat.message_posted note arrives off the bus', async () => {
@@ -511,7 +733,7 @@ describe('chat orchestrator', () => {
 
     const orch = createChatOrchestrator({
       db,
-      runtime: fakeRuntime(db, 'hi dru'),
+      runtime: speakingRuntime(db, 'hi dru'),
     })
     await orch.handleBusNote({
       id: await postedEventId(db, chatId),
@@ -528,7 +750,10 @@ describe('chat orchestrator', () => {
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
     await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     await orch.handleBusNote({
       id: await postedEventId(db, chatId),
       type: 'issue.status_changed',
@@ -541,7 +766,10 @@ describe('chat orchestrator', () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     await orch.handleBusNote({ id: 'no-such-event', type: CHAT_MESSAGE_POSTED })
 
     expect(await listMessages(db, chatId)).toHaveLength(0)
@@ -561,7 +789,7 @@ describe('chat orchestrator', () => {
 
     const orch = createChatOrchestrator({
       db,
-      runtime: fakeRuntime(db, 'loop?'),
+      runtime: speakingRuntime(db, 'loop?'),
     })
     await orch.handleBusNote({
       id: await postedEventId(db, chatId),
@@ -584,7 +812,7 @@ describe('chat orchestrator', () => {
 
     const orch = createChatOrchestrator({
       db,
-      runtime: fakeRuntime(db, 'here!'),
+      runtime: speakingRuntime(db, 'here!'),
     })
     await orch.reconcile()
     expect((await listMessages(db, chatId)).map((m) => m.authorHandle)).toEqual(
@@ -599,7 +827,10 @@ describe('chat orchestrator', () => {
   it('reconcile leaves an already-answered chat untouched', async () => {
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'ok') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'ok'),
+    })
     await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
     await orch.respond({ chatId, authorId: dru, body: 'hi' })
     expect(await listMessages(db, chatId)).toHaveLength(2)
@@ -613,7 +844,10 @@ describe('chat orchestrator', () => {
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
     await addMessage(db, { id: uuidv7(), chatId, authorId: tilde, body: 'hi' })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     await orch.reconcile()
 
     expect(await listMessages(db, chatId)).toHaveLength(1)
@@ -633,7 +867,10 @@ describe('chat orchestrator', () => {
       payload: { chatId: 42 },
     })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
 
     expect(await listMessages(db, chatId)).toHaveLength(0)
@@ -653,7 +890,10 @@ describe('chat orchestrator', () => {
       payload: { chatId, messageId: msgId, authorId: dru },
     })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
 
     expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
@@ -673,7 +913,10 @@ describe('chat orchestrator', () => {
       payload: { chatId, messageId: msgId, authorId: dru },
     })
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     await orch.handleBusNote({ id: row.id, type: CHAT_MESSAGE_POSTED })
 
     expect(await listMessages(db, chatId)).toHaveLength(1) // no reply
@@ -694,7 +937,10 @@ describe('chat orchestrator', () => {
       { payload: { ...good, authorId: 42 }, topic: chatTopic(chatId) },
     ]
 
-    const orch = createChatOrchestrator({ db, runtime: fakeRuntime(db, 'x') })
+    const orch = createChatOrchestrator({
+      db,
+      runtime: speakingRuntime(db, 'x'),
+    })
     for (const { payload, topic } of variants) {
       const row = await emitEvent(db, {
         type: CHAT_MESSAGE_POSTED,
@@ -750,7 +996,11 @@ describe('chat orchestrator', () => {
     }
   }
 
-  it('opens every reply turn with the situational context (chat id + how to file work)', async () => {
+  it('opens every reply turn by telling the agent how to SPEAK', async () => {
+    // The single most dangerous line in this slice. Chat no longer lifts an
+    // agent's text into the conversation, so an agent that isn't told to call
+    // chat_post says nothing at all — every resident goes mute. This test is the
+    // tripwire on that instruction.
     const chatId = uuidv7()
     await createChat(db, { id: chatId, memberIds: [dru, tilde] })
     await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'plan?' })
@@ -762,12 +1012,22 @@ describe('chat orchestrator', () => {
     const [prompt] = runtime.prompts
     expect(prompt).toContain(`chat ${chatId}`)
     expect(prompt).toContain('@tilde')
+    // Speaking: named, marked as the ONLY way, and silence explicitly allowed.
+    expect(prompt).toContain('chat_post')
+    expect(prompt).toMatch(/ONLY way/)
+    expect(prompt).toMatch(/nothing to add/)
+    // The structured door, so a yes/no becomes a tap rather than a sentence.
+    expect(prompt).toContain('chat_widget')
+    // Filing work is unchanged, and still carries no --chat flag (issues know
+    // nothing about chat).
     expect(prompt).toContain(
       `SKYLARK_ACTOR=${tilde} npm run issue -- new "<title>" --body "<details>"`,
     )
-    // Filing no longer carries a --chat flag — issues know nothing about chat.
     expect(prompt).not.toContain('--chat')
-    expect(prompt).toContain('npm run chat -- post')
+    // Speaking is a tool now, so the chat CLI is no longer the way to reply
+    // from a chat turn — pointing at it would teach the budgeted shell-out path
+    // this slice deliberately rejected.
+    expect(prompt).not.toContain('npm run chat -- post')
     // The actual conversation still follows the header.
     expect(prompt).toContain('@dru: plan?')
   })

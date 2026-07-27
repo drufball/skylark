@@ -1,4 +1,4 @@
-import { systemDb } from '@hull/db/client'
+import { systemDb, withActor } from '@hull/db/client'
 import { subscribeToShipLog } from '@hull/events/bus'
 import { createServerRuntime } from '@hull/agent/server-runtime'
 import {
@@ -14,6 +14,7 @@ import { getUserById, handleOf } from '@hull/users/service'
 import { startIntervalSweep } from '@hull/lib/interval-sweep'
 
 import { type ChatOrchestrator, createChatOrchestrator } from './orchestrator'
+import { createChatSessionTools } from './session-tools'
 import { fireDueSchedules } from './service'
 import { createAgentWaker } from './waker'
 
@@ -94,11 +95,19 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
   unsubscribeHook?.()
   stopScheduleSweep?.()
   // systemDb (superuser): the orchestrator is fixed plumbing — it scans all
-  // chats to recover work (reconcile) and posts the agent's reply, which under
+  // chats to recover work (reconcile) and drives agents' sessions, which under
   // app_user with no actor would fail closed. It reacts to events, it doesn't
   // serve a request, so RLS-bypass is safe here. The waker rides the same
   // posture: it reads agents' inboxes and drives their sessions.
-  const runtime = createServerRuntime(systemDb)
+  //
+  // The AGENT's own door does NOT ride that posture. `createChatSessionTools`
+  // gets `withActor` (the RLS-scoped `db`), so when an agent speaks or raises a
+  // widget from its turn it goes through exactly the membership policy a human's
+  // tap goes through — an LLM-driven path must never touch systemDb.
+  const runtime = createServerRuntime(
+    systemDb,
+    createChatSessionTools({ asActor: withActor }),
+  )
   const orchestrator = createChatOrchestrator({ db: systemDb, runtime })
   registry.instance = orchestrator
   started = orchestrator
