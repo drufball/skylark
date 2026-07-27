@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronRight, X } from 'lucide-react'
 
 import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
@@ -76,18 +76,16 @@ export function WidgetStack({
     if (!busy) setAnswered([])
   }
 
-  const resolved = widgets.map((widget) => ({
-    widget,
-    resolution: resolveWidget(widget.kind, widget.props),
-  }))
-
   // Every topic any open widget needs, deduped. A shelf of static widgets asks
   // for none, and `useShipLog` opens no connection at all for an empty set.
+  // Recomputed each render rather than memoised: the hook keys on the JOINED
+  // string, so a fresh array of the same topics never reopens the connection.
   const topics = [
     ...new Set(
-      resolved.flatMap(({ resolution }) =>
-        resolution.ok ? resolution.view.topics : [],
-      ),
+      widgets.flatMap((widget) => {
+        const resolution = resolveWidget(widget.kind, widget.props)
+        return resolution.ok ? resolution.view.topics : []
+      }),
     ),
   ]
   // One counter for the whole shelf: a widget refetches when it moves. Coarse on
@@ -106,11 +104,10 @@ export function WidgetStack({
       className="max-h-52 shrink-0 overflow-y-auto border-t bg-muted/20 px-4 py-2"
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-2">
-        {resolved.map(({ widget, resolution }) => (
+        {widgets.map((widget) => (
           <ChatWidget
             key={widget.id}
             widget={widget}
-            resolution={resolution}
             revision={revision}
             expanded={expandedId === widget.id}
             spent={busy || answered.includes(widget.id)}
@@ -143,7 +140,6 @@ export function WidgetStack({
  */
 function ChatWidget({
   widget,
-  resolution,
   revision,
   expanded,
   spent,
@@ -152,7 +148,6 @@ function ChatWidget({
   onDismiss,
 }: {
   widget: WidgetItem
-  resolution: WidgetResolution
   revision: number
   expanded: boolean
   spent: boolean
@@ -160,6 +155,20 @@ function ChatWidget({
   onAnswer: (value: string) => void
   onDismiss: () => void
 }) {
+  // Memoised, and that's load-bearing rather than an optimisation: `parse`
+  // returns a FRESH `Body` closure every call, and React treats a new component
+  // identity as a different component — so re-resolving on each render would
+  // unmount and remount the body, throwing away a live kind's fetched contents
+  // and re-reading the service every time the shelf re-rendered (an expand, a
+  // `busy` flip, a `revision` bump). Keyed on the row's own fields, so it does
+  // remount when the ROW actually changes, which is right — the route's `props`
+  // come straight off loader data, whose identity moves only when the loader
+  // re-runs (the same assumption the chat route's own `useMemo`s already make).
+  const resolution: WidgetResolution = useMemo(
+    () => resolveWidget(widget.kind, widget.props),
+    [widget.kind, widget.props],
+  )
+
   // Bring an opening tile to the top of the band. The shelf is height-capped on
   // purpose (it must never push the thread off a phone), which on a 390px screen
   // meant tapping the third tile opened a body almost entirely below the fold.

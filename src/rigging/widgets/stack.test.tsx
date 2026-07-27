@@ -321,6 +321,37 @@ describe('WidgetStack: the one live subscription', () => {
     expect(await screen.findByText('After')).toBeTruthy()
   })
 
+  it('does not re-read a live widget just because the shelf re-rendered', async () => {
+    // Each `parse` hands back a FRESH body closure, and React treats a new
+    // component identity as a different component — so an unmemoised resolution
+    // would remount the body and re-read the service on every expand, `busy`
+    // flip and revision bump, throwing away what it had just fetched.
+    // The same rows across re-renders, which is what the route hands over: its
+    // `props` come straight off loader data, whose identity only changes when
+    // the loader actually re-runs.
+    const rows = [widget({ id: 'w1', kind: 'issue-list', props: {} })]
+    function paint(busy: boolean) {
+      return (
+        <WidgetStack
+          widgets={rows}
+          busy={busy}
+          onAnswerWidget={vi.fn()}
+          onDismissWidget={vi.fn()}
+          eventSourceFactory={factory}
+        />
+      )
+    }
+    const { rerender } = render(paint(false))
+    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    expect(await screen.findByText('Widget catalog')).toBeTruthy()
+    expect(vi.mocked(listBoard)).toHaveBeenCalledTimes(1)
+
+    rerender(paint(true))
+    rerender(paint(false))
+    expect(await screen.findByText('Widget catalog')).toBeTruthy()
+    expect(vi.mocked(listBoard)).toHaveBeenCalledTimes(1)
+  })
+
   it('closes the stream when the shelf unmounts', () => {
     const { unmount } = renderStack([
       { id: 'w1', kind: 'issue-list', props: {} },
