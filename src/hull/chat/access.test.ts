@@ -9,17 +9,22 @@ import {
   addMessage,
   addWidget,
   answerWidget,
+  createCanvasPage,
   createChat,
   createSchedule,
   ensureChatVisible,
+  getCanvasPage,
   getChat,
   getSchedule,
+  getViewPage,
   getWidget,
+  listCanvasPages,
   listChatSummaries,
   listMembers,
   listMessages,
   listOpenWidgets,
   listSchedules,
+  setViewPage,
 } from './service'
 
 // Proves the migration 0007 RLS policies actually filter chat reads/writes by
@@ -280,5 +285,96 @@ describe('chat access (RLS)', () => {
       await asActor(db, alice, (tx) => getSchedule(tx, id)),
     ).toBeUndefined()
     expect(await asActor(db, bob, (tx) => getSchedule(tx, id))).toBeDefined()
+  })
+  it('canvas pages ride membership: a member creates + reads, a non-member is blocked', async () => {
+    // The canvas is a piece of the conversation, so it defers to exactly the
+    // policy chat_messages and chat_widgets do (migration 0034 → 0007's helper).
+    const created = await asActor(db, alice, (tx) =>
+      createCanvasPage(tx, {
+        id: uuidv7(),
+        chatId: c1,
+        title: 'Ops',
+        actorId: alice,
+      }),
+    )
+    expect(
+      (await asActor(db, alice, (tx) => listCanvasPages(tx, c1))).map(
+        (p) => p.id,
+      ),
+    ).toEqual([created.id])
+
+    // alice is NOT in c2 → the WITH CHECK policy rejects the insert.
+    await expect(
+      asActor(db, alice, (tx) =>
+        createCanvasPage(tx, {
+          id: uuidv7(),
+          chatId: c2,
+          title: 'sneak',
+          actorId: alice,
+        }),
+      ),
+    ).rejects.toThrow()
+  })
+
+  it('hides a non-member chat’s canvas pages entirely', async () => {
+    const id = uuidv7()
+    // Arrange as superuser (RLS bypassed): a page on bob-only c2.
+    await createCanvasPage(db, {
+      id,
+      chatId: c2,
+      title: 'Private',
+      actorId: bob,
+    })
+    expect(await asActor(db, alice, (tx) => listCanvasPages(tx, c2))).toEqual(
+      [],
+    )
+    expect(
+      await asActor(db, alice, (tx) => getCanvasPage(tx, id)),
+    ).toBeUndefined()
+    expect(await asActor(db, bob, (tx) => getCanvasPage(tx, id))).toBeDefined()
+  })
+
+  it('view state is YOURS: you may write your own row, never another member’s', async () => {
+    // The load-bearing half of "per person, not per chat". An agent is a member
+    // with its own actor, so nothing but the policy stands between it and
+    // dragging somebody's view somewhere they didn't ask to be.
+    const pageId = uuidv7()
+    await createCanvasPage(db, {
+      id: pageId,
+      chatId: c1,
+      title: 'Ops',
+      actorId: alice,
+    })
+    await asActor(db, alice, (tx) =>
+      setViewPage(tx, { chatId: c1, userId: alice, pageId }),
+    )
+    expect(await asActor(db, alice, (tx) => getViewPage(tx, c1, alice))).toBe(
+      pageId,
+    )
+
+    await expect(
+      asActor(db, alice, (tx) =>
+        setViewPage(tx, { chatId: c1, userId: bob, pageId }),
+      ),
+    ).rejects.toThrow()
+    expect(await getViewPage(db, c1, bob)).toBeNull()
+  })
+
+  it('keeps one member’s view unreadable to another', async () => {
+    const pageId = uuidv7()
+    await createCanvasPage(db, {
+      id: pageId,
+      chatId: c1,
+      title: 'Ops',
+      actorId: bob,
+    })
+    await setViewPage(db, { chatId: c1, userId: bob, pageId })
+    // Same chat, both members — and alice still sees nothing of bob's view.
+    expect(
+      await asActor(db, alice, (tx) => getViewPage(tx, c1, bob)),
+    ).toBeNull()
+    expect(await asActor(db, bob, (tx) => getViewPage(tx, c1, bob))).toBe(
+      pageId,
+    )
   })
 })

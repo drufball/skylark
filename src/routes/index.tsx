@@ -9,20 +9,28 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   answerChatWidget,
   createChatFn,
+  createChatPage,
   createChatSchedule,
   deleteChatSchedule,
   dismissChatWidget,
+  getChatCanvas,
   getChatThread,
   listChatCrew,
   listChats,
   listChatSchedules,
   listChatWidgets,
+  placeChatWidget,
   postChatMessage,
+  removeChatPage,
+  renameChatPage,
   setChatScheduleEnabled,
+  setChatViewPage,
+  stackChatWidget,
   updateChat,
 } from '@hull/chat/server'
 import {
   CHAT_AGENT_PROGRESS,
+  CHAT_CANVAS_CHANGED,
   CHAT_WIDGET_CHANGED,
   chatTopic,
   type ChatAgentProgressPayload,
@@ -37,6 +45,7 @@ import {
   type ScheduleItem,
   workingFromMembers,
 } from '@rigging/views/chat'
+import type { CanvasWidgetItem } from '@rigging/widgets/canvas'
 import type { WidgetItem } from '@rigging/widgets/stack'
 import { Dock } from '@rigging/views/dock'
 import { useServerAction } from '@rigging/lib/use-server-action'
@@ -72,6 +81,12 @@ export const Route = createFileRoute('/')({
       thread && activeId ? await listChatSchedules({ data: activeId }) : []
     const widgets =
       thread && activeId ? await listChatWidgets({ data: activeId }) : []
+    // The canvas comes down with the thread, not on a second navigation: it
+    // lives INSIDE the chat, so it loads with it.
+    const canvas =
+      thread && activeId
+        ? await getChatCanvas({ data: activeId })
+        : { pages: [], widgets: [], viewPageId: null }
     return {
       me,
       chats,
@@ -79,6 +94,7 @@ export const Route = createFileRoute('/')({
       thread,
       schedules,
       widgets,
+      canvas,
       activeId: thread ? activeId : undefined,
     }
   },
@@ -100,7 +116,7 @@ function readProgress(payload: unknown): ChatAgentProgressPayload | null {
 
 function ChatRoute() {
   const { new: composing } = Route.useSearch()
-  const { me, chats, crew, thread, schedules, widgets, activeId } =
+  const { me, chats, crew, thread, schedules, widgets, canvas, activeId } =
     Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
@@ -115,6 +131,14 @@ function ChatRoute() {
     line: string
   } | null>(null)
 
+  // The canvas page THIS person has open, held locally so a tab tap is instant,
+  // and carrying its chatId for the same reason `working` does — a page from
+  // chat A must not be treated as chat B's after a switch.
+  const [viewPage, setViewPage] = useState<{
+    chatId: string
+    pageId: string
+  } | null>(null)
+
   const members = useMemo(() => thread?.members ?? [], [thread])
 
   // Seed (or reset) `working` from the loader's own data whenever the active
@@ -126,11 +150,18 @@ function ChatRoute() {
   // `progressLine` (chat/service.ts persists it precisely so this read-back
   // works). Compared during render (not an effect) so the very first paint
   // after a switch already reflects it, rather than flashing empty for a tick.
+  // The canvas page rides the same seam, for the same reason.
   const [seededFor, setSeededFor] = useState<string | undefined>(undefined)
   if (seededFor !== activeId) {
     setSeededFor(activeId)
     const seeded = activeId ? workingFromMembers(members) : null
     setWorking(seeded && activeId ? { chatId: activeId, ...seeded } : null)
+    // The durable half: which page this person left open here last time.
+    setViewPage(
+      activeId && canvas.viewPageId
+        ? { chatId: activeId, pageId: canvas.viewPageId }
+        : null,
+    )
   }
 
   const topics = activeId ? [chatTopic(activeId)] : []
@@ -162,10 +193,15 @@ function ChatRoute() {
         // correct and common now, and blanking the status line here would make
         // the bubble flicker off and back on for the rest of the turn.
         void router.invalidate()
-      } else if (event.type === CHAT_WIDGET_CHANGED) {
-        // A widget was raised, answered, waved away or moved. It rides the same
-        // chat:<id> topic as messages, so the stack refreshes off the stream
-        // we're already listening on — no new transport.
+      } else if (
+        event.type === CHAT_WIDGET_CHANGED ||
+        event.type === CHAT_CANVAS_CHANGED
+      ) {
+        // A widget was raised, answered, waved away, moved or placed, or the
+        // canvas pages changed. Both ride the same chat:<id> topic as messages,
+        // so the stack and the canvas refresh off the stream we're already
+        // listening on — no new transport. (Which page somebody is LOOKING at
+        // deliberately emits nothing: that's their view, not chat news.)
         void router.invalidate()
       }
     },
@@ -222,6 +258,57 @@ function ChatRoute() {
     await router.invalidate()
   }
 
+  async function newPage(title: string) {
+    if (!activeId) return
+    const created = await run(() =>
+      createChatPage({ data: { chatId: activeId, title } }),
+    )
+    // Land on the page you just made — your own view, so nobody else moves.
+    if (created) await selectPage(created.id)
+    await router.invalidate()
+  }
+
+  async function renamePage(pageId: string, title: string) {
+    await run(() => renameChatPage({ data: { pageId, title } }))
+    await router.invalidate()
+  }
+
+  async function removePage(pageId: string) {
+    await run(() => removeChatPage({ data: { pageId } }))
+    await router.invalidate()
+  }
+
+  async function placeWidget(
+    widgetId: string,
+    box: {
+      pageId: string
+      gridX?: number
+      gridY?: number
+      gridW?: number
+      gridH?: number
+    },
+  ) {
+    await run(() => placeChatWidget({ data: { widgetId, ...box } }))
+    await router.invalidate()
+  }
+
+  async function stackWidget(widgetId: string) {
+    await run(() => stackChatWidget({ data: { widgetId } }))
+    await router.invalidate()
+  }
+
+  /**
+   * Open a canvas page — MY view, not the chat's. Optimistic locally (a tab tap
+   * must not wait on a round trip) and persisted against (chat, me) so a reload
+   * lands back here. Deliberately does NOT invalidate: nothing else on the page
+   * depends on it, and nobody else's view moves because mine did.
+   */
+  async function selectPage(pageId: string) {
+    if (!activeId) return
+    setViewPage({ chatId: activeId, pageId })
+    await setChatViewPage({ data: { chatId: activeId, pageId } })
+  }
+
   const chatItems: ChatListItem[] = chats.map((c) => ({
     id: c.id,
     title: c.title,
@@ -251,6 +338,19 @@ function ChatRoute() {
     kind: w.kind,
     props: w.props,
     createdByHandle: w.createdByHandle,
+  }))
+  const canvasItems: CanvasWidgetItem[] = canvas.widgets.map((w) => ({
+    id: w.id,
+    kind: w.kind,
+    props: w.props,
+    createdByHandle: w.createdByHandle,
+    // A canvas row always carries a page; the column is nullable only because a
+    // STACK row has none.
+    pageId: w.pageId ?? '',
+    gridX: w.gridX,
+    gridY: w.gridY,
+    gridW: w.gridW,
+    gridH: w.gridH,
   }))
   const scheduleItems: ScheduleItem[] = schedules.map((s) => ({
     id: s.id,
@@ -320,6 +420,29 @@ function ChatRoute() {
         }}
         onDismissWidget={(widgetId) => {
           void dismissWidget(widgetId)
+        }}
+        canvasPages={canvas.pages}
+        canvasWidgets={canvasItems}
+        activePageId={
+          viewPage && viewPage.chatId === activeId ? viewPage.pageId : null
+        }
+        onSelectPage={(pageId) => {
+          void selectPage(pageId)
+        }}
+        onNewPage={(title) => {
+          void newPage(title)
+        }}
+        onRenamePage={(pageId, title) => {
+          void renamePage(pageId, title)
+        }}
+        onRemovePage={(pageId) => {
+          void removePage(pageId)
+        }}
+        onPlaceWidget={(widgetId, box) => {
+          void placeWidget(widgetId, box)
+        }}
+        onStackWidget={(widgetId) => {
+          void stackWidget(widgetId)
         }}
       />
     </Dock>

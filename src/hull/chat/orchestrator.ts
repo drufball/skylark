@@ -18,6 +18,8 @@ import {
   formatTranscript,
   getMessage,
   listAllChats,
+  listCanvasPages,
+  listChatViewers,
   listMembers,
   listMessages,
   messagesSinceAgent,
@@ -26,6 +28,7 @@ import {
   setMemberSession,
   targetsForMessage,
   type ChatMemberView,
+  type ChatViewerView,
 } from './service'
 import {
   CHAT_AGENT_PROGRESS,
@@ -92,6 +95,12 @@ export function turnContext(input: {
   chatId: string
   handle: string
   userId: string
+  /**
+   * What each human in the chat has open on the canvas right now. Omitted (or
+   * empty) in a chat with no canvas at all, which is most of them — a paragraph
+   * about a surface that doesn't exist would be noise in every single turn.
+   */
+  viewers?: ChatViewerView[]
 }): string {
   const cmd = actorCmd(
     input.userId,
@@ -117,10 +126,38 @@ message. Better than "yes or no?" on a phone. There are other kinds too (a
 pinned note, a live list of issues); \`chat_widget\`'s own description lists
 every kind this ship can render and the props each one takes.
 
-To file work for the ship, use bash:
+${canvasContext(input.viewers ?? [])}To file work for the ship, use bash:
   ${cmd}
 As filed work moves you will be woken on your own inbox session with the
 updates — post follow-ups back to this chat with \`chat_post\`.]`
+}
+
+/**
+ * The canvas paragraph of the header: which page each person has open, so
+ * "what's this?" is answerable.
+ *
+ * Per PERSON, never per chat — three members can be on three different pages,
+ * so the header names each of them rather than claiming the conversation has a
+ * page. And it says out loud that the agent cannot move somebody's view: an
+ * agent that believes it can will try, find no door, and waste a turn — while a
+ * crew member whose page was yanked out from under them loses trust in the whole
+ * surface. Agent-driven focus is a later, carefully-designed thing.
+ *
+ * Empty for a chat with no canvas (every chat, until somebody makes a page), so
+ * nothing is spent on a surface that isn't there.
+ */
+function canvasContext(viewers: ChatViewerView[]): string {
+  if (viewers.length === 0) return ''
+  const lines = viewers.map(
+    (v) =>
+      `  @${v.handle} — ${v.pageTitle === null ? 'the thread' : `canvas page “${v.pageTitle}”`}`,
+  )
+  return `WHAT EACH PERSON IS LOOKING AT (their own view, not a shared one — so
+"what's this?" means whatever is on THEIR page). You cannot move anyone's view;
+put a widget where you want it seen and say so.
+${lines.join('\n')}
+
+`
 }
 
 /**
@@ -318,10 +355,13 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     const unseen = await messagesSinceAgent(db, chatId, agentUserId)
     if (unseen.length === 0) return
     const readThrough = unseen[unseen.length - 1].id
+    // Only when the chat HAS a canvas: no pages, nothing to say about them.
+    const hasCanvas = (await listCanvasPages(db, chatId)).length > 0
     const prompt = `${turnContext({
       chatId,
       handle: agent.handle,
       userId: agent.userId,
+      viewers: hasCanvas ? await listChatViewers(db, chatId) : [],
     })}\n\n${formatTranscript(
       unseen.map((m) => ({ handle: m.authorHandle, body: m.body })),
     )}`

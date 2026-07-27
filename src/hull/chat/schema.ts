@@ -210,10 +210,35 @@ export const chatWidgets = pgTable(
     kind: text('kind').notNull(),
     /** The kind's own configuration — opaque here; validated by `parseProps`. */
     props: jsonb('props').$type<JsonValue>().notNull(),
-    /** Where it renders. Only 'stack' (above the composer) exists; a canvas comes later. */
+    /**
+     * Which surface it renders on: `stack` (above the composer, turn-shaped) or
+     * `canvas` (a page you arranged, state-shaped). See widgets.ts for the
+     * division of labour. Crossing between them is an ordinary update of this
+     * column plus the page/grid ones below — deliberately not a special
+     * mechanism, since that same update is how an agent raises a canvas widget
+     * into the stack when it needs your attention.
+     */
     placement: text('placement').notNull().default('stack'),
-    /** Position within the placement, low first. Agents may write this to reorder. */
+    /** Position within the stack, low first. Agents may write this to reorder. */
     stackOrder: integer('stack_order').notNull().default(0),
+    /**
+     * Which canvas page it sits on. Null for a stack widget; set (with the grid
+     * box below) for a canvas one. Cascades, so a page can never leave widgets
+     * pointing at nothing — though the doors only ever delete an EMPTY page, so
+     * the cascade is a backstop rather than the path a human takes.
+     */
+    pageId: text('page_id').references(() => chatCanvasPages.id, {
+      onDelete: 'cascade',
+    }),
+    /**
+     * The tile's cell rectangle on its page — read only when `placement` is
+     * `canvas`, and clamped into the grid by `clampCanvasBox` at every door. A
+     * stack widget carries the defaults and nothing reads them.
+     */
+    gridX: integer('grid_x').notNull().default(0),
+    gridY: integer('grid_y').notNull().default(0),
+    gridW: integer('grid_w').notNull().default(2),
+    gridH: integer('grid_h').notNull().default(2),
     /** Set when answered or waved away: out of the stack, kept as history. */
     dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
     /** Which member put it here (audit) — a widget is always somebody's judgment. */
@@ -231,7 +256,85 @@ export const chatWidgets = pgTable(
       table.placement,
       table.stackOrder,
     ),
+    // The canvas read: one page's widgets, in the order they're arranged (which
+    // is also the order a phone stacks them into a single column).
+    index('chat_widgets_page_idx').on(table.pageId, table.gridY, table.gridX),
   ],
+)
+
+/**
+ * One page of a chat's **canvas** — the spatial surface beside the thread, where
+ * widgets are arranged and stay put. Like a home screen: several pages, each
+ * named, each holding a grid of tiles.
+ *
+ * Pages are EXPLICIT rows rather than implied by whichever widgets happen to
+ * carry a page number, because the two things we most want are impossible
+ * otherwise: an empty page you just made and haven't filled yet, and a page with
+ * a name and a place in the order.
+ *
+ * Access is chat membership under RLS (migration 0034), deferring to 0007's
+ * `app_can_see_chat` like `chat_widgets` and `chat_schedules` do — a page belongs
+ * to exactly one chat and nothing else ever owns one, so its lifetime and its
+ * visibility are the conversation's.
+ */
+export const chatCanvasPages = pgTable(
+  'chat_canvas_pages',
+  {
+    id: text('id').primaryKey(),
+    /** The one chat this page belongs to — cascade, so it can't be orphaned. */
+    chatId: text('chat_id')
+      .notNull()
+      .references(() => chats.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    /** Where it sits in the page strip, low first. `order` is SQL-reserved. */
+    pageOrder: integer('page_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('chat_canvas_pages_chat_idx').on(table.chatId, table.pageOrder),
+  ],
+)
+
+/**
+ * What ONE person is looking at in ONE chat — the canvas page in front of them.
+ *
+ * **This is per viewer, not per chat, and that distinction is the whole point.**
+ * Three people in a chat can be on three different pages, so "which page is
+ * open" is a property of the person, never of the conversation. Keyed by (chat,
+ * user) and persisted so a reload puts you back where you were; read by the
+ * orchestrator when it builds a turn, so an agent answering "what's this?" knows
+ * what's in front of THAT person.
+ *
+ * Nothing here is broadcast: changing your own view emits no ship-log event,
+ * because your view is not news for the rest of the crew. And no door lets an
+ * agent write somebody else's row — moving a person's view without their consent
+ * is a later, carefully-designed thing, not a side effect of this table
+ * existing. RLS (migration 0034) holds that line: you may only touch your own.
+ */
+export const chatViewState = pgTable(
+  'chat_view_state',
+  {
+    chatId: text('chat_id')
+      .notNull()
+      .references(() => chats.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /**
+     * The page this person has open. Null (or no row) means the thread alone —
+     * they haven't opened the canvas. `set null` on the page's deletion, so
+     * tidying a page doesn't delete somebody's place in the chat.
+     */
+    pageId: text('page_id').references(() => chatCanvasPages.id, {
+      onDelete: 'set null',
+    }),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.chatId, table.userId] })],
 )
 
 export type ChatRow = typeof chats.$inferSelect
@@ -239,3 +342,4 @@ export type ChatMemberRow = typeof chatMembers.$inferSelect
 export type ChatMessageRow = typeof chatMessages.$inferSelect
 export type ChatScheduleRow = typeof chatSchedules.$inferSelect
 export type ChatWidgetRow = typeof chatWidgets.$inferSelect
+export type ChatCanvasPageRow = typeof chatCanvasPages.$inferSelect

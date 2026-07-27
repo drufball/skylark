@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ChevronRight, X } from 'lucide-react'
+import { AlertTriangle, ChevronRight, LayoutGrid, X } from 'lucide-react'
 
 import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
@@ -43,6 +43,13 @@ export interface WidgetStackProps {
   onAnswerWidget: (widgetId: string, value: string) => void
   onDismissWidget: (widgetId: string) => void
   /**
+   * Send a widget down to the canvas page the viewer has open — the human half
+   * of the move an agent makes with `chat_widget`'s `place`. Omitted when there
+   * is no page to send it to (a chat with no canvas yet), so the affordance
+   * never appears with nowhere to go.
+   */
+  onPinWidget?: (widgetId: string) => void
+  /**
    * How the ship-log subscription opens its stream. Defaults to the browser's
    * `EventSource`; exists so a test can drive the live path without a server,
    * exactly as `useShipLog`'s own factory does.
@@ -55,6 +62,7 @@ export function WidgetStack({
   busy,
   onAnswerWidget,
   onDismissWidget,
+  onPinWidget,
   eventSourceFactory,
 }: WidgetStackProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -121,6 +129,12 @@ export function WidgetStack({
             onDismiss={() => {
               onDismissWidget(widget.id)
             }}
+            onPin={
+              onPinWidget &&
+              (() => {
+                onPinWidget(widget.id)
+              })
+            }
           />
         ))}
       </div>
@@ -146,6 +160,7 @@ function ChatWidget({
   onToggle,
   onAnswer,
   onDismiss,
+  onPin,
 }: {
   widget: WidgetItem
   revision: number
@@ -154,6 +169,7 @@ function ChatWidget({
   onToggle: () => void
   onAnswer: (value: string) => void
   onDismiss: () => void
+  onPin?: () => void
 }) {
   // Memoised, and that's load-bearing rather than an optimisation: `parse`
   // returns a FRESH `Body` closure every call, and React treats a new component
@@ -178,6 +194,24 @@ function ChatWidget({
   useEffect(() => {
     if (expanded) tileRef.current?.scrollIntoView({ block: 'start' })
   }, [expanded])
+
+  // Keeping it is the state-shaped move: this stops being something to answer
+  // and becomes something you watch. Sits beside dismiss because they are the
+  // two ways a widget leaves the shelf.
+  const pin = onPin ? (
+    <button
+      type="button"
+      aria-label={`Keep widget ${widget.id} on the canvas`}
+      onClick={onPin}
+      className={cn(
+        'flex shrink-0 items-center justify-center px-2',
+        'text-muted-foreground hover:text-foreground',
+        TAP_TARGET,
+      )}
+    >
+      <LayoutGrid className="size-4" />
+    </button>
+  ) : null
 
   const dismiss = (
     <button
@@ -210,6 +244,7 @@ function ChatWidget({
             {resolution.detail}
           </p>
         </div>
+        {pin}
         {dismiss}
       </div>
     )
@@ -250,6 +285,7 @@ function ChatWidget({
             @{widget.createdByHandle}
           </span>
         </button>
+        {pin}
         {dismiss}
       </div>
       {/* The body mounts only while the tile is open, so a live kind isn't

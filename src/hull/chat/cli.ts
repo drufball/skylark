@@ -8,21 +8,28 @@ import {
   addWidget,
   answerWidget,
   canAuthorSchedule,
+  createCanvasPage,
   createSchedule,
   deleteSchedule,
   dismissWidget,
   ensureChatVisible,
   getChat,
   getSchedule,
+  listCanvasPages,
+  listCanvasWidgets,
   listChatSummaries,
   listMembers,
   listMessages,
   listSchedules,
   listWidgets,
+  placeWidget,
+  removeCanvasPage,
+  renameCanvasPage,
   reorderWidget,
   scheduleTiming,
+  stackWidget,
 } from './service'
-import type { JsonValue } from './widgets'
+import type { CanvasBox, JsonValue } from './widgets'
 
 // The default door onto the chat service for an agent's own bash tool — how an
 // agent woken on its inbox session (hull/chat/orchestrator.ts `wake`) finds the
@@ -405,6 +412,61 @@ async function cmdWidgetReorder(args: string[]): Promise<void> {
   process.stdout.write(`Moved ${widgetId} to #${String(stackOrder)}.\n`)
 }
 
+/**
+ * Parse `widget place`'s args: the widget and the page (positional), plus an
+ * optional corner (`--at X,Y`) and size (`--size W,H`) as cell pairs. Leaving a
+ * pair off means "find it a slot" / "keep the size it has" — the service does
+ * that, so the shell never has to do layout arithmetic. Pure + exported so the
+ * spelling is tested directly, like the other parsers here.
+ */
+export function parseWidgetPlaceArgs(args: string[]): {
+  widgetId?: string
+  pageId?: string
+  box: Partial<CanvasBox>
+} {
+  const rest = [...args]
+  function takePair(name: string): [number, number] | undefined {
+    const at = rest.indexOf(name)
+    if (at === -1) return undefined
+    const value = rest.at(at + 1)
+    const parts = (value ?? '').split(',').map((n) => Number.parseInt(n, 10))
+    if (parts.length !== 2 || parts.some(Number.isNaN))
+      throw new Error(`${name} takes two whole numbers, like ${name} 2,1`)
+    rest.splice(at, 2)
+    return [parts[0], parts[1]]
+  }
+  const at = takePair('--at')
+  const size = takePair('--size')
+  const [widgetId, pageId] = rest
+  return {
+    widgetId,
+    pageId,
+    box: {
+      ...(at ? { gridX: at[0], gridY: at[1] } : {}),
+      ...(size ? { gridW: size[0], gridH: size[1] } : {}),
+    },
+  }
+}
+
+async function cmdWidgetPlace(args: string[]): Promise<void> {
+  const { widgetId, pageId, box } = parseWidgetPlaceArgs(args)
+  if (!widgetId || !pageId)
+    throw new Error(
+      'usage: chat widget place <widgetId> <pageId> [--at X,Y] [--size W,H]',
+    )
+  await withCliActor((tx, me) =>
+    placeWidget(tx, { widgetId, pageId, actorId: me.id, ...box }),
+  )
+  process.stdout.write(`Placed ${widgetId} on page ${pageId}.\n`)
+}
+
+async function cmdWidgetStack(args: string[]): Promise<void> {
+  const widgetId = args.at(0)
+  if (!widgetId) throw new Error('usage: chat widget stack <widgetId>')
+  await withCliActor((tx, me) => stackWidget(tx, { widgetId, actorId: me.id }))
+  process.stdout.write(`Moved ${widgetId} back to the stack.\n`)
+}
+
 async function cmdWidget(args: string[]): Promise<void> {
   const [sub, ...rest] = args
   switch (sub) {
@@ -418,15 +480,110 @@ async function cmdWidget(args: string[]): Promise<void> {
       return cmdWidgetDismiss(rest)
     case 'reorder':
       return cmdWidgetReorder(rest)
+    case 'place':
+      return cmdWidgetPlace(rest)
+    case 'stack':
+      return cmdWidgetStack(rest)
     default:
       throw new Error(
-        'usage: chat widget <new|list|answer|dismiss|reorder> …\n' +
+        'usage: chat widget <new|list|answer|dismiss|reorder|place|stack> …\n' +
           '  new <chatId> (--option <text> … | --options a,b,c) [--order N] <question>\n' +
           '  new <chatId> --kind <kind> --props <json> [--order N]   any other kind\n' +
           '  list <chatId>                widgets on a chat, dismissed ones marked\n' +
           '  answer <widgetId> <value>    answer it — posts an ordinary chat message\n' +
           '  dismiss <widgetId>           wave it away unanswered\n' +
-          '  reorder <widgetId> <N>       move it in the stack (low renders first)',
+          '  reorder <widgetId> <N>       move it in the stack (low renders first)\n' +
+          '  place <widgetId> <pageId> [--at X,Y] [--size W,H]   onto the canvas\n' +
+          '  stack <widgetId>             off the canvas, back above the composer',
+      )
+  }
+}
+
+// --- Canvas pages ----------------------------------------------------------
+
+async function cmdPageNew(args: string[]): Promise<void> {
+  const [chatId, ...titleParts] = args
+  const title = titleParts.join(' ').trim()
+  if (!chatId || !title)
+    throw new Error('usage: chat page new <chatId> <title>')
+  const pageId = await withCliActor(async (tx, me) => {
+    await ensureChatVisible(tx, chatId)
+    const row = await createCanvasPage(tx, {
+      id: uuidv7(),
+      chatId,
+      title,
+      actorId: me.id,
+    })
+    return row.id
+  })
+  process.stdout.write(`Added page ${pageId} (“${title}”) to ${chatId}.\n`)
+}
+
+async function cmdPageList(args: string[]): Promise<void> {
+  const chatId = args.at(0)
+  if (!chatId) throw new Error('usage: chat page list <chatId>')
+  await withCliActor(async (tx) => {
+    await ensureChatVisible(tx, chatId)
+    const pages = await listCanvasPages(tx, chatId)
+    if (pages.length === 0) {
+      process.stdout.write('No canvas pages — this chat is thread-only.\n')
+      return
+    }
+    const widgets = await listCanvasWidgets(tx, chatId)
+    for (const p of pages) {
+      const on = widgets.filter((w) => w.pageId === p.id)
+      process.stdout.write(
+        `${p.id}  ${p.title}\n` +
+          `  ${DIM}#${String(p.pageOrder)} · ${String(on.length)} widget(s)${RESET}\n`,
+      )
+      for (const w of on) {
+        process.stdout.write(
+          `  ${DIM}${w.id}  ${w.kind} at ${String(w.gridX)},${String(w.gridY)} ` +
+            `(${String(w.gridW)}×${String(w.gridH)})${RESET}\n`,
+        )
+      }
+    }
+  })
+}
+
+async function cmdPageRename(args: string[]): Promise<void> {
+  const [pageId, ...titleParts] = args
+  const title = titleParts.join(' ').trim()
+  if (!pageId || !title)
+    throw new Error('usage: chat page rename <pageId> <title>')
+  await withCliActor((tx, me) =>
+    renameCanvasPage(tx, { pageId, title, actorId: me.id }),
+  )
+  process.stdout.write(`Renamed ${pageId} to “${title}”.\n`)
+}
+
+async function cmdPageRm(args: string[]): Promise<void> {
+  const pageId = args.at(0)
+  if (!pageId) throw new Error('usage: chat page rm <pageId>')
+  await withCliActor((tx, me) =>
+    removeCanvasPage(tx, { pageId, actorId: me.id }),
+  )
+  process.stdout.write(`Removed ${pageId}.\n`)
+}
+
+async function cmdPage(args: string[]): Promise<void> {
+  const [sub, ...rest] = args
+  switch (sub) {
+    case 'new':
+      return cmdPageNew(rest)
+    case 'list':
+      return cmdPageList(rest)
+    case 'rename':
+      return cmdPageRename(rest)
+    case 'rm':
+      return cmdPageRm(rest)
+    default:
+      throw new Error(
+        'usage: chat page <new|list|rename|rm> …\n' +
+          '  new <chatId> <title>      add a canvas page\n' +
+          '  list <chatId>             pages and what is arranged on each\n' +
+          '  rename <pageId> <title>   rename a page\n' +
+          '  rm <pageId>               remove an EMPTY page',
       )
   }
 }
@@ -444,14 +601,17 @@ async function main(): Promise<void> {
       return cmdSchedule(args)
     case 'widget':
       return cmdWidget(args)
+    case 'page':
+      return cmdPage(args)
     default:
       process.stdout.write(
-        'usage: chat <list|show|post|schedule|widget> …\n' +
+        'usage: chat <list|show|post|schedule|widget|page> …\n' +
           '  list                      chats you are in, newest activity first\n' +
           '  show <chatId> [--limit N] recent messages (default 20)\n' +
           '  post <chatId> <message>   post a message as yourself\n' +
           '  schedule <new|list|rm> …  manage scheduled messages\n' +
-          '  widget <new|list|…> …     put a live view in front of the crew\n',
+          '  widget <new|list|…> …     put a live view in front of the crew\n' +
+          '  page <new|list|…> …       the chat canvas pages widgets sit on\n',
       )
       process.exitCode = command ? 1 : 0
   }

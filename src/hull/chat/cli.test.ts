@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseScheduleNewArgs, parseShowArgs, parseWidgetNewArgs } from './cli'
+import {
+  parseScheduleNewArgs,
+  parseShowArgs,
+  parseWidgetNewArgs,
+  parseWidgetPlaceArgs,
+} from './cli'
 
 describe('parseShowArgs', () => {
   it('parses a bare chat id with the default limit', () => {
@@ -177,5 +182,36 @@ describe('parseWidgetNewArgs', () => {
     expect(() =>
       parseWidgetNewArgs(['chat-1', '--option', 'Ok', '--order', 'top', 'Q?']),
     ).toThrow(/--order requires a number/)
+  })
+})
+
+describe('parseWidgetPlaceArgs', () => {
+  it('parses the widget, the page, and no box at all', () => {
+    // No coordinates means "find it a slot", which is the common case from a
+    // shell — you're not doing layout arithmetic in your head.
+    expect(parseWidgetPlaceArgs(['w1', 'p1'])).toEqual({
+      widgetId: 'w1',
+      pageId: 'p1',
+      box: {},
+    })
+  })
+
+  it('reads a corner and a size as cell pairs', () => {
+    expect(
+      parseWidgetPlaceArgs(['w1', 'p1', '--at', '2,1', '--size', '2,3']),
+    ).toEqual({
+      widgetId: 'w1',
+      pageId: 'p1',
+      box: { gridX: 2, gridY: 1, gridW: 2, gridH: 3 },
+    })
+  })
+
+  it('rejects a pair that is not two numbers', () => {
+    expect(() => parseWidgetPlaceArgs(['w1', 'p1', '--at', '2'])).toThrow(
+      /--at takes/,
+    )
+    expect(() =>
+      parseWidgetPlaceArgs(['w1', 'p1', '--size', 'wide,tall']),
+    ).toThrow(/--size takes/)
   })
 })

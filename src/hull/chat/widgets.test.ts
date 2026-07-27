@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import { answerMessageBody, offeredAnswer, STACK_PLACEMENT } from './widgets'
+import {
+  answerMessageBody,
+  CANVAS_COLUMNS,
+  CANVAS_PLACEMENT,
+  clampCanvasBox,
+  DEFAULT_CANVAS_BOX,
+  freeCanvasBox,
+  nextCanvasSlot,
+  offeredAnswer,
+  STACK_PLACEMENT,
+} from './widgets'
 
 // What the hull enforces about a widget ROW without knowing any kind by name:
 // you may only post back an answer the row itself offered, and the answer quotes
@@ -81,8 +91,129 @@ describe('answerMessageBody', () => {
   })
 })
 
-describe('STACK_PLACEMENT', () => {
-  it('is the only placement that exists yet', () => {
+describe('placements', () => {
+  it('names the two surfaces a widget can be on', () => {
+    // The stack is turn-shaped (answer this now); the canvas is state-shaped
+    // (you arranged this and it stays). `placement` is the discriminator, and
+    // moving between them is an ordinary row update.
     expect(STACK_PLACEMENT).toBe('stack')
+    expect(CANVAS_PLACEMENT).toBe('canvas')
+  })
+})
+
+describe('clampCanvasBox', () => {
+  it('fills in the default box when nothing is asked for', () => {
+    expect(clampCanvasBox({})).toEqual(DEFAULT_CANVAS_BOX)
+  })
+
+  it('keeps a box that already fits', () => {
+    expect(clampCanvasBox({ gridX: 1, gridY: 3, gridW: 2, gridH: 1 })).toEqual({
+      gridX: 1,
+      gridY: 3,
+      gridW: 2,
+      gridH: 1,
+    })
+  })
+
+  it('pulls a box back inside the grid rather than refusing it', () => {
+    // An agent writing coordinates by hand will overshoot; a clamped tile the
+    // crew can then drag beats a rejected write it never sees the result of.
+    expect(
+      clampCanvasBox({ gridX: 9, gridY: -4, gridW: 99, gridH: 0 }),
+    ).toEqual({ gridX: CANVAS_COLUMNS - 1, gridY: 0, gridW: 1, gridH: 1 })
+  })
+
+  it('narrows a wide tile that starts near the right edge', () => {
+    expect(clampCanvasBox({ gridX: 3, gridY: 0, gridW: 3, gridH: 2 })).toEqual({
+      gridX: 3,
+      gridY: 0,
+      gridW: 1,
+      gridH: 2,
+    })
+  })
+
+  it('rounds fractional cells — the grid has no half squares', () => {
+    expect(
+      clampCanvasBox({ gridX: 1.6, gridY: 0.2, gridW: 2.4, gridH: 1.5 }),
+    ).toEqual({ gridX: 2, gridY: 0, gridW: 2, gridH: 2 })
+  })
+})
+
+describe('nextCanvasSlot', () => {
+  it('puts the first widget in the top-left corner', () => {
+    expect(nextCanvasSlot([], DEFAULT_CANVAS_BOX)).toEqual({
+      gridX: 0,
+      gridY: 0,
+    })
+  })
+
+  it('fills the gap beside an existing tile before starting a new row', () => {
+    const taken = [{ gridX: 0, gridY: 0, gridW: 2, gridH: 2 }]
+    expect(nextCanvasSlot(taken, { gridW: 2, gridH: 2 })).toEqual({
+      gridX: 2,
+      gridY: 0,
+    })
+  })
+
+  it('drops to the next row when the first one is full', () => {
+    const taken = [
+      { gridX: 0, gridY: 0, gridW: 2, gridH: 2 },
+      { gridX: 2, gridY: 0, gridW: 2, gridH: 2 },
+    ]
+    expect(nextCanvasSlot(taken, { gridW: 2, gridH: 2 })).toEqual({
+      gridX: 0,
+      gridY: 2,
+    })
+  })
+
+  it('slots a narrow tile into a hole a wide one could not use', () => {
+    const taken = [{ gridX: 0, gridY: 0, gridW: 3, gridH: 1 }]
+    expect(nextCanvasSlot(taken, { gridW: 1, gridH: 1 })).toEqual({
+      gridX: 3,
+      gridY: 0,
+    })
+  })
+
+  it('reads only the SIZE off a whole box, not the corner it came with', () => {
+    // The place door hands over a clamped box, corner and all. If the scan
+    // spread that in, every widget would be tested at 0,0 and land on top of
+    // the last one.
+    const taken = [{ gridX: 0, gridY: 0, gridW: 2, gridH: 2 }]
+    expect(nextCanvasSlot(taken, DEFAULT_CANVAS_BOX)).toEqual({
+      gridX: 2,
+      gridY: 0,
+    })
+  })
+
+  it('never overlaps a tile that spans several rows', () => {
+    const taken = [{ gridX: 0, gridY: 0, gridW: 1, gridH: 3 }]
+    expect(nextCanvasSlot(taken, { gridW: CANVAS_COLUMNS, gridH: 1 })).toEqual({
+      gridX: 0,
+      gridY: 3,
+    })
+  })
+})
+
+describe('freeCanvasBox', () => {
+  const taken = [{ gridX: 0, gridY: 0, gridW: 2, gridH: 2 }]
+
+  it('honours a box that lands on free cells', () => {
+    const desired = { gridX: 2, gridY: 0, gridW: 2, gridH: 2 }
+    expect(freeCanvasBox(taken, desired)).toEqual(desired)
+  })
+
+  it('yields to a tile already there rather than stacking on top of it', () => {
+    // Observed live: CSS grid draws the two on top of each other and it reads
+    // as a rendering bug. The tile being MOVED is the one that gives way —
+    // shoving the neighbours would rearrange a page somebody laid out.
+    expect(
+      freeCanvasBox(taken, { gridX: 1, gridY: 1, gridW: 2, gridH: 2 }),
+    ).toEqual({ gridX: 2, gridY: 0, gridW: 2, gridH: 2 })
+  })
+
+  it('keeps the size it was asked for while it looks for room', () => {
+    expect(
+      freeCanvasBox(taken, { gridX: 0, gridY: 0, gridW: 4, gridH: 1 }),
+    ).toEqual({ gridX: 0, gridY: 2, gridW: 4, gridH: 1 })
   })
 })
