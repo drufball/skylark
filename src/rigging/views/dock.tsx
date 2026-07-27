@@ -56,40 +56,63 @@ export interface DockProps {
   Link: DockLink
   /** Ends the session and returns to /login. */
   onLogout: () => void
+  /**
+   * How many commits `origin/main` is ahead of the serving checkout (issue
+   * #f70a) — undefined, null, or 0 all mean "nothing to say," so the banner
+   * renders only for a genuine positive count.
+   */
+  behindOrigin?: number | null
   children: ReactNode
 }
 
 /** The app shell: a slim left rail of sections, with the active surface beside it. */
-export function Dock({ active, Link, onLogout, children }: DockProps) {
+export function Dock({
+  active,
+  Link,
+  onLogout,
+  behindOrigin,
+  children,
+}: DockProps) {
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <nav className="flex w-16 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r bg-muted/30 py-3">
-        <Anchor
-          className="mb-3 size-6 text-muted-foreground"
-          aria-label="Skylark"
-        />
-        {ITEMS.map((item) => (
-          <DockButton
-            key={item.section}
-            item={item}
-            active={item.section === active}
-            Link={Link}
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      {typeof behindOrigin === 'number' && behindOrigin > 0 && (
+        <div className="flex shrink-0 items-center justify-center gap-1.5 border-b bg-amber-500/10 px-3 py-1 text-center text-xs text-amber-700 dark:text-amber-400">
+          <span aria-hidden>⚓</span>
+          <span>
+            ship is {behindOrigin} commit{behindOrigin === 1 ? '' : 's'} behind
+            origin — merged work isn&apos;t live yet
+          </span>
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
+        <nav className="flex w-16 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r bg-muted/30 py-3">
+          <Anchor
+            className="mb-3 size-6 text-muted-foreground"
+            aria-label="Skylark"
           />
-        ))}
-        <button
-          type="button"
-          onClick={onLogout}
-          className="mt-auto flex w-14 flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-        >
-          <LogOut className="size-5" />
-          Log out
-        </button>
-      </nav>
-      {/* overflow-y-auto is a fallback for a surface that manages no internal
-          scroll of its own (e.g. Models) — a surface that fills this slot
-          exactly (chat/issues/files/inbox, each already h-full + its own
-          ScrollArea) never grows past it, so this never triggers for them. */}
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</div>
+          {ITEMS.map((item) => (
+            <DockButton
+              key={item.section}
+              item={item}
+              active={item.section === active}
+              Link={Link}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="mt-auto flex w-14 flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            <LogOut className="size-5" />
+            Log out
+          </button>
+        </nav>
+        {/* overflow-y-auto is a fallback for a surface that manages no internal
+            scroll of its own (e.g. Models) — a surface that fills this slot
+            exactly (chat/issues/files/inbox, each already h-full + its own
+            ScrollArea) never grows past it, so this never triggers for them. */}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</div>
+      </div>
     </div>
   )
 }

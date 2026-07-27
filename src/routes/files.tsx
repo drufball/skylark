@@ -11,6 +11,7 @@ import { Dock } from '@rigging/views/dock'
 import { FilesView } from '@rigging/views/files'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
 
 // The files route: a thin mount binding /files to the shared-documents view and
@@ -73,8 +74,14 @@ function FilesRoute() {
   }
 
   const onLogout = useLogout()
+  const behindOrigin = useBehindOrigin()
   return (
-    <Dock active="files" Link={Link} onLogout={onLogout}>
+    <Dock
+      active="files"
+      Link={Link}
+      onLogout={onLogout}
+      behindOrigin={behindOrigin}
+    >
       <FilesView
         files={files}
         selected={selected}
