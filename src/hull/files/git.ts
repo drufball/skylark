@@ -44,6 +44,7 @@ export interface FileChange {
 export type MergeReadiness =
   | 'not-on-main'
   | 'merge-in-progress'
+  | 'index-dirty'
   | 'files-dirty'
   | 'ready'
 
@@ -119,7 +120,16 @@ export interface FilesRepo {
   pushMain(): Promise<'pushed' | 'rejected'>
 }
 
-/** Run git in a repo, optionally feeding stdin; rejects with stderr on failure. */
+/**
+ * Run git in a repo, optionally feeding stdin; rejects with stderr on failure.
+ *
+ * Output is collected as BYTES and decoded once at the end. Decoding each chunk
+ * as it arrives would replace any multibyte character that happens to straddle a
+ * chunk boundary with U+FFFD — a dice roll per read, invisible until a document
+ * grows past ~48KB. That matters more than it looks: `convergeWithOrigin` reads
+ * a doc's conflict stages through here and writes the result back, so a garbled
+ * read would be committed and pushed as real content.
+ */
 function runGit(
   repoRoot: string,
   args: string[],
@@ -130,14 +140,20 @@ function runGit(
       cwd: repoRoot,
       env: { ...process.env, ...opts.env },
     })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
-    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()))
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
     child.on('error', reject)
     child.on('close', (code) => {
-      if (code === 0) resolvePromise(stdout)
-      else reject(new Error(`git ${args[0]} failed: ${stderr.trim()}`))
+      if (code === 0) resolvePromise(Buffer.concat(stdout).toString('utf8'))
+      else {
+        reject(
+          new Error(
+            `git ${args[0]} failed: ${Buffer.concat(stderr).toString('utf8').trim()}`,
+          ),
+        )
+      }
     })
     if (opts.input !== undefined) child.stdin.write(opts.input)
     child.stdin.end()
@@ -197,16 +213,44 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
     return path.startsWith(`${filesDir}/`)
   }
 
+  /** A path the merge in progress could not settle, and every stage's file mode. */
+  interface UnmergedEntry {
+    path: string
+    modes: string[]
+  }
+
   /**
-   * The paths left unmerged by the merge in progress — raw (NUL-separated), so
-   * a unicode or spaced filename arrives exactly as git holds it.
+   * The unmerged entries of the merge in progress, read from the INDEX
+   * (`ls-files -u`) rather than the working tree. That choice matters twice: the
+   * records are NUL-separated, so a unicode or spaced filename arrives exactly as
+   * git holds it; and each carries its file mode, which is the only way to tell a
+   * document from a symlink or a submodule before writing to it. A directory/file
+   * conflict also appears here under its real path, never as git's `~HEAD`
+   * working-tree artifact — which the sweep must not commit as if it were a doc.
    */
-  async function unmergedPaths(): Promise<string[]> {
-    const out = await git(['diff', '-z', '--name-only', '--diff-filter=U'])
-      /* v8 ignore next -- git diff has no failure mode here; treating one as
+  async function unmergedEntries(): Promise<UnmergedEntry[]> {
+    const out = await git(['ls-files', '-u', '-z'])
+      /* v8 ignore next -- ls-files has no failure mode here; treating one as
          "no conflicts I can settle" keeps the caller's abort path in charge. */
       .catch(() => '')
-    return out.split('\0').filter(Boolean)
+    // One record per STAGE, so a path shows up as many as three times: group
+    // them, because a path's modes only make sense together.
+    const byPath = new Map<string, string[]>()
+    for (const record of out.split('\0')) {
+      // `<mode> <sha> <stage>\t<path>` — no tab means no record (the trailing
+      // empty string after the last separator lands here).
+      const tab = record.indexOf('\t')
+      if (tab === -1) continue
+      const path = record.slice(tab + 1)
+      const mode = record.slice(0, record.indexOf(' '))
+      byPath.set(path, [...(byPath.get(path) ?? []), mode])
+    }
+    return [...byPath].map(([path, modes]) => ({ path, modes }))
+  }
+
+  /** Only plain files are documents — never a symlink, submodule, or directory. */
+  function isPlainFile(entry: UnmergedEntry): boolean {
+    return entry.modes.every((m) => m === '100644' || m === '100755')
   }
 
   /** One side of a conflicted path, or null when that side doesn't have it. */
@@ -256,17 +300,26 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
   }
 
   /**
-   * Try to resolve the merge in progress under the union policy. Returns false —
-   * having changed nothing — when the conflict is not ours to settle: a path
-   * outside the files dir (code, config: a human's call), a binary document
-   * (union is a line rule), or no unmerged paths at all (the merge failed for
-   * some other reason, e.g. a dirty working tree). The caller then aborts.
+   * Try to resolve the merge in progress under the union policy, returning the
+   * documents it unioned so the merge commit can name them.
+   *
+   * Returns null — having changed nothing — when the conflict is not ours to
+   * settle, and every one of those cases is a real hazard rather than a
+   * hypothetical: a path outside the files dir (code, config: a human's call);
+   * anything that isn't a plain file (writing "through" a conflicted symlink would
+   * land outside the repo entirely); a binary document (union is a line rule); or
+   * no unmerged entries at all, which means the merge never started — a staged
+   * index or a dirty tree — and is emphatically NOT a document conflict. The
+   * caller aborts on null.
    */
-  async function unionResolveDocConflicts(): Promise<boolean> {
-    const paths = await unmergedPaths()
-    if (paths.length === 0 || !paths.every(insideFilesDir)) return false
+  async function unionResolveDocConflicts(): Promise<string[] | null> {
+    const entries = await unmergedEntries()
+    if (entries.length === 0) return null
+    if (!entries.every((e) => insideFilesDir(e.path) && isPlainFile(e))) {
+      return null
+    }
     const sides = await Promise.all(
-      paths.map(async (path) => ({
+      entries.map(async ({ path }) => ({
         path,
         base: await conflictStage(1, path),
         ours: await conflictStage(2, path),
@@ -274,9 +327,11 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
       })),
     )
     if (sides.some((s) => [s.ours, s.theirs].some((v) => v?.includes('\0')))) {
-      return false
+      return null
     }
+    const unioned: string[] = []
     for (const side of sides) {
+      unioned.push(side.path)
       if (side.ours !== null && side.theirs !== null) {
         await unionResolve(side.path, {
           base: side.base,
@@ -288,13 +343,13 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
       const kept = side.ours ?? side.theirs
       /* v8 ignore next 2 -- both sides gone (git's "DD"): rare enough that no
          fixture produces it, and a guess about a doc nobody has is a human's. */
-      if (kept === null) return false
+      if (kept === null) return null
       // Modify/delete: keep the side that still has the document, by writing it
       // back — a sweep never destroys content it didn't author.
       await writeFile(resolve(repoRoot, side.path), kept)
       await git(['add', '--', side.path])
     }
-    return true
+    return unioned
   }
 
   /**
@@ -470,6 +525,15 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
       if (await operationInProgress()) return 'merge-in-progress'
       const branch = (await git(['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
       if (branch !== mainBranch) return 'not-on-main'
+      // Anything staged, anywhere, stops git from starting a merge at all — and a
+      // merge that never starts leaves no unmerged paths, which would otherwise
+      // read as "a document conflict I can't settle" and raise a false alarm.
+      // Someone ran `git add` and went to lunch; that's a wait, not a conflict.
+      const indexClean = await git(['diff', '--cached', '--quiet']).then(
+        () => true,
+        () => false,
+      )
+      if (!indexClean) return 'index-dirty'
       const status = await git(['status', '--porcelain', '--', filesDir])
       if (status.trim() !== '') return 'files-dirty'
       return 'ready'
@@ -552,20 +616,26 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
         await git(['merge', '--no-edit', '-m', message, originMainRef], { env })
         return 'converged'
       } catch {
-        if (!(await unionResolveDocConflicts())) {
-          // Leave nothing mid-merge; a failed abort means there was no merge to
-          // abort (it failed before starting), which is already clean.
-          await git(['merge', '--abort']).catch(() => undefined)
-          return 'conflict'
-        }
+        // Everything from here on is wrapped, because a THROW must not escape
+        // leaving the repo mid-merge with a half-resolved index — a full disk or
+        // an unwritable path partway through would do exactly that, and no
+        // later sweep could tell that state from a human's own open merge.
         try {
+          const unioned = await unionResolveDocConflicts()
+          if (unioned === null) throw new Error('not the sweep’s conflict')
+          // Name the documents in the commit: the union policy is only safe if
+          // the mess it makes is findable afterwards.
           await git(
-            ['commit', '-m', `${message}\n\nConflicting documents unioned.`],
+            [
+              'commit',
+              '-m',
+              `${message}\n\nUnioned conflicting documents (both sides kept):\n${unioned.map((p) => `- ${p}`).join('\n')}`,
+            ],
             { env },
           )
-          /* v8 ignore next 4 -- committing a fully-resolved merge shouldn't fail;
-             if it somehow does, leave nothing mid-merge and ask for a human. */
         } catch {
+          // Leave nothing mid-merge; a failed abort means there was no merge to
+          // abort (it failed before starting), which is already clean.
           await git(['merge', '--abort']).catch(() => undefined)
           return 'conflict'
         }

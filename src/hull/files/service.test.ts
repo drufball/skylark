@@ -1,5 +1,12 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -653,6 +660,57 @@ describe('files service over a real git repo', () => {
       expect(events.filter((e) => e.type === FILES_MERGED)).toHaveLength(0)
     })
 
+    /**
+     * A staged file stops git from starting a merge at all, which leaves ZERO
+     * unmerged paths. That must read as "not now", not as "a document conflict
+     * nobody can settle" — a false alarm on the one alarm this issue adds would
+     * teach the crew to ignore it.
+     */
+    it('somebody with a staged file makes the sweep wait, not cry conflict', async () => {
+      await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
+      await writeFile(join(repoRoot, 'code.txt'), 'half-done work\n')
+      await git('add', 'code.txt')
+
+      expect(await repo.mergeReadiness()).toBe('index-dirty')
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('postponed')
+
+      // Their staged work is untouched, and nothing was announced as a conflict.
+      const { stdout: staged } = await git('diff', '--cached', '--name-only')
+      expect(staged.trim()).toBe('code.txt')
+
+      // Once they commit it, the very next sweep drains normally.
+      await git('commit', '-m', 'their work')
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+    })
+
+    it('a conflicting symlink is never unioned — writing through one would land outside the repo', async () => {
+      await symlink('/etc/passwd', join(repoRoot, 'files', 'link.md'))
+      await git('add', '-A')
+      await git('commit', '-m', 'local symlink')
+      await commitToOrigin(originDir, 'files/link.md', 'a real doc\n')
+
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('conflict')
+      const { stdout: status } = await git('status', '--porcelain')
+      expect(status.trim()).toBe('')
+      await expect(git('rev-parse', '--verify', 'MERGE_HEAD')).rejects.toThrow()
+    })
+
+    it('names the unioned documents in the merge commit, so the mess is findable', async () => {
+      await writeFile(join(repoRoot, 'files', 'seed.md'), '# seed\nlocal\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local edit')
+      await commitToOrigin(originDir, 'files/seed.md', '# seed\norigin\n')
+
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      const { stdout: log } = await git('log', '--format=%B', '-20')
+      expect(log).toContain('Unioned conflicting documents')
+      expect(log).toContain('- files/seed.md')
+    })
+
     it('a conflicting binary doc is never unioned — union is a text rule only', async () => {
       const bin = join(repoRoot, 'files', 'logo.bin')
       await writeFile(bin, 'ship\0')
@@ -962,6 +1020,46 @@ describe('the sweep against a fake repo: order and failure handling', () => {
       expect(announced[0].source).toBe('files')
       expect(announced[0].payload).toEqual({
         outcome: 'conflict',
+        consecutiveFailures: SWEEP_FAILURE_LIMIT,
+      })
+    })
+
+    /**
+     * A THROW is a failure too. An offline ship's `git fetch` rejects on every
+     * tick; if throws skip the bookkeeping, the bound is a lie and the sweep
+     * hammers git forever without announcing anything — the #p5as shape again,
+     * wearing a different hat.
+     */
+    it('counts a thrown sweep toward the latch, and still surfaces the error', async () => {
+      const { repo, calls } = fakeRepo()
+      const offline = {
+        ...repo,
+        fetchOrigin: () => {
+          calls.push('fetch')
+          return Promise.reject(new Error('could not resolve host: github.com'))
+        },
+      }
+      const service = createFilesService({ db, repo: offline })
+
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT; i++) {
+        // The error still reaches the caller (the sweep helper logs it).
+        await expect(service.sweep(FILES_IDLE_MS)).rejects.toThrow(
+          /could not resolve host/,
+        )
+      }
+
+      // …and now it stops hammering git, and it said so on the ship's log.
+      calls.length = 0
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('wedged')
+      expect(calls).toEqual([])
+      const events = await listEventsSince(db, {
+        topicPatterns: ['files:*'],
+        audience: 'public',
+      })
+      const wedged = events.filter((e) => e.type === FILES_SWEEP_WEDGED)
+      expect(wedged).toHaveLength(1)
+      expect(wedged[0].payload).toEqual({
+        outcome: 'error',
         consecutiveFailures: SWEEP_FAILURE_LIMIT,
       })
     })

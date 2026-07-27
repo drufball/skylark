@@ -59,9 +59,11 @@ commits. When origin genuinely advanced, the sweep **merges** `origin/main` into
 and every local commit keeps its identity and its author. A conflict inside
 `src/home/files` is resolved by **union** — both sides' hunks, in order, no
 markers, nothing deleted; a doc only one side still has survives with that
-side's content. A conflict anywhere else (code, config), a binary file, or a
-merge that fails before conflicting is never auto-resolved: the merge aborts and
-the sweep asks for a human.
+side's content, and the merge commit names every document it unioned. Everything
+else aborts and asks for a human: a conflict outside the files dir (code,
+config), anything that isn't a plain file (a symlink, a submodule, a path that
+became a directory), a binary file, and a merge that never started at all —
+which is what a staged index looks like, and is a wait rather than a conflict.
 
 **When the sweep can't.** Every tick reports its outcome: idle and successful
 sweeps say nothing (a quiet log means a healthy sweep), and `postponed`,
@@ -70,7 +72,10 @@ then once every ten repeats, so it never floods and never goes silent. Five
 consecutive failures latch the sweep **wedged**: it stops running the same
 doomed git command every 30s, announces `files.sweep_wedged` once on the ship's
 log, and only probes every twentieth tick (~10 min) so a cause that clears
-itself still recovers without a restart. A success clears the latch.
+itself still recovers without a restart. A success clears the latch. **A thrown
+error counts as a failure exactly like a returned one** — an offline ship's
+`git fetch` rejects on every tick, and a bound that only counted return values
+would be no bound at all.
 
 ## Decisions
 
@@ -119,8 +124,14 @@ itself still recovers without a restart. A success clears the latch.
   deliberately removed — visible, tidy-able by any agent or human, and recorded
   in the merge commit. That trade — a mess you can see over content you can't
   get back — is the one we take every time. It applies **only** inside
-  `src/home/files`, and only to text: a conflict in code, or in a binary file,
-  is never guessed at.
+  `src/home/files`, and only to plain text files. Two sharp edges to know about:
+  it can resurrect a doc (or a line) the **ship** deleted, not just one origin
+  deleted; and if what it resurrects is npm banner noise, the write guard below
+  will then refuse further writes to that doc until someone strips it.
+- **Git output is decoded once, from bytes.** Decoding each chunk as it arrives
+  corrupts any multibyte character straddling a chunk boundary — invisible until
+  a doc passes ~48KB, and convergence would commit and push the garbled result
+  as real content. Agent memory is append-mostly, so docs only grow.
 - **The sweep never touches a git operation it didn't start.** Its failure paths
   run `merge --abort`, and an abort doesn't ask whose merge it is — the serving
   checkout is somebody's working copy, and a crew member part way through

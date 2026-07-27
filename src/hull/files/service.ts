@@ -167,7 +167,7 @@ export function sweepGate(input: {
 /** What a not-done outcome should say out loud, in the crew's own words. */
 const SWEEP_COMPLAINTS: Partial<Record<SweepOutcome, string>> = {
   postponed:
-    'postponed — the repo is not a clean main to merge onto (another branch checked out, someone else’s merge or rebase open, or the files dir has uncommitted edits)',
+    'postponed — the repo is not a clean main to merge onto (another branch checked out, someone else’s merge or rebase open, something staged in the index, or the files dir has uncommitted edits)',
   conflict:
     'conflict — a document merge could not be settled automatically; the docs are safe but main is not moving until a human looks',
   'push-rejected':
@@ -275,6 +275,24 @@ export function createFilesService({
     return 'pushed'
   }
 
+  /**
+   * Count one failed sweep, and announce the wedge on the ship's log the moment
+   * the count reaches the limit — once per wedge, because the console scrolls
+   * away and a sweep that can't reach origin is crew news.
+   */
+  async function noteFailure(reason: SweepOutcome | 'error'): Promise<void> {
+    failures++
+    if (failures < SWEEP_FAILURE_LIMIT || announcedWedge) return
+    announcedWedge = true
+    await emitEvent(db, {
+      type: FILES_SWEEP_WEDGED,
+      source: 'files',
+      topic: FILES_SWEEP_TOPIC,
+      audience: PUBLIC_AUDIENCE,
+      payload: { outcome: reason, consecutiveFailures: failures },
+    })
+  }
+
   /** One sweep's actual work, before the wedge guard's bookkeeping. */
   async function runSweep(now: number): Promise<SweepOutcome> {
     if (!(await repo.stagingExists())) return retryPendingPush()
@@ -350,25 +368,24 @@ export function createFilesService({
           return 'wedged'
         }
         skipped = 0
-        const outcome = await runSweep(now)
+        let outcome: SweepOutcome
+        try {
+          outcome = await runSweep(now)
+        } catch (err) {
+          // A THROW counts as a failure too, or the bound is a lie: an offline
+          // ship's `git fetch` rejects on every tick, and the old code never
+          // reached the bookkeeping below, so it hammered git forever and never
+          // announced a thing. Re-thrown after counting, so the sweep helper
+          // still puts the actual git error on the console.
+          await noteFailure('error')
+          throw err
+        }
         if (!isSweepFailure(outcome)) {
           failures = 0
           announcedWedge = false
           return outcome
         }
-        failures++
-        if (failures >= SWEEP_FAILURE_LIMIT && !announcedWedge) {
-          announcedWedge = true
-          // Say it on the ship's log too, once per wedge: the console scrolls
-          // away, and a sweep that cannot reach origin is crew news.
-          await emitEvent(db, {
-            type: FILES_SWEEP_WEDGED,
-            source: 'files',
-            topic: FILES_SWEEP_TOPIC,
-            audience: PUBLIC_AUDIENCE,
-            payload: { outcome, consecutiveFailures: failures },
-          })
-        }
+        await noteFailure(outcome)
         return outcome
       })
     },
