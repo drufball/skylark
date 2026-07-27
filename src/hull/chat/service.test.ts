@@ -781,12 +781,26 @@ describe('widget persistence + answering', () => {
     expect((await listOpenWidgets(db, chatId)).map((w) => w.id)).toEqual([open])
   })
 
-  it('dismissing an already-dismissed widget keeps the first dismissal', async () => {
+  it('dismissing an already-dismissed widget keeps the first dismissal, silently', async () => {
     const id = await raise()
     await dismissWidget(db, { widgetId: id, actorId: dru })
     const first = defined(await getWidget(db, id)).dismissedAt
     await dismissWidget(db, { widgetId: id, actorId: dru })
     expect(defined(await getWidget(db, id)).dismissedAt).toEqual(first)
+
+    // And exactly ONE dismissal was announced: a no-op must not send every
+    // member's browser off to refetch a stack that didn't move.
+    const events = await listEventsSince(db, {
+      topicPatterns: [chatTopic(chatId)],
+      audience: 'members',
+    })
+    expect(
+      events.filter(
+        (e) =>
+          e.type === 'chat.widget_changed' &&
+          (e.payload as { change: string }).change === 'dismissed',
+      ),
+    ).toHaveLength(1)
   })
 
   it.each([

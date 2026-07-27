@@ -847,13 +847,19 @@ export async function dismissWidget(
   input: { widgetId: string; actorId: string },
 ): Promise<void> {
   const widget = await visibleWidget(db, input.widgetId)
-  await db
+  const dismissed = await db
     .update(chatWidgets)
     .set({ dismissedAt: new Date() })
     .where(
       and(eq(chatWidgets.id, input.widgetId), isNull(chatWidgets.dismissedAt)),
     )
-  await emitWidgetChanged(db, widget, 'dismissed', input.actorId)
+    .returning({ id: chatWidgets.id })
+  // Nothing changed → nothing to announce. An event saying a widget was
+  // dismissed when it was already gone would send every member's browser to
+  // refetch a stack that didn't move.
+  if (dismissed.length > 0) {
+    await emitWidgetChanged(db, widget, 'dismissed', input.actorId)
+  }
 }
 
 /**
