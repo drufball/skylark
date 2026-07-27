@@ -743,3 +743,180 @@ describe('scheduleSummary', () => {
     ).toContain('once')
   })
 })
+
+describe('ChatView: the canvas lives inside the chat', () => {
+  /** A chat with a canvas wired up, one page, one tile on it. */
+  function withCanvas(props: Partial<ChatViewProps> = {}) {
+    return renderView({
+      activeId: 'c1',
+      members: [{ userId: 'u1', handle: 'dru', type: 'human' }],
+      canvasPages: [{ id: 'p1', title: 'Ops' }],
+      canvasWidgets: [
+        {
+          id: 'w1',
+          kind: 'note',
+          props: { text: 'deploys today' },
+          createdByHandle: 'tilde',
+          pageId: 'p1',
+          gridX: 0,
+          gridY: 0,
+          gridW: 2,
+          gridH: 2,
+        },
+      ],
+      activePageId: 'p1',
+      onSelectPage: vi.fn(),
+      onNewPage: vi.fn(),
+      onRenamePage: vi.fn(),
+      onRemovePage: vi.fn(),
+      onPlaceWidget: vi.fn(),
+      onStackWidget: vi.fn(),
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+      ...props,
+    })
+  }
+
+  it('shows the canvas BESIDE the thread on a desktop pane', () => {
+    // Not a destination, not a third route: you never leave the conversation to
+    // look at the thing you built.
+    setWidth(1280)
+    withCanvas({
+      messages: [{ id: 'm1', authorHandle: 'dru', body: 'hi', mine: true }],
+    })
+    expect(screen.getByText('hi')).toBeTruthy()
+    expect(screen.getByTestId('widget-canvas')).toBeTruthy()
+  })
+
+  it('keeps the whole width for the thread in a chat with no canvas yet', () => {
+    setWidth(1280)
+    withCanvas({ canvasPages: [], canvasWidgets: [] })
+    expect(screen.queryByTestId('widget-canvas')).toBeNull()
+    // …and the header still offers it, so the surface is discoverable.
+    fireEvent.click(screen.getByLabelText('Canvas'))
+    expect(screen.getByTestId('widget-canvas')).toBeTruthy()
+  })
+
+  it('hides the desktop pane again when you toggle it off', () => {
+    setWidth(1280)
+    withCanvas()
+    expect(screen.getByTestId('widget-canvas')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Canvas'))
+    expect(screen.queryByTestId('widget-canvas')).toBeNull()
+  })
+
+  it('toggles between Thread and Canvas on a phone, never stranding either', () => {
+    // 390px can't hold both. What it must never do is hide the way back.
+    setWidth(390)
+    withCanvas({
+      messages: [{ id: 'm1', authorHandle: 'dru', body: 'hi', mine: true }],
+    })
+    expect(screen.getByText('hi')).toBeTruthy()
+    expect(screen.queryByTestId('widget-canvas')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'canvas' }))
+    expect(screen.getByTestId('widget-canvas')).toBeTruthy()
+    expect(screen.queryByText('hi')).toBeNull()
+    // The way back is on screen the whole time.
+    fireEvent.click(screen.getByRole('button', { name: 'thread' }))
+    expect(screen.getByText('hi')).toBeTruthy()
+  })
+
+  it('keeps the composer under the canvas on a phone', () => {
+    // The thesis of the whole slice: the agent is right there beside the thing
+    // you built, so you can say "what's this?" without navigating away.
+    setWidth(390)
+    withCanvas()
+    fireEvent.click(screen.getByRole('button', { name: 'canvas' }))
+    expect(screen.getByPlaceholderText('Message…')).toBeTruthy()
+  })
+
+  it('shows a stack widget and a canvas widget at the same time', () => {
+    setWidth(1280)
+    withCanvas({
+      widgets: [
+        {
+          id: 'w2',
+          kind: 'choice',
+          props: { question: 'Ship it?', options: ['Yes', 'No'] },
+          createdByHandle: 'tilde',
+        },
+      ],
+    })
+    expect(screen.getByTestId('widget-stack')).toBeTruthy()
+    expect(screen.getByTestId('widget-canvas')).toBeTruthy()
+  })
+
+  it('offers no canvas at all when the host hasn’t wired one', () => {
+    // Every canvas prop is optional, so a host that only wants a thread gets
+    // exactly that — no dead toggle in the header.
+    setWidth(1280)
+    renderView({ activeId: 'c1' })
+    expect(screen.queryByLabelText('Canvas')).toBeNull()
+  })
+})
+
+describe('ChatView: moving a widget between the two surfaces', () => {
+  it('pins a stack widget onto the page you have open', () => {
+    // The human half of the agent's `place`: the same ordinary row update,
+    // asked for with a thumb. No corner — the service finds a free slot.
+    setWidth(1280)
+    const onPlaceWidget = vi.fn()
+    renderView({
+      activeId: 'c1',
+      widgets: [
+        {
+          id: 'w2',
+          kind: 'note',
+          props: { text: 'keep this' },
+          createdByHandle: 'tilde',
+        },
+      ],
+      canvasPages: [
+        { id: 'p1', title: 'Ops' },
+        { id: 'p2', title: 'Numbers' },
+      ],
+      canvasWidgets: [],
+      activePageId: 'p2',
+      onSelectPage: vi.fn(),
+      onNewPage: vi.fn(),
+      onRenamePage: vi.fn(),
+      onRemovePage: vi.fn(),
+      onPlaceWidget,
+      onStackWidget: vi.fn(),
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    fireEvent.click(screen.getByLabelText('Keep widget w2 on the canvas'))
+    expect(onPlaceWidget).toHaveBeenCalledWith('w2', { pageId: 'p2' })
+  })
+
+  it('offers no pin when there is nowhere to pin to', () => {
+    // An affordance pointing at a canvas that doesn't exist yet is worse than
+    // no affordance.
+    setWidth(1280)
+    renderView({
+      activeId: 'c1',
+      widgets: [
+        {
+          id: 'w2',
+          kind: 'note',
+          props: { text: 'keep this' },
+          createdByHandle: 'tilde',
+        },
+      ],
+      canvasPages: [],
+      canvasWidgets: [],
+      activePageId: null,
+      onSelectPage: vi.fn(),
+      onNewPage: vi.fn(),
+      onRenamePage: vi.fn(),
+      onRemovePage: vi.fn(),
+      onPlaceWidget: vi.fn(),
+      onStackWidget: vi.fn(),
+      onAnswerWidget: vi.fn(),
+      onDismissWidget: vi.fn(),
+    })
+    expect(screen.queryByLabelText(/on the canvas/)).toBeNull()
+  })
+})

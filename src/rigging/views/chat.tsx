@@ -1,12 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, CalendarClock, Plus, Trash2, User, Users, X } from 'lucide-react'
+import {
+  Bot,
+  CalendarClock,
+  LayoutGrid,
+  Plus,
+  Trash2,
+  User,
+  Users,
+  X,
+} from 'lucide-react'
 
+import type { CanvasBox } from '@hull/chat/widgets'
+import { useIsMobile } from '@rigging/lib/use-is-mobile'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
 import { Composer } from '@rigging/components/composer'
 import { CollapsibleSidebar } from '@rigging/components/collapsible-sidebar'
 import { inputClass, selectClass } from '@rigging/components/ui/input'
+import {
+  WidgetCanvas,
+  type CanvasPageItem,
+  type CanvasWidgetItem,
+} from '@rigging/widgets/canvas'
+import { TAP_TARGET } from '@rigging/widgets/kind'
 import { WidgetStack, type WidgetItem } from '@rigging/widgets/stack'
 
 // The front door: chat between the crew — humans and agents. Participant-focused
@@ -123,6 +140,32 @@ export interface ChatViewProps {
   widgets?: WidgetItem[]
   onAnswerWidget?: (widgetId: string, value: string) => void
   onDismissWidget?: (widgetId: string) => void
+  /**
+   * The chat's **canvas** — pages of widgets the crew arranged, shown BESIDE the
+   * thread rather than as a destination of its own. The whole point is that you
+   * never leave the conversation to look at the thing you built, so there is no
+   * third route and no pane that retargets independently: this is one chat's
+   * canvas, in that chat.
+   */
+  canvasPages?: CanvasPageItem[]
+  canvasWidgets?: CanvasWidgetItem[]
+  /** The page THIS viewer has open — per person, persisted by the host. */
+  activePageId?: string | null
+  onSelectPage?: (pageId: string) => void
+  onNewPage?: (title: string) => void
+  onRenamePage?: (pageId: string, title: string) => void
+  onRemovePage?: (pageId: string) => void
+  /**
+   * Arrange a widget on a page — a drag, a resize, or a pin from the stack.
+   * The box is PARTIAL because "put this somewhere sensible" is a real request:
+   * with no corner the service finds the first free slot rather than dropping
+   * the tile on top of one already there.
+   */
+  onPlaceWidget?: (
+    widgetId: string,
+    box: Partial<CanvasBox> & { pageId: string },
+  ) => void
+  onStackWidget?: (widgetId: string) => void
 }
 
 /** A chat's display name: its title, or the members it's with. */
@@ -232,7 +275,10 @@ export function ChatView(props: ChatViewProps) {
             onCreate={props.onCreate}
           />
         ) : props.activeId ? (
-          <ActiveChat {...props} />
+          // Keyed by the chat: switching conversations resets the panel state
+          // this component holds (which surface you're on, whether the canvas
+          // pane is open), which belongs to the chat you were in, not to you.
+          <ActiveChat key={props.activeId} {...props} />
         ) : (
           <Empty />
         )}
@@ -323,6 +369,15 @@ function ActiveChat({
   widgets,
   onAnswerWidget,
   onDismissWidget,
+  canvasPages,
+  canvasWidgets,
+  activePageId,
+  onSelectPage,
+  onNewPage,
+  onRenamePage,
+  onRemovePage,
+  onPlaceWidget,
+  onStackWidget,
 }: ChatViewProps) {
   const memberIds = new Set(members.map((m) => m.userId))
   const addable = crew.filter((c) => !memberIds.has(c.id))
@@ -331,12 +386,76 @@ function ActiveChat({
     onCreateSchedule && onToggleSchedule && onDeleteSchedule,
   )
 
+  const isMobile = useIsMobile()
+  const canvasOn = Boolean(
+    onSelectPage &&
+    onNewPage &&
+    onRenamePage &&
+    onRemovePage &&
+    onPlaceWidget &&
+    onStackWidget &&
+    onAnswerWidget,
+  )
+  const pages = canvasPages ?? []
+  // Which surface a PHONE is showing, where the two can't both fit. Desktop
+  // shows them together, so this is only ever read below the breakpoint.
+  const [surface, setSurface] = useState<'thread' | 'canvas'>('thread')
+  // Whether the desktop canvas pane is open. Null means "haven't chosen" — a
+  // chat that HAS a canvas opens with it up, one that doesn't keeps the whole
+  // width for the thread until you ask.
+  const [paneOpen, setPaneOpen] = useState<boolean | null>(null)
+  const canvasVisible = isMobile
+    ? canvasOn && surface === 'canvas'
+    : canvasOn && (paneOpen ?? pages.length > 0)
+  const threadVisible = !isMobile || surface === 'thread'
+  // Where a pinned stack widget lands: the page you have open, else the first.
+  const landingPage =
+    pages.find((p) => p.id === activePageId)?.id ?? pages.at(0)?.id
+
   return (
     <>
       <header className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <span className="font-medium">
           {chatName({ title, memberHandles: members.map((m) => m.handle) })}
         </span>
+        {canvasOn &&
+          (isMobile ? (
+            // A phone can't show both, so it gets a plain either/or — and the
+            // Thread half is always right there, so the canvas can never be a
+            // place you get stuck.
+            <div className="flex overflow-hidden rounded-md border">
+              {(['thread', 'canvas'] as const).map((which) => (
+                <button
+                  key={which}
+                  type="button"
+                  aria-pressed={surface === which}
+                  onClick={() => {
+                    setSurface(which)
+                  }}
+                  className={cn(
+                    'px-3 text-sm capitalize',
+                    TAP_TARGET,
+                    surface === which && 'bg-accent text-accent-foreground',
+                  )}
+                >
+                  {which}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Canvas"
+              aria-pressed={canvasVisible}
+              onClick={() => {
+                setPaneOpen(!canvasVisible)
+              }}
+            >
+              <LayoutGrid className="size-4" />
+              Canvas
+            </Button>
+          ))}
         {schedulingOn && (
           <Button
             variant="outline"
@@ -410,17 +529,66 @@ function ActiveChat({
             onDeleteSchedule={onDeleteSchedule}
           />
         )}
-      <Messages
-        messages={messages}
-        working={working}
-        seenBy={seenByHandles(members, messages)}
-      />
+      {/* The thread and the canvas, side by side on a desktop pane and one at a
+          time on a phone — but always INSIDE the chat. The stack and the
+          composer sit under both, so looking at the canvas never costs you the
+          conversation or the ability to say something about what you see. */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {threadVisible && (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <Messages
+              messages={messages}
+              working={working}
+              seenBy={seenByHandles(members, messages)}
+            />
+          </div>
+        )}
+        {canvasVisible &&
+          onSelectPage &&
+          onNewPage &&
+          onRenamePage &&
+          onRemovePage &&
+          onPlaceWidget &&
+          onStackWidget &&
+          onAnswerWidget && (
+            <div
+              className={cn(
+                'flex min-h-0 min-w-0 flex-1 flex-col',
+                threadVisible && 'border-l',
+              )}
+            >
+              <WidgetCanvas
+                pages={pages}
+                widgets={canvasWidgets ?? []}
+                activePageId={activePageId ?? null}
+                busy={busy}
+                onSelectPage={onSelectPage}
+                onNewPage={onNewPage}
+                onRenamePage={onRenamePage}
+                onRemovePage={onRemovePage}
+                onPlaceWidget={onPlaceWidget}
+                onStackWidget={onStackWidget}
+                onAnswerWidget={onAnswerWidget}
+              />
+            </div>
+          )}
+      </div>
       {onAnswerWidget && onDismissWidget && widgets && widgets.length > 0 && (
         <WidgetStack
           widgets={widgets}
           busy={busy}
           onAnswerWidget={onAnswerWidget}
           onDismissWidget={onDismissWidget}
+          // Only when there IS a page to send it to. A pin button on a chat
+          // with no canvas would be an affordance pointing nowhere.
+          onPinWidget={
+            onPlaceWidget && landingPage
+              ? (widgetId) => {
+                  // No corner on purpose — see onPlaceWidget's note.
+                  onPlaceWidget(widgetId, { pageId: landingPage })
+                }
+              : undefined
+          }
         />
       )}
       <Composer

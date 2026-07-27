@@ -11,16 +11,26 @@ import type { Database } from '@hull/db/client'
 import {
   addMessage,
   addWidget,
+  createCanvasPage,
   dismissWidget,
   findChatForSession,
+  listCanvasPages,
+  placeWidget,
+  renameCanvasPage,
   reorderWidget,
+  stackWidget,
 } from './service'
 import {
   describeWidgetKinds,
   knownWidgetKinds,
   validateWidgetProps,
 } from './widget-catalog'
-import { offeredAnswer, type JsonValue } from './widgets'
+import {
+  CANVAS_COLUMNS,
+  offeredAnswer,
+  type CanvasBox,
+  type JsonValue,
+} from './widgets'
 
 // The agent-facing door onto a chat: the tools an agent's own turn uses to SPEAK
 // and to put a widget in front of the crew.
@@ -58,10 +68,18 @@ const POST_PARAMS = Type.Object({
 
 const WIDGET_PARAMS = Type.Object({
   action: Type.Union(
-    [Type.Literal('raise'), Type.Literal('reorder'), Type.Literal('dismiss')],
+    [
+      Type.Literal('raise'),
+      Type.Literal('reorder'),
+      Type.Literal('dismiss'),
+      Type.Literal('place'),
+      Type.Literal('stack'),
+      Type.Literal('new_page'),
+      Type.Literal('rename_page'),
+    ],
     {
       description:
-        '"raise" a new widget, "reorder" one already up, or "dismiss" one that no longer matters.',
+        '"raise" a new widget, "reorder" one already up, "dismiss" one that no longer matters, "place" one onto a canvas page, "stack" one back above the composer, "new_page"/"rename_page" for the canvas pages themselves.',
     },
   ),
   kind: Type.Optional(
@@ -69,6 +87,31 @@ const WIDGET_PARAMS = Type.Object({
       description:
         'raise: which kind of widget — one of the kinds listed in this tool’s description.',
     }),
+  ),
+  page: Type.Optional(
+    Type.String({
+      description:
+        'raise/place/rename_page: which canvas page, by its name (or its id). Omit on place to use the chat’s first page.',
+    }),
+  ),
+  title: Type.Optional(
+    Type.String({ description: 'new_page/rename_page: the page’s name.' }),
+  ),
+  gridX: Type.Optional(
+    Type.Number({
+      description: `raise/place: column, 0…${String(CANVAS_COLUMNS - 1)}. Omit both gridX and gridY to be given the first free slot.`,
+    }),
+  ),
+  gridY: Type.Optional(
+    Type.Number({ description: 'raise/place: row, 0 is top.' }),
+  ),
+  gridW: Type.Optional(
+    Type.Number({
+      description: `raise/place: width in columns, 1…${String(CANVAS_COLUMNS)}.`,
+    }),
+  ),
+  gridH: Type.Optional(
+    Type.Number({ description: 'raise/place: height in rows.' }),
   ),
   props: Type.Optional(
     // A free-form object, because the shape depends on the kind. The kinds and
@@ -105,6 +148,25 @@ function said(text: string, id: string | null = null) {
   return { content: [{ type: 'text' as const, text }], details: { id } }
 }
 
+/**
+ * The grid cells a call asked for, with anything it left out left out — so
+ * `placeWidget` can tell "put it at column 2" from "find it a slot", which is
+ * the difference between honouring an agent's layout and inventing one.
+ */
+function boxFrom(params: {
+  gridX?: number
+  gridY?: number
+  gridW?: number
+  gridH?: number
+}): Partial<CanvasBox> {
+  return {
+    ...(params.gridX === undefined ? {} : { gridX: params.gridX }),
+    ...(params.gridY === undefined ? {} : { gridY: params.gridY }),
+    ...(params.gridW === undefined ? {} : { gridW: params.gridW }),
+    ...(params.gridH === undefined ? {} : { gridH: params.gridH }),
+  }
+}
+
 /** A JSON-encoded list, or a comma list, read back into an array of strings. */
 function asList(value: string): string[] {
   try {
@@ -135,10 +197,34 @@ function asList(value: string): string[] {
  */
 export function prepareWidgetArgs(args: unknown): unknown {
   if (typeof args !== 'object' || args === null) return args
-  const { action, kind, props, widgetId, stackOrder, ...rest } = args as Record<
-    string,
-    unknown
-  >
+  // EVERY named parameter is destructured out here, not just the ones the shims
+  // touch: whatever is left over is treated as a flattened props blob below, so
+  // a `page` left in `rest` would be swept into `props` and the call would lose
+  // the page it was meant to land on.
+  const {
+    action,
+    kind,
+    props,
+    widgetId,
+    stackOrder,
+    page,
+    title,
+    gridX,
+    gridY,
+    gridW,
+    gridH,
+    ...rest
+  } = args as Record<string, unknown>
+  const named = {
+    widgetId,
+    stackOrder,
+    page,
+    title,
+    gridX,
+    gridY,
+    gridW,
+    gridH,
+  }
 
   let blob: Record<string, unknown> | undefined
   if (typeof props === 'string') {
@@ -176,8 +262,9 @@ export function prepareWidgetArgs(args: unknown): unknown {
     action,
     ...(resolvedKind === undefined ? {} : { kind: resolvedKind }),
     props: blob,
-    ...(widgetId === undefined ? {} : { widgetId }),
-    ...(stackOrder === undefined ? {} : { stackOrder }),
+    ...Object.fromEntries(
+      Object.entries(named).filter(([, value]) => value !== undefined),
+    ),
   }
 }
 
@@ -252,6 +339,15 @@ function chatPostTool(
  * an agent can fix that mid-turn, which is worth far more than a dud tile in a
  * human's face. The CLI still stores a bad blob on purpose, because seeing the
  * honest tile is how a human learns what the ship does with one.
+ *
+ * The CANVAS actions live on this same tool rather than a second one, because
+ * they are the same act with a different half-life: `raise` puts something in
+ * front of you now (the stack, turn-shaped), `place` puts something where you'll
+ * keep looking at it (a canvas page, state-shaped). `stack` moves a canvas widget
+ * back above the composer, which is how an agent raises a readout for attention —
+ * an ordinary update, no separate "alert" mechanism. What is deliberately absent
+ * is any way to move a PERSON's view: which page somebody is looking at is theirs
+ * (see `chat_view_state`), and the turn context says so out loud.
  */
 function chatWidgetTool(
   chat: { chatId: string },
@@ -259,22 +355,77 @@ function chatWidgetTool(
   asActor: AsActor,
 ): ToolDefinition {
   const vocabulary = describeWidgetKinds(knownWidgetKinds())
+
+  /**
+   * The page an action means, by NAME or by id — an agent reads page names in
+   * its turn context and has no reason to know an id. Omitted means the chat's
+   * first page, so the common "put it on the canvas" needs no lookup at all.
+   * A miss lists the real pages, because that's a mistake the agent can fix on
+   * the spot.
+   */
+  async function resolvePage(name: string | undefined): Promise<string> {
+    const pages = await asActor(agentUserId, (tx) =>
+      listCanvasPages(tx, chat.chatId),
+    )
+    if (pages.length === 0)
+      throw new Error(
+        'this chat has no canvas pages yet — make one with action "new_page" first',
+      )
+    const wanted = name?.trim()
+    if (!wanted) return pages[0].id
+    const found = pages.find(
+      (p) => p.id === wanted || p.title.toLowerCase() === wanted.toLowerCase(),
+    )
+    if (!found)
+      throw new Error(
+        `no canvas page called “${wanted}” — this chat's pages are: ${pages
+          .map((p) => p.title)
+          .join(', ')}`,
+      )
+    return found.id
+  }
+
   return defineTool({
     name: 'chat_widget',
     label: 'Raise a widget in the chat',
     description:
-      'Put a live little view above the crew’s composer: "raise" adds one, "reorder" moves one already up, "dismiss" takes down one that no longer matters. A widget the crew can answer (a question with known answers) comes back as an ordinary chat message — prefer that over typing the question, it is one tap on a phone instead of a sentence.\n\n' +
+      'Put a live little view in front of the crew. Two surfaces: the STACK above the composer is turn-shaped — "raise" something you need an answer or a glance at right now, "reorder" it, "dismiss" it when it stops mattering. The CANVAS is state-shaped — pages of tiles the crew arranged and keep coming back to; "place" a widget on a page (or "raise" with a page), "stack" it back above the composer when it needs attention now, and "new_page"/"rename_page" to manage the pages. A widget the crew can answer (a question with known answers) comes back as an ordinary chat message — prefer that over typing the question, it is one tap on a phone instead of a sentence. Each person chooses their own canvas page; you cannot move anyone’s view, so say where you put something.\n\n' +
       vocabulary,
     promptSnippet:
-      'chat_widget(action, kind, props) — raise a live view above the composer, or reorder/dismiss one.',
+      'chat_widget(action, kind, props) — raise a live view above the composer, place one on a canvas page, or reorder/dismiss/move one.',
     promptGuidelines: [
       'When you need a decision from the crew and you know the possible answers, raise a `chat_widget` of kind `choice` instead of asking in prose — they tap, and the answer comes back as a message.',
       'The kinds this ship can render, and the props each one takes, are listed in `chat_widget`’s own description. Read it before raising one.',
+      'Something the crew will want to keep an eye on belongs on the canvas (`place`), not the stack — the stack is for what needs answering now, and it clears.',
     ],
     parameters: WIDGET_PARAMS,
     prepareArguments: (args) =>
       prepareWidgetArgs(args) as Static<typeof WIDGET_PARAMS>,
     execute: async (_toolCallId, params) => {
+      if (params.action === 'new_page') {
+        const title = params.title?.trim()
+        if (!title) throw new Error('new_page needs a title')
+        const id = uuidv7()
+        await asActor(agentUserId, (tx) =>
+          createCanvasPage(tx, {
+            id,
+            chatId: chat.chatId,
+            title,
+            actorId: agentUserId,
+          }),
+        )
+        return said(`Added the canvas page “${title}” to this chat.`, id)
+      }
+      if (params.action === 'rename_page') {
+        const title = params.title?.trim()
+        if (!title) throw new Error('rename_page needs a title')
+        const pageId = await resolvePage(params.page)
+        await asActor(agentUserId, (tx) =>
+          renameCanvasPage(tx, { pageId, title, actorId: agentUserId }),
+        )
+        return said(`Renamed the canvas page to “${title}”.`, pageId)
+      }
+
       if (params.action === 'raise') {
         const kind = params.kind?.trim()
         if (!kind)
@@ -287,17 +438,35 @@ function chatWidgetTool(
         // should see the current one rather than the one it booted with.
         const fault = validateWidgetProps(knownWidgetKinds(), kind, props)
         if (fault) throw new Error(fault)
+        // A named page means "this belongs on the canvas" — resolved BEFORE the
+        // row is written, so a bad page name doesn't leave a widget stranded in
+        // the stack the agent then has to find and move.
+        const pageId =
+          params.page === undefined ? null : await resolvePage(params.page)
         const id = uuidv7()
-        await asActor(agentUserId, (tx) =>
-          addWidget(tx, {
+        await asActor(agentUserId, async (tx) => {
+          await addWidget(tx, {
             id,
             chatId: chat.chatId,
             kind,
             props,
             stackOrder: params.stackOrder,
             createdById: agentUserId,
-          }),
-        )
+          })
+          if (pageId !== null) {
+            await placeWidget(tx, {
+              widgetId: id,
+              actorId: agentUserId,
+              pageId,
+              ...boxFrom(params),
+            })
+          }
+        })
+        if (pageId !== null)
+          return said(
+            `Put a ${kind} widget (${id}) on the canvas page “${params.page ?? ''}”. It stays there until somebody moves it.`,
+            id,
+          )
         return said(
           `Raised a ${kind} widget (${id}) above the composer. The crew can see it${
             offeredAnswer(props)
@@ -316,6 +485,31 @@ function chatWidgetTool(
           dismissWidget(tx, { widgetId, actorId: agentUserId }),
         )
         return said(`Dismissed widget ${widgetId}.`)
+      }
+      if (params.action === 'place') {
+        const pageId = await resolvePage(params.page)
+        await asActor(agentUserId, (tx) =>
+          placeWidget(tx, {
+            widgetId,
+            actorId: agentUserId,
+            pageId,
+            ...boxFrom(params),
+          }),
+        )
+        return said(`Placed widget ${widgetId} on the canvas.`, widgetId)
+      }
+      if (params.action === 'stack') {
+        await asActor(agentUserId, (tx) =>
+          stackWidget(tx, {
+            widgetId,
+            actorId: agentUserId,
+            stackOrder: params.stackOrder,
+          }),
+        )
+        return said(
+          `Moved widget ${widgetId} off the canvas and back above the composer, where the crew will see it next.`,
+          widgetId,
+        )
       }
       if (params.stackOrder === undefined)
         throw new Error('reorder needs a stackOrder to move the widget to')

@@ -65,5 +65,28 @@ export interface ChatAgentProgressPayload {
  */
 export const CHAT_WIDGET_CHANGED = 'chat.widget_changed'
 
-/** What happened to a widget. Named so a subscriber can tell apart the reasons. */
-export type ChatWidgetChange = 'raised' | 'answered' | 'dismissed' | 'reordered'
+/**
+ * What happened to a widget. Named so a subscriber can tell apart the reasons.
+ * `placed` covers a move between the stack and a canvas page, and a drag or
+ * resize within one — all of which are the same ordinary row update.
+ */
+export type ChatWidgetChange =
+  | 'raised'
+  | 'answered'
+  | 'dismissed'
+  | 'reordered'
+  | 'placed'
+
+/**
+ * The event a change to a chat's canvas PAGES announces — created, renamed,
+ * reordered, removed. Rides `chat:<id>` like everything else chat emits, so a
+ * member's open browser refreshes the page strip off the subscription it already
+ * holds.
+ *
+ * Distinct from `chat.widget_changed` because a page is not a widget: a
+ * subscriber that only cares about the stack shouldn't refetch because somebody
+ * renamed a page. Note what is deliberately NOT here: which page a person is
+ * LOOKING at emits nothing at all — that's per-viewer state, not news for the
+ * rest of the crew (see `chat_view_state` in schema.ts).
+ */
+export const CHAT_CANVAS_CHANGED = 'chat.canvas_changed'

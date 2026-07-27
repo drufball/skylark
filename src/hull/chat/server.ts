@@ -10,6 +10,7 @@ import {
   addMessage,
   answerWidget,
   canAuthorSchedule,
+  createCanvasPage,
   createChat,
   createSchedule,
   deleteSchedule,
@@ -17,15 +18,23 @@ import {
   ensureChatVisible,
   getChat,
   getSchedule,
+  getViewPage,
+  listCanvasPages,
+  listCanvasWidgets,
   listChatSummaries,
   listMembers,
   listMessages,
   listOpenWidgets,
   listSchedules,
+  placeWidget,
+  removeCanvasPage,
   removeMember,
+  renameCanvasPage,
   scheduleTiming,
   setScheduleEnabled,
   setTitle,
+  setViewPage,
+  stackWidget,
 } from './service'
 
 // The web doors onto the chat service. Every door runs under `withCurrentActor`,
@@ -261,6 +270,122 @@ export const dismissChatWidget = createServerFn({ method: 'POST' })
   .handler(({ data }) =>
     withCurrentActor(async (tx, me) => {
       await dismissWidget(tx, { widgetId: data.widgetId, actorId: me.id })
+      return { ok: true }
+    }),
+  )
+
+// --- The canvas ------------------------------------------------------------
+//
+// The chat's second surface: pages of widgets the crew arranged, beside the
+// thread rather than instead of it. Every door is RLS-gated by chat membership
+// like the rest of chat, and `chat_view_state` carries a tighter policy still —
+// you may only touch your OWN row, because which page you're looking at is
+// yours (migration 0034).
+//
+// Unlike the stack, arranging IS a browser move: a drag or a resize is a
+// placement write. So the placement doors live here as well as on the agent's
+// tool, and they're the same service call either way.
+
+/**
+ * Everything the canvas needs in one read: the chat's pages, every widget
+ * arranged on them (all pages at once, so switching tabs is instant), and the
+ * page THIS person had open last time. A non-member is refused before any of it.
+ */
+export const getChatCanvas = createServerFn({ method: 'GET' })
+  .validator((chatId: string) => chatId)
+  .handler(({ data: chatId }) =>
+    withCurrentActor(async (tx, me) => {
+      await ensureChatVisible(tx, chatId)
+      const pages = await listCanvasPages(tx, chatId)
+      const widgets = await listCanvasWidgets(tx, chatId)
+      return {
+        pages,
+        widgets,
+        viewPageId: await getViewPage(tx, chatId, me.id),
+      }
+    }),
+  )
+
+/** Add a page to the canvas — it lands at the end of the strip. */
+export const createChatPage = createServerFn({ method: 'POST' })
+  .validator((input: { chatId: string; title: string }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await ensureChatVisible(tx, data.chatId)
+      const row = await createCanvasPage(tx, {
+        id: uuidv7(),
+        chatId: data.chatId,
+        title: data.title,
+        actorId: me.id,
+      })
+      return { id: row.id }
+    }),
+  )
+
+/** Rename a page — RLS gates it to a member of the page's chat. */
+export const renameChatPage = createServerFn({ method: 'POST' })
+  .validator((input: { pageId: string; title: string }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await renameCanvasPage(tx, { ...data, actorId: me.id })
+      return { ok: true }
+    }),
+  )
+
+/** Remove an EMPTY page. One holding widgets is refused, never cascaded away. */
+export const removeChatPage = createServerFn({ method: 'POST' })
+  .validator((input: { pageId: string }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await removeCanvasPage(tx, { pageId: data.pageId, actorId: me.id })
+      return { ok: true }
+    }),
+  )
+
+/**
+ * Put a widget on a canvas page, or move/resize one already there — the write
+ * behind a drag. Coordinates are clamped into the grid by the service, so a
+ * pointer that overshot the pane can't store a tile off the edge.
+ */
+export const placeChatWidget = createServerFn({ method: 'POST' })
+  .validator(
+    (input: {
+      widgetId: string
+      pageId: string
+      gridX?: number
+      gridY?: number
+      gridW?: number
+      gridH?: number
+    }) => input,
+  )
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await placeWidget(tx, { ...data, actorId: me.id })
+      return { ok: true }
+    }),
+  )
+
+/** Take a widget off the canvas, back to the stack above the composer. */
+export const stackChatWidget = createServerFn({ method: 'POST' })
+  .validator((input: { widgetId: string }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await stackWidget(tx, { widgetId: data.widgetId, actorId: me.id })
+      return { ok: true }
+    }),
+  )
+
+/**
+ * Remember the page THIS person is looking at, so a reload puts them back.
+ * Always the current actor's own row — the door doesn't take a userId, and the
+ * policy wouldn't allow another one if it did.
+ */
+export const setChatViewPage = createServerFn({ method: 'POST' })
+  .validator((input: { chatId: string; pageId: string | null }) => input)
+  .handler(({ data }) =>
+    withCurrentActor(async (tx, me) => {
+      await ensureChatVisible(tx, data.chatId)
+      await setViewPage(tx, { ...data, userId: me.id })
       return { ok: true }
     }),
   )

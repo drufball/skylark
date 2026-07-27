@@ -13,11 +13,13 @@ import { createUser } from '@hull/users/service'
 import { type ChatAgentRuntime, createChatOrchestrator } from './orchestrator'
 import {
   addMessage,
+  createCanvasPage,
   createChat,
   listMembers,
   listMessages,
   messagesSinceAgent,
   setMemberProgress,
+  setViewPage,
 } from './service'
 import { chatMembers } from './schema'
 import { CHAT_MESSAGE_POSTED, chatTopic } from './topic'
@@ -1030,6 +1032,62 @@ describe('chat orchestrator', () => {
     expect(prompt).not.toContain('npm run chat -- post')
     // The actual conversation still follows the header.
     expect(prompt).toContain('@dru: plan?')
+  })
+
+  it('tells the agent which canvas page EACH person is looking at', async () => {
+    // "What's this?" is answerable only if the agent knows what's in front of
+    // the person who asked — and that's per person: two members of one chat can
+    // be on two different pages, so the header names both rather than claiming
+    // the chat has a page.
+    const chatId = uuidv7()
+    const sam = uuidv7()
+    await createUser(db, {
+      id: sam,
+      handle: 'sam',
+      displayName: 'Sam',
+      type: 'human',
+    })
+    await createChat(db, { id: chatId, memberIds: [dru, sam, tilde] })
+    const ops = uuidv7()
+    await createCanvasPage(db, {
+      id: ops,
+      chatId,
+      title: 'Ops',
+      actorId: dru,
+    })
+    await setViewPage(db, { chatId, userId: dru, pageId: ops })
+    await addMessage(db, {
+      id: uuidv7(),
+      chatId,
+      authorId: dru,
+      body: '@tilde what is this?',
+    })
+
+    const runtime = promptRecordingRuntime('that is the deploy meter')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.respond({ chatId, authorId: dru, body: '@tilde what is this?' })
+
+    const [prompt] = runtime.prompts
+    expect(prompt).toContain('@dru — canvas page “Ops”')
+    // Sam hasn't opened the canvas; say so rather than implying the crew shares
+    // one view.
+    expect(prompt).toContain('@sam — the thread')
+    // And the agent is told the line it must not cross in this slice.
+    expect(prompt).toMatch(/cannot move.*view/i)
+  })
+
+  it('says nothing about the canvas in a chat that has none', async () => {
+    // A chat with no pages is every chat today; a header paragraph about a
+    // surface that doesn't exist is noise in every single turn.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    const runtime = promptRecordingRuntime('hello')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+    expect(runtime.prompts[0]).not.toContain('LOOKING AT')
   })
 
   it("wake runs a briefed turn on the agent's own inbox session, posting nothing to a chat", async () => {

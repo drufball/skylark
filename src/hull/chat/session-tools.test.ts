@@ -15,6 +15,8 @@ import { createChatSessionTools, prepareWidgetArgs } from './session-tools'
 import {
   addMessage,
   createChat,
+  listCanvasPages,
+  listCanvasWidgets,
   listMessages,
   listOpenWidgets,
   listWidgets,
@@ -65,6 +67,11 @@ function call(tool: ToolDefinition, params: unknown): Promise<ToolResult> {
     undefined,
     undefined as unknown as ExtensionContext,
   )
+}
+
+/** The id a tool result reported creating — how the next call names it. */
+function createdId(result: ToolResult): string {
+  return defined((result.details as { id?: string | null }).id)
 }
 
 /** The text a tool result said, joined — what the model reads back. */
@@ -311,6 +318,155 @@ describe('chat session tools', () => {
     // The membership row must be BOTH this session's and this agent's, so a
     // session id can never be borrowed to speak as somebody else.
     expect(await toolsFor({ sessionId, agentUserId: bix })).toEqual([])
+  })
+
+  // --- The canvas doors ----------------------------------------------------
+  //
+  // Same tool, because they are the same act: deciding what the crew should have
+  // in front of them. `place` is the state-shaped half of `raise`.
+
+  it('creates a canvas page and names it', async () => {
+    const widget = await toolNamed('chat_widget')
+    const result = await call(widget, { action: 'new_page', title: 'Ops' })
+    expect(await listCanvasPages(db, chatId)).toMatchObject([{ title: 'Ops' }])
+    expect(resultText(result)).toContain('Ops')
+  })
+
+  it('renames a page it can name rather than needing its id', async () => {
+    const widget = await toolNamed('chat_widget')
+    await call(widget, { action: 'new_page', title: 'Untitled' })
+    await call(widget, {
+      action: 'rename_page',
+      page: 'Untitled',
+      title: 'Standup',
+    })
+    expect(await listCanvasPages(db, chatId)).toMatchObject([
+      { title: 'Standup' },
+    ])
+  })
+
+  it('raises a widget straight onto a canvas page', async () => {
+    const widget = await toolNamed('chat_widget')
+    await call(widget, { action: 'new_page', title: 'Ops' })
+    const result = await call(widget, {
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'deploys today: 4' },
+      page: 'Ops',
+    })
+    expect(await listOpenWidgets(db, chatId)).toEqual([])
+    expect(await listCanvasWidgets(db, chatId)).toMatchObject([
+      { kind: 'note', placement: 'canvas' },
+    ])
+    expect(resultText(result)).toContain('Ops')
+  })
+
+  it('moves a widget from the stack to the canvas, and back again', async () => {
+    const widget = await toolNamed('chat_widget')
+    await call(widget, { action: 'new_page', title: 'Ops' })
+    const raised = await call(widget, {
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'a readout' },
+    })
+    const widgetId = createdId(raised)
+
+    await call(widget, { action: 'place', widgetId, page: 'Ops' })
+    expect(await listCanvasWidgets(db, chatId)).toHaveLength(1)
+
+    // The move back is how an agent RAISES a canvas widget for attention: an
+    // ordinary update, no special mechanism.
+    await call(widget, { action: 'stack', widgetId })
+    expect(await listCanvasWidgets(db, chatId)).toEqual([])
+    expect(await listOpenWidgets(db, chatId)).toHaveLength(1)
+  })
+
+  it('places at the cells it was given, clamped into the grid', async () => {
+    const widget = await toolNamed('chat_widget')
+    await call(widget, { action: 'new_page', title: 'Ops' })
+    const raised = await call(widget, {
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'wide' },
+    })
+    await call(widget, {
+      action: 'place',
+      widgetId: createdId(raised),
+      page: 'Ops',
+      gridX: 0,
+      gridY: 1,
+      gridW: 99,
+      gridH: 2,
+    })
+    expect(await listCanvasWidgets(db, chatId)).toMatchObject([
+      { gridX: 0, gridY: 1, gridW: 4, gridH: 2 },
+    ])
+  })
+
+  it('lands on the only page when the agent named none', async () => {
+    const widget = await toolNamed('chat_widget')
+    await call(widget, { action: 'new_page', title: 'Ops' })
+    const raised = await call(widget, {
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'a readout' },
+    })
+    await call(widget, {
+      action: 'place',
+      widgetId: createdId(raised),
+    })
+    expect(await listCanvasWidgets(db, chatId)).toHaveLength(1)
+  })
+
+  it('says which pages exist when it is asked for one that does not', async () => {
+    // The agent can fix this mid-turn, which is the whole reason the refusal
+    // carries the list rather than just saying no.
+    const widget = await toolNamed('chat_widget')
+    await call(widget, { action: 'new_page', title: 'Ops' })
+    const raised = await call(widget, {
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'a readout' },
+    })
+    await expect(
+      call(widget, {
+        action: 'place',
+        widgetId: createdId(raised),
+        page: 'Numbers',
+      }),
+    ).rejects.toThrow(/Ops/)
+  })
+
+  it('tells the agent to make a page when the chat has no canvas yet', async () => {
+    const widget = await toolNamed('chat_widget')
+    const raised = await call(widget, {
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'a readout' },
+    })
+    await expect(
+      call(widget, {
+        action: 'place',
+        widgetId: createdId(raised),
+      }),
+    ).rejects.toThrow(/new_page/)
+  })
+
+  it('describes the canvas in its own description, so an agent knows it exists', async () => {
+    const widget = await toolNamed('chat_widget')
+    expect(widget.description).toContain('canvas')
+    // The kinds are still GENERATED from the catalog, not written twice.
+    expect(widget.description).toContain('note — A small markdown card.')
+  })
+
+  it('has no door for moving somebody else’s view — that is deliberate', async () => {
+    // Agent-driven focus is a later, carefully-designed thing. Until then the
+    // tool must not even suggest it: an agent that believes it can move a
+    // person's page will try, and waste a turn discovering it can't.
+    const widget = await toolNamed('chat_widget')
+    const actions = JSON.stringify(widget.parameters)
+    expect(actions).not.toContain('focus')
+    expect(actions).not.toContain('view')
   })
 
   it('posts an ordinary chat message authored by the agent itself', async () => {

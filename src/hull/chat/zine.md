@@ -1,6 +1,6 @@
 # Chat
 
-_chat zine — issue #cse3_
+_chat zine — issue #cse4_
 
 ## tl;dr
 
@@ -12,11 +12,16 @@ drives its backing agent session — and **the agent speaks for itself**, by
 calling `chat_post` from inside its own turn. Chat posts nothing on anybody's
 behalf.
 
-A chat also carries **widgets** — live little views the crew keeps open
-together, in a stack above the composer. A widget instance is not data; it's a
-piece of the conversation. Agents raise them from their own turns too
-(`chat_widget`), which is how a question with known answers becomes one tap
-instead of a sentence.
+A chat also carries **widgets** — live little views the crew keeps open together
+— on two surfaces. The **stack** above the composer is turn-shaped: ephemeral,
+answer-shaped things an agent needs from you right now. The **canvas** is
+state-shaped: pages of readouts and controls the crew arranged, beside the
+thread, staying where they were put. A widget instance is not data; it's a piece
+of the conversation, and it crosses between the two surfaces by an ordinary row
+update. Agents raise and place them from their own turns (`chat_widget`), which
+is how a question with known answers becomes one tap instead of a sentence — and
+how a chat becomes the app you and these people built for this task, with the
+agent right there beside it.
 
 The one idea that shapes everything: **the clean chat transcript and the agent's
 full tool-call transcript are two surfaces over one conversation.** The seam
@@ -108,6 +113,30 @@ rigging.
   answers (a `note`, an `issue-list`) simply has no options on its blob, so
   answering it is refused for free — and so is answering a blob an agent
   malformed.
+- **Canvas page** — a row in `chat_canvas_pages`: one page of a chat's canvas,
+  with a title and a place in the strip. Pages are EXPLICIT rows rather than
+  implied by whichever widgets carry a page number, because the two things we
+  most want are impossible otherwise: an empty page you just made, and a page
+  with a name and an order. Rides chat membership under RLS (migration 0034),
+  deferring to migration 0007's `app_can_see_chat` like every other chat-scoped
+  table. Removing one is refused while it still holds widgets.
+- **Placement** — `chat_widgets.placement`, the discriminator: `stack` or
+  `canvas`. A canvas row also carries `pageId` and a cell rectangle
+  (`gridX/gridY/gridW/gridH`), clamped into a four-column grid by
+  `clampCanvasBox` at every door. Moving between surfaces is `placeWidget` /
+  `stackWidget` — one update, no special mechanism.
+- **Canvas geometry** (`widgets.ts`) — the pure, node-free arithmetic BOTH sides
+  need: `CANVAS_COLUMNS`, `clampCanvasBox` (whole cells, never off an edge),
+  `nextCanvasSlot` (the first free cell, left-to-right then down) and
+  `freeCanvasBox` (the box you asked for, or the first free one of that size).
+  The doors clamp with it and the browser draws from it, so a dragged tile and a
+  stored row cannot disagree.
+- **View state** — a row in `chat_view_state`, one per (chat, user): the canvas
+  page THIS person has open. Per viewer, never per chat (see the decision
+  below); persisted so a reload puts you back; read by the orchestrator to brief
+  an agent about the person it's answering. Its RLS policy adds a second clause
+  to membership — `user_id` must be the acting user — so no actor, agent
+  included, can read or move somebody else's view.
 - **Widget kinds** — what a `kind` MEANS (how it renders, what its props are,
   which topics keep it live) is the rigging **catalog**'s, not the hull's:
   [`rigging/widgets/zine.md`](../../rigging/widgets/zine.md). Three kinds today
@@ -123,15 +152,17 @@ rigging.
 - **Dismissal** — `dismissedAt` set. The widget leaves the stack; the row
   survives as history — what was asked, of whom, and when it stopped being open.
 - **Doors** — three, and each has a body it belongs to. `server.ts` (the **web**
-  doors; the front-door route is the chat UI: read the stack, answer, wave
-  away). `session-tools.ts` (the **agent** doors, from inside a turn:
-  `chat_post`, `chat_widget`). `cli.ts` (`npm run chat`, the **human/debug**
-  door and the only one a session with no chat has: `list`,
-  `show <chatId> [--limit N]`, `post <chatId> <message>` — how a woken agent on
-  its inbox session finds a chat and posts to it from bash — plus
-  `schedule new|list|rm` and `widget new|list|answer|dismiss|reorder`). The chat
-  view carries a modest schedules affordance (list + create + enable/disable +
-  delete).
+  doors; the front-door route is the chat UI: read the stack, answer, wave away,
+  and — because arranging IS a browser move — the canvas reads, the page CRUD,
+  `placeChatWidget`/`stackChatWidget` and `setChatViewPage`). `session-tools.ts`
+  (the **agent** doors, from inside a turn: `chat_post`, `chat_widget`).
+  `cli.ts` (`npm run chat`, the **human/debug** door and the only one a session
+  with no chat has: `list`, `show <chatId> [--limit N]`,
+  `post <chatId> <message>` — how a woken agent on its inbox session finds a
+  chat and posts to it from bash — plus `schedule new|list|rm`,
+  `widget new|list|answer|dismiss|reorder|place|stack` and
+  `page new|list|rename|rm`). The chat view carries a modest schedules
+  affordance (list + create + enable/disable + delete).
 
 ## Structure
 
@@ -213,6 +244,28 @@ a message, so the agent's next turn sees it in its unread tail and answers with
 `chat_post`. **That loop — an agent raises a question, a thumb taps it on a
 phone, the answer arrives as a message, the agent responds — is the whole thesis
 of the project in one interaction.**
+
+**A canvas, end to end.** Somebody makes a page (`chat_widget` action
+`new_page`, the `+` in the page strip, or `npm run chat -- page new`) → the row
+lands and a `chat.canvas_changed` event goes out on the chat's **existing**
+`chat:<id>` topic, so every member's open browser refreshes its page strip. A
+widget gets onto it by an ordinary update: the crew pins one down from the stack
+(the tile's canvas button), drags or resizes it once it's there, or an agent
+calls `chat_widget` with `place`. Every one of those paths lands in
+`placeWidget`, which clamps the box into the grid and — if those cells are
+already occupied — puts the tile in the first free slot instead, so the canvas
+never draws two tiles on top of each other. The row announces itself as
+`chat.widget_changed` with change `placed`. On a desktop pane the page is a grid
+you arrange beside the thread; on a phone the same page is one column in
+arrangement order (`gridY` then `gridX` — the order the read already uses), with
+the pages swipeable and tabbable. See
+[`rigging/widgets/zine.md`](../../rigging/widgets/zine.md) for the two layouts.
+
+**Which page you're looking at.** Opening a page writes YOUR `chat_view_state`
+row and nothing else — no event, no invalidation for anyone else. When the
+orchestrator builds a reply turn it reads `listChatViewers` and tells the agent
+which page each human has open, so "what's this?" is answerable; the same
+paragraph tells the agent it cannot move anybody's view.
 
 **Identity.** Every door resolves the acting user with `currentActor()` (see the
 users zine) — you never tell the system it's you. Creating a chat always
@@ -448,6 +501,52 @@ agent.
   on the way in (stringified props, a stringified nested list, the whole blob
   flattened beside `action`) — same reasoning as the original shim: the failure
   it prevents is a question that never reaches a human's thumb.
+- **The stack is turn-shaped; the canvas is state-shaped.** That division of
+  labour is the design rule, and it's what stops the two surfaces collapsing
+  into one pile of widgets. The **stack** holds what an agent needs from you
+  RIGHT NOW — a question with known answers, a glance before it acts — and it
+  clears as you deal with it. The **canvas** holds what you decided is worth
+  keeping in front of you: readouts and controls you arranged, on named pages,
+  which stay put. When you ask "which surface?", ask "does this expire when it's
+  been dealt with?" A widget crosses between them by updating `placement` — an
+  ordinary write, deliberately not a special mechanism, because that same write
+  is how an agent RAISES a canvas widget for attention (`stack`) without any
+  separate alert channel existing.
+- **The canvas lives INSIDE the chat, and is not a destination.** On a desktop
+  pane it sits beside the message thread; on a phone, where they cannot both
+  fit, a Thread/Canvas toggle in the chat's own header switches between them and
+  the composer stays under both. There is no third route and no free-floating
+  pane that retargets to a different chat — an earlier design with one was
+  rejected for being confusing. The point of the whole surface is that you never
+  leave the conversation to look at the thing you built, so the moment the
+  canvas becomes somewhere you GO, it has lost the argument.
+- **Which page you're looking at is a property of the PERSON, not the chat.**
+  Three people in one chat can be on three different pages, so `chat_view_state`
+  is keyed by (chat, user) and its RLS policy adds `user_id = the acting user`
+  on top of membership. Chat-wide "current page" state would mean every tab
+  someone else taps drags your view with it — a shared cursor nobody asked for.
+  Two things follow and are load-bearing: changing your view emits NO ship-log
+  event (your attention is not news for the crew, and an event would make it
+  so), and no door lets an actor write another's row. **An agent cannot move
+  your view in this slice** — the turn context says so out loud, and there is no
+  tool action for it — because agent-driven focus is a later, carefully-designed
+  thing, and getting it wrong means the ship yanks a page out from under
+  somebody mid-sentence.
+- **A canvas widget's box is clamped, and never allowed to overlap.** Agents
+  write coordinates by hand and overshoot, and a drag can land on an occupied
+  cell; both are refused-by-adjustment rather than refused outright, because a
+  write whose result the author never sees teaches them nothing (the same
+  reasoning that stores a malformed props blob). CSS grid will happily stack two
+  tiles, and the result reads as a rendering bug rather than a layout — observed
+  live — so `freeCanvasBox` makes the tile being MOVED yield to the first free
+  slot. The tiles already on the page are never shoved around: somebody laid
+  them out.
+- **A page is a row, and only an EMPTY one can be removed.** Explicit pages are
+  what make an empty page and a renamed page possible at all. Deleting one that
+  still holds widgets is refused at the door rather than cascading them away —
+  tidying up your tabs must never be the thing that destroys somebody's
+  arrangement. The FK cascade underneath is a backstop for the chat's own
+  deletion, not the path a human takes.
 - **The stack is a shelf, not a second pane.** It's height-capped and
   scrollable, and only one widget expands at a time, so however many widgets are
   open they cannot push the message thread off a phone screen. A widget lives
@@ -456,6 +555,17 @@ agent.
 
 ## Changelog
 
+- **#cse4 — The chat canvas.** A chat gets a spatial surface beside its thread:
+  `chat_canvas_pages` (migration 0033, RLS 0034), a `placement` discriminator on
+  `chat_widgets` plus a page and a clamped grid box, and `chat_view_state` — the
+  page THIS person has open, per viewer, persisted, and unreadable to anyone
+  else. The canvas renders as an arrangeable grid on a desktop pane and as one
+  column with swipeable pages on a phone, both INSIDE the chat
+  ([`rigging/widgets/zine.md`](../../rigging/widgets/zine.md)). `chat_widget`
+  gains `place`, `stack`, `new_page` and `rename_page`; the turn context tells
+  an agent which page each human is looking at, and that it may not move one.
+  `npm run chat -- page new|list|rename|rm` and `widget place|stack` are the
+  human/debug doors.
 - **#cse3 — The widget catalog moves to rigging.** Per-kind parsing and
   rendering leave `widgets.ts` and `chat.tsx` for the rigging catalog
   ([`rigging/widgets/zine.md`](../../rigging/widgets/zine.md)); the hull keeps
