@@ -50,3 +50,13 @@ export interface ChatAgentProgressPayload {
   agentUserId: string
   line: string
 }
+
+/**
+ * The event a change to a chat's widget stack announces. It rides the chat's own
+ * `chat:<id>` topic, so the browser's existing subscription picks widget changes
+ * up with no new transport — the stack refreshes the same way a new message does.
+ */
+export const CHAT_WIDGET_CHANGED = 'chat.widget_changed'
+
+/** What happened to a widget. Named so a subscriber can tell apart the reasons. */
+export type ChatWidgetChange = 'raised' | 'answered' | 'dismissed' | 'reordered'

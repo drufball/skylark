@@ -5,9 +5,12 @@ import { withCliActor } from '@hull/users/actor'
 
 import {
   addMessage,
+  addWidget,
+  answerWidget,
   canAuthorSchedule,
   createSchedule,
   deleteSchedule,
+  dismissWidget,
   ensureChatVisible,
   getChat,
   getSchedule,
@@ -15,8 +18,11 @@ import {
   listMembers,
   listMessages,
   listSchedules,
+  listWidgets,
+  reorderWidget,
   scheduleTiming,
 } from './service'
+import { parseProps } from './widgets'
 
 // The default door onto the chat service for an agent's own bash tool — how an
 // agent woken on its inbox session (hull/chat/orchestrator.ts `wake`) finds the
@@ -237,6 +243,165 @@ async function cmdSchedule(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * Parse `widget new`'s args: the chat id + the question (positional), the answer
+ * options, and an optional `--order` slot in the stack. Options come either as
+ * repeated `--option Yes --option No` or as one comma list `--options Yes,No` —
+ * both spellings, because an agent writing this from bash will reach for either.
+ * Pure + exported so it's tested directly, like `parseScheduleNewArgs`.
+ */
+export function parseWidgetNewArgs(args: string[]): {
+  chatId?: string
+  question: string
+  options: string[]
+  order?: number
+} {
+  const rest = [...args]
+  function takeFlag(name: string): string | undefined {
+    const at = rest.indexOf(name)
+    if (at === -1) return undefined
+    const value = rest.at(at + 1)
+    if (!value) throw new Error(`${name} requires a value`)
+    rest.splice(at, 2)
+    return value
+  }
+  /** Every occurrence of a repeatable flag, left to right. */
+  function takeAll(name: string): string[] {
+    const values: string[] = []
+    for (let v = takeFlag(name); v !== undefined; v = takeFlag(name)) {
+      values.push(v)
+    }
+    return values
+  }
+  const options = takeAll('--option')
+  for (const list of takeAll('--options')) {
+    options.push(
+      ...list
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean),
+    )
+  }
+  const orderRaw = takeFlag('--order')
+  let order: number | undefined
+  if (orderRaw !== undefined) {
+    const parsed = Number.parseInt(orderRaw, 10)
+    if (Number.isNaN(parsed)) throw new Error('--order requires a number')
+    order = parsed
+  }
+  const [chatId, ...questionParts] = rest
+  return { chatId, question: questionParts.join(' ').trim(), options, order }
+}
+
+async function cmdWidgetNew(args: string[]): Promise<void> {
+  const { chatId, question, options, order } = parseWidgetNewArgs(args)
+  if (!chatId || !question || options.length === 0)
+    throw new Error(
+      'usage: chat widget new <chatId> (--option <text> … | --options a,b,c) [--order N] <question>',
+    )
+  const widgetId = await withCliActor(async (tx, me) => {
+    await ensureChatVisible(tx, chatId)
+    const row = await addWidget(tx, {
+      id: uuidv7(),
+      chatId,
+      kind: 'choice',
+      props: { question, options },
+      stackOrder: order,
+      createdById: me.id,
+    })
+    return row.id
+  })
+  process.stdout.write(`Raised ${widgetId} in ${chatId}.\n`)
+}
+
+async function cmdWidgetList(args: string[]): Promise<void> {
+  const chatId = args.at(0)
+  if (!chatId) throw new Error('usage: chat widget list <chatId>')
+  await withCliActor(async (tx) => {
+    await ensureChatVisible(tx, chatId)
+    const rows = await listWidgets(tx, chatId)
+    if (rows.length === 0) {
+      process.stdout.write('No widgets.\n')
+      return
+    }
+    for (const w of rows) {
+      // Every row prints, parseable or not: a widget whose props (or whose very
+      // kind) this ship can't read is exactly what you're here to find out about.
+      const parsed = parseProps(w.kind, w.props)
+      const summary = parsed.ok
+        ? `${parsed.props.question}  [${parsed.props.options.join(' | ')}]`
+        : parsed.fault === 'unknown-kind'
+          ? `(this ship doesn't know a “${parsed.detail}” widget)`
+          : `(props don't parse: ${parsed.detail})`
+      const state = w.dismissedAt ? ' (dismissed)' : ''
+      process.stdout.write(
+        `${w.id}  ${w.kind}${state}\n` +
+          `  ${DIM}raised by @${w.createdByHandle} · ${w.placement} #${String(w.stackOrder)}${RESET}\n` +
+          `  ${summary}\n`,
+      )
+    }
+  })
+}
+
+async function cmdWidgetAnswer(args: string[]): Promise<void> {
+  const [widgetId, ...valueParts] = args
+  const value = valueParts.join(' ').trim()
+  if (!widgetId || !value)
+    throw new Error('usage: chat widget answer <widgetId> <value>')
+  // Reuse the same answerWidget the web door calls: it posts an ORDINARY chat
+  // message as the actor and dismisses the widget in one transaction, so a CLI
+  // answer is heard by the reply rules and the SSE stream exactly like a tap.
+  await withCliActor((tx, me) =>
+    answerWidget(tx, { widgetId, actorId: me.id, value }),
+  )
+  process.stdout.write(`Answered ${widgetId}.\n`)
+}
+
+async function cmdWidgetDismiss(args: string[]): Promise<void> {
+  const widgetId = args.at(0)
+  if (!widgetId) throw new Error('usage: chat widget dismiss <widgetId>')
+  await withCliActor((tx, me) =>
+    dismissWidget(tx, { widgetId, actorId: me.id }),
+  )
+  process.stdout.write(`Dismissed ${widgetId}.\n`)
+}
+
+async function cmdWidgetReorder(args: string[]): Promise<void> {
+  const [widgetId, orderRaw] = args
+  const stackOrder = orderRaw ? Number.parseInt(orderRaw, 10) : NaN
+  if (!widgetId || Number.isNaN(stackOrder))
+    throw new Error('usage: chat widget reorder <widgetId> <stackOrder>')
+  await withCliActor((tx, me) =>
+    reorderWidget(tx, { widgetId, actorId: me.id, stackOrder }),
+  )
+  process.stdout.write(`Moved ${widgetId} to #${String(stackOrder)}.\n`)
+}
+
+async function cmdWidget(args: string[]): Promise<void> {
+  const [sub, ...rest] = args
+  switch (sub) {
+    case 'new':
+      return cmdWidgetNew(rest)
+    case 'list':
+      return cmdWidgetList(rest)
+    case 'answer':
+      return cmdWidgetAnswer(rest)
+    case 'dismiss':
+      return cmdWidgetDismiss(rest)
+    case 'reorder':
+      return cmdWidgetReorder(rest)
+    default:
+      throw new Error(
+        'usage: chat widget <new|list|answer|dismiss|reorder> …\n' +
+          '  new <chatId> (--option <text> … | --options a,b,c) [--order N] <question>\n' +
+          '  list <chatId>                widgets on a chat, dismissed ones marked\n' +
+          '  answer <widgetId> <value>    answer it — posts an ordinary chat message\n' +
+          '  dismiss <widgetId>           wave it away unanswered\n' +
+          '  reorder <widgetId> <N>       move it in the stack (low renders first)',
+      )
+  }
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2)
   switch (command) {
@@ -248,13 +413,16 @@ async function main(): Promise<void> {
       return cmdPost(args)
     case 'schedule':
       return cmdSchedule(args)
+    case 'widget':
+      return cmdWidget(args)
     default:
       process.stdout.write(
-        'usage: chat <list|show|post|schedule> …\n' +
+        'usage: chat <list|show|post|schedule|widget> …\n' +
           '  list                      chats you are in, newest activity first\n' +
           '  show <chatId> [--limit N] recent messages (default 20)\n' +
           '  post <chatId> <message>   post a message as yourself\n' +
-          '  schedule <new|list|rm> …  manage scheduled messages\n',
+          '  schedule <new|list|rm> …  manage scheduled messages\n' +
+          '  widget <new|list|…> …     put a live view in front of the crew\n',
       )
       process.exitCode = command ? 1 : 0
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseScheduleNewArgs, parseShowArgs } from './cli'
+import { parseScheduleNewArgs, parseShowArgs, parseWidgetNewArgs } from './cli'
 
 describe('parseShowArgs', () => {
   it('parses a bare chat id with the default limit', () => {
@@ -112,5 +112,70 @@ describe('parseScheduleNewArgs', () => {
     expect(() => parseScheduleNewArgs(['chat-1', '--every', 'lots'])).toThrow(
       /--every requires a number/,
     )
+  })
+})
+
+describe('parseWidgetNewArgs', () => {
+  it('parses a chat id, a question, and repeated --option flags in order', () => {
+    expect(
+      parseWidgetNewArgs([
+        'chat-1',
+        '--option',
+        'Yes',
+        '--option',
+        'No',
+        'Ship',
+        'it?',
+      ]),
+    ).toEqual({
+      chatId: 'chat-1',
+      question: 'Ship it?',
+      options: ['Yes', 'No'],
+      order: undefined,
+    })
+  })
+
+  it('takes --order for a position in the stack', () => {
+    expect(
+      parseWidgetNewArgs(['chat-1', '--option', 'Ok', '--order', '3', 'Seen?']),
+    ).toEqual({
+      chatId: 'chat-1',
+      question: 'Seen?',
+      options: ['Ok'],
+      order: 3,
+    })
+  })
+
+  it('accepts a comma-separated option list as one flag', () => {
+    // The shorthand an agent reaches for first; both spellings must work.
+    expect(
+      parseWidgetNewArgs(['chat-1', '--options', 'Yes,No,Later', 'Ship it?']),
+    ).toEqual({
+      chatId: 'chat-1',
+      question: 'Ship it?',
+      options: ['Yes', 'No', 'Later'],
+      order: undefined,
+    })
+  })
+
+  it('yields no options / an empty question upstream when args are missing', () => {
+    expect(parseWidgetNewArgs([])).toEqual({
+      chatId: undefined,
+      question: '',
+      options: [],
+      order: undefined,
+    })
+  })
+
+  it('rejects a flag with no value', () => {
+    expect(() => parseWidgetNewArgs(['chat-1', '--option'])).toThrow(
+      /--option requires a value/,
+    )
+  })
+
+  it('rejects a non-numeric --order', () => {
+    expect(() =>
+      parseWidgetNewArgs(['chat-1', '--option', 'Ok', '--order', 'top', 'Q?']),
+    ).toThrow(/--order requires a number/)
   })
 })
