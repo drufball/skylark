@@ -3,6 +3,11 @@ name: format, lint, knip, typecheck, test
 on:
   push:
     branches: [main]
+    # The files sweep pushes doc-only commits (crew documents, agent memory)
+    # straight to main — documents, not code, so they don't burn CI. PRs are
+    # untouched: every code change still runs the full gate.
+    paths-ignore:
+      - 'src/home/files/**'
   pull_request:
 
 jobs:
