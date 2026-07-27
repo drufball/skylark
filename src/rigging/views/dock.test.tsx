@@ -107,4 +107,49 @@ describe('Dock', () => {
     const slot = container.querySelector('nav')?.nextElementSibling
     expect(slot?.className.split(/\s+/)).toContain('min-h-0')
   })
+
+  it('renders nothing about staleness when behindOrigin is undefined, null, or 0', () => {
+    for (const behindOrigin of [undefined, null, 0]) {
+      const { container, unmount } = render(
+        <Dock
+          active="issues"
+          Link={FakeLink}
+          onLogout={() => undefined}
+          behindOrigin={behindOrigin}
+        >
+          <span />
+        </Dock>,
+      )
+      expect(container.textContent).not.toContain('behind origin')
+      unmount()
+    }
+  })
+
+  it('shows the staleness banner when behind origin by one or more commits', () => {
+    render(
+      <Dock
+        active="issues"
+        Link={FakeLink}
+        onLogout={() => undefined}
+        behindOrigin={3}
+      >
+        <span />
+      </Dock>,
+    )
+    expect(screen.getByText(/ship is 3 commits behind origin/)).toBeTruthy()
+  })
+
+  it('singularizes the count for exactly one commit behind', () => {
+    render(
+      <Dock
+        active="issues"
+        Link={FakeLink}
+        onLogout={() => undefined}
+        behindOrigin={1}
+      >
+        <span />
+      </Dock>,
+    )
+    expect(screen.getByText(/ship is 1 commit behind origin/)).toBeTruthy()
+  })
 })

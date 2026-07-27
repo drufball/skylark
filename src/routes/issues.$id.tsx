@@ -7,6 +7,7 @@ import { Dock } from '@rigging/views/dock'
 import { IssueThreadView } from '@rigging/views/issue-thread'
 import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
 
 // The thread route: a thin mount binding /issues/$id to the thread view. Live
@@ -46,10 +47,16 @@ function ThreadRoute() {
   }
 
   const onLogout = useLogout()
+  const behindOrigin = useBehindOrigin()
 
   if (!thread) {
     return (
-      <Dock active="issues" Link={Link} onLogout={onLogout}>
+      <Dock
+        active="issues"
+        Link={Link}
+        onLogout={onLogout}
+        behindOrigin={behindOrigin}
+      >
         <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
           <div>
             <p>That issue doesn&apos;t exist.</p>
@@ -63,7 +70,12 @@ function ThreadRoute() {
   }
 
   return (
-    <Dock active="issues" Link={Link} onLogout={onLogout}>
+    <Dock
+      active="issues"
+      Link={Link}
+      onLogout={onLogout}
+      behindOrigin={behindOrigin}
+    >
       <IssueThreadView
         thread={thread}
         busy={busy}

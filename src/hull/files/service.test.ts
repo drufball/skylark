@@ -46,6 +46,41 @@ async function tempRepo(): Promise<{ repoRoot: string; git: GitRunner }> {
 }
 type GitRunner = (...args: string[]) => Promise<{ stdout: string }>
 
+/**
+ * Give a temp repo a bare `origin` remote holding the same main — the shape of
+ * the serving checkout. Fetched once so refs/remotes/origin/main exists.
+ */
+async function addOrigin(git: GitRunner): Promise<string> {
+  const originDir = await mkdtemp(join(tmpdir(), 'skylark-origin-'))
+  await run('git', ['init', '--bare', '-b', 'main'], { cwd: originDir })
+  await git('remote', 'add', 'origin', originDir)
+  await git('push', 'origin', 'main')
+  await git('fetch', 'origin')
+  return originDir
+}
+
+/** Move origin's main from elsewhere — a PR merged on GitHub, in miniature. */
+async function commitToOrigin(
+  originDir: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  const cloneDir = await mkdtemp(join(tmpdir(), 'skylark-clone-'))
+  try {
+    await run('git', ['clone', originDir, cloneDir])
+    const git = (...args: string[]) => run('git', args, { cwd: cloneDir })
+    await git('config', 'user.name', 'elsewhere')
+    await git('config', 'user.email', 'elsewhere@test')
+    await mkdir(join(cloneDir, 'files'), { recursive: true })
+    await writeFile(join(cloneDir, path), content)
+    await git('add', '.')
+    await git('commit', '-m', `origin-side ${path}`)
+    await git('push', 'origin', 'main')
+  } finally {
+    await rm(cloneDir, { recursive: true, force: true })
+  }
+}
+
 let AUTHOR: { id: string; handle: string }
 
 describe('validateFilePath', () => {
@@ -315,5 +350,290 @@ describe('files service over a real git repo', () => {
     const rebooted = createFilesService({ db, repo })
     expect(await rebooted.sweep(Date.now())).toBe('waiting')
     expect(await rebooted.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+  })
+
+  describe('with an origin remote', () => {
+    let originDir: string
+    const originGit = (...args: string[]) =>
+      run('git', args, { cwd: originDir })
+
+    beforeEach(async () => {
+      originDir = await addOrigin(git)
+    })
+
+    afterEach(async () => {
+      await rm(originDir, { recursive: true, force: true })
+    })
+
+    it('sweep pushes the merged docs to origin main — local main stops diverging', async () => {
+      await service.write({
+        path: 'plan.md',
+        content: '# plan\n',
+        actor: AUTHOR,
+      })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      const { stdout: localTip } = await git('rev-parse', 'main')
+      const { stdout: originTip } = await originGit('rev-parse', 'main')
+      expect(originTip.trim()).toBe(localTip.trim())
+      const { stdout: originTree } = await originGit(
+        'ls-tree',
+        '-r',
+        '--name-only',
+        'main',
+      )
+      expect(originTree).toContain('files/plan.md')
+    })
+
+    it('sweep fast-forwards a behind local main to origin before merging', async () => {
+      await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
+      await service.write({
+        path: 'plan.md',
+        content: '# plan\n',
+        actor: AUTHOR,
+      })
+
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      // Both sides landed on disk, and origin has the whole result.
+      expect(
+        await readFile(join(repoRoot, 'files', 'upstream.md'), 'utf8'),
+      ).toBe('from a PR\n')
+      expect(await readFile(join(repoRoot, 'files', 'plan.md'), 'utf8')).toBe(
+        '# plan\n',
+      )
+      const { stdout: localTip } = await git('rev-parse', 'main')
+      const { stdout: originTip } = await originGit('rev-parse', 'main')
+      expect(originTip.trim()).toBe(localTip.trim())
+    })
+
+    it('sweep rebases local-only main commits onto a moved origin, then pushes everything', async () => {
+      // Local main has its own commit (yesterday's unpushed sweep, say)…
+      await writeFile(join(repoRoot, 'files', 'local.md'), 'local\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local-only')
+      // …and origin moved independently.
+      await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
+
+      await service.write({
+        path: 'plan.md',
+        content: '# plan\n',
+        actor: AUTHOR,
+      })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      const { stdout: localTip } = await git('rev-parse', 'main')
+      const { stdout: originTip } = await originGit('rev-parse', 'main')
+      expect(originTip.trim()).toBe(localTip.trim())
+      const { stdout: originTree } = await originGit(
+        'ls-tree',
+        '-r',
+        '--name-only',
+        'main',
+      )
+      for (const path of ['local.md', 'upstream.md', 'plan.md']) {
+        expect(originTree).toContain(`files/${path}`)
+      }
+    })
+
+    it('a conflicting sync aborts cleanly and postpones: no half-done rebase, staging intact', async () => {
+      // Local main and origin edit the same file, apart → the rebase conflicts.
+      await writeFile(join(repoRoot, 'files', 'seed.md'), 'local-side\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local-side edit')
+      await commitToOrigin(originDir, 'files/seed.md', 'origin-side\n')
+
+      await service.write({
+        path: 'plan.md',
+        content: '# plan\n',
+        actor: AUTHOR,
+      })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('conflict')
+
+      // Nothing is left mid-rebase; every side survives for the next attempt.
+      const { stdout: status } = await git('status', '--porcelain')
+      expect(status.trim()).toBe('')
+      await expect(
+        git('rev-parse', '--verify', 'REBASE_HEAD'),
+      ).rejects.toThrow()
+      expect(await readFile(join(repoRoot, 'files', 'seed.md'), 'utf8')).toBe(
+        'local-side\n',
+      )
+      expect(await service.read('plan.md')).toBe('# plan\n')
+      // A conflicted sweep merged nothing, so it must not announce a merge.
+      const events = await listEventsSince(db, {
+        topicPatterns: ['files:*'],
+        audience: 'public',
+      })
+      expect(events.filter((e) => e.type === FILES_MERGED)).toHaveLength(0)
+    })
+
+    it('pushMain reports rejected when origin moved after the fetch, instead of forcing', async () => {
+      await writeFile(join(repoRoot, 'files', 'local.md'), 'local\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local-only')
+      // Origin moves after our fetch — the push must be rejected, not forced.
+      await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
+      expect(await repo.pushMain()).toBe('rejected')
+      const { stdout: originTree } = await originGit(
+        'ls-tree',
+        '-r',
+        '--name-only',
+        'main',
+      )
+      expect(originTree).not.toContain('files/local.md')
+    })
+
+    it('aheadOfOrigin is 0 when origin/main was never fetched — nothing owed', async () => {
+      await git('update-ref', '-d', 'refs/remotes/origin/main')
+      expect(await repo.aheadOfOrigin()).toBe(0)
+    })
+
+    it('a sweep with nothing staged and nothing to push touches origin not at all', async () => {
+      const { stdout: before } = await originGit('rev-parse', 'main')
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('no-staging')
+      const { stdout: after } = await originGit('rev-parse', 'main')
+      expect(after).toBe(before)
+    })
+
+    it('after a rejected push, the next sweep syncs and pushes without needing a new write', async () => {
+      // The aftermath of a rejected push: local main carries an unpushed
+      // commit, origin moved past our last fetch, staging is gone.
+      await writeFile(join(repoRoot, 'files', 'local.md'), 'local\n')
+      await git('add', '.')
+      await git('commit', '-m', 'unpushed sweep merge')
+      await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
+
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('pushed')
+
+      const { stdout: localTip } = await git('rev-parse', 'main')
+      const { stdout: originTip } = await originGit('rev-parse', 'main')
+      expect(originTip.trim()).toBe(localTip.trim())
+      const { stdout: originTree } = await originGit(
+        'ls-tree',
+        '-r',
+        '--name-only',
+        'main',
+      )
+      expect(originTree).toContain('files/local.md')
+    })
+  })
+})
+
+/**
+ * The sweep's order of operations and failure handling are contracts of the
+ * SERVICE, not of git — so they're pinned against a recording fake, where a
+ * rejected push (origin moving between fetch and push) is even reachable.
+ */
+describe('the sweep against a fake repo: order and failure handling', () => {
+  let db: Database
+  let close: () => Promise<void>
+
+  beforeEach(async () => {
+    ;({ db, close } = await freshDb())
+  })
+
+  afterEach(async () => {
+    await close()
+  })
+
+  interface FakeState {
+    staging: boolean
+    origin: boolean
+    ahead: number
+    sync: 'synced' | 'conflict'
+    merge: 'merged' | 'conflict'
+    push: 'pushed' | 'rejected'
+  }
+
+  function fakeRepo(overrides: Partial<FakeState> = {}): {
+    repo: FilesRepo
+    calls: string[]
+    state: FakeState
+  } {
+    const state: FakeState = {
+      staging: true,
+      origin: true,
+      ahead: 0,
+      sync: 'synced',
+      merge: 'merged',
+      push: 'pushed',
+      ...overrides,
+    }
+    const calls: string[] = []
+    const repo: FilesRepo = {
+      ensureFilesDir: () => Promise.resolve(),
+      stagingExists: () => Promise.resolve(state.staging),
+      listStaged: () => Promise.resolve([]),
+      listDisk: () => Promise.resolve([]),
+      readStaged: () => Promise.resolve(null),
+      readDisk: () => Promise.resolve(null),
+      commitToStaging: () => Promise.resolve(),
+      stagedAt: () => Promise.resolve(0),
+      mergeReadiness: () => Promise.resolve('ready' as const),
+      hasOrigin: () => Promise.resolve(state.origin),
+      fetchOrigin: () => {
+        calls.push('fetch')
+        return Promise.resolve()
+      },
+      aheadOfOrigin: () => Promise.resolve(state.ahead),
+      syncWithOrigin: () => {
+        calls.push('sync')
+        return Promise.resolve(state.sync)
+      },
+      mergeStaging: () => {
+        calls.push('merge')
+        state.staging = false
+        return Promise.resolve(state.merge)
+      },
+      pushMain: () => {
+        calls.push('push')
+        return Promise.resolve(state.push)
+      },
+    }
+    return { repo, calls, state }
+  }
+
+  it('runs fetch → sync → merge → push, in that order', async () => {
+    const { repo, calls } = fakeRepo()
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('merged')
+    expect(calls).toEqual(['fetch', 'sync', 'merge', 'push'])
+  })
+
+  it('without an origin remote the sweep merges as before and never pushes', async () => {
+    const { repo, calls } = fakeRepo({ origin: false })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('merged')
+    expect(calls).toEqual(['merge'])
+  })
+
+  it('a sync conflict postpones before anything merges or pushes', async () => {
+    const { repo, calls } = fakeRepo({ sync: 'conflict' })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+    expect(calls).toEqual(['fetch', 'sync'])
+  })
+
+  it('a rejected push postpones after the merge landed; the next sweep retries it', async () => {
+    const { repo, calls, state } = fakeRepo({ push: 'rejected' })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('push-rejected')
+    expect(calls).toEqual(['fetch', 'sync', 'merge', 'push'])
+
+    // Next sweep: staging merged away, but local main is ahead of the origin
+    // ref we last fetched — the sweep syncs with the moved origin and pushes.
+    calls.length = 0
+    state.ahead = 1
+    state.push = 'pushed'
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('pushed')
+    expect(calls).toEqual(['fetch', 'sync', 'push'])
+  })
+
+  it('nothing staged, nothing unpushed: the sweep does no git work at all', async () => {
+    const { repo, calls } = fakeRepo({ staging: false, ahead: 0 })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('no-staging')
+    expect(calls).toEqual([])
   })
 })

@@ -7,8 +7,8 @@ _files zine — issue #1_
 Shared documents for the crew — humans and agents — stored as **real files in
 the repo** (`src/home/files/`), with git's branch management abstracted away.
 Every edit through the service stages on one branch; after a quiet period the
-sweep merges it back into `main` with no PR, and the docs are plain files on
-disk again — the interop surface for every other tool.
+sweep merges it back into `main` with no PR, pushes `main` to origin, and the
+docs are plain files on disk again — the interop surface for every other tool.
 
 ## Components
 
@@ -20,9 +20,10 @@ disk again — the interop surface for every other tool.
   touched). One branch, shared by everyone, so all readers see the same live
   staged state.
 - **The sweep** — merges staging into `main` once it's been idle (the staging
-  tip's committer time is the clock, so it works across processes and restarts).
-  Only on a clean, `main`-checked-out repo; a conflict aborts and waits for a
-  human.
+  tip's committer time is the clock, so it works across processes and restarts),
+  syncing `main` with origin first and pushing the result after, so local `main`
+  never drifts from origin. Only on a clean, `main`-checked-out repo; a conflict
+  aborts and waits for a human.
 - **Doors** — web (`server.ts`, behind the Files surface) and CLI
   (`npm run files -- list|read|write|rm`), both attributing writes to the acting
   user (the staged commit's author).
@@ -39,9 +40,15 @@ ship's log → every subscribed view re-runs its loader and shows the new state.
 Reads route to staging while it exists, else to disk.
 
 **The merge.** A 30s timer sweeps: staging idle past the window (2 min) → repo
-on `main` and `src/home/files` clean → real `git merge` (the docs land on disk)
-→ staging branch deleted. Anything not ready is postponed to the next sweep; a
-conflicting merge is aborted cleanly, leaving both sides intact.
+on `main` and `src/home/files` clean → fetch origin and sync local `main` with
+`origin/main` (fast-forward when strictly behind; local-only commits rebase on
+top) → real `git merge` (the docs land on disk) → staging branch deleted → push
+`main` to origin. Anything not ready is postponed to the next sweep; a
+conflicting sync or merge is aborted cleanly, leaving every side intact. A
+rejected push (origin moved between fetch and push) waits too: local `main` is
+now ahead of the last-fetched `origin/main`, so the next sweep — staged work or
+not — syncs with the moved origin and pushes. A repo with no origin remote skips
+all of it and merges as before.
 
 ## Decisions
 
@@ -56,8 +63,19 @@ conflicting merge is aborted cleanly, leaving both sides intact.
 - **The idle clock is git's committer time**, not process memory — correct
   across restarts, and across processes (a CLI write elsewhere counts).
 - **Auto-merge skips the PR gates on purpose**: these are documents, not code.
-  `format:check` ignores `src/home/files/` for the same reason.
+  `format:check` ignores `src/home/files/` for the same reason, and CI's push
+  trigger ignores the same path so the sweep's pushes to `main` don't burn a run
+  (PR gates are untouched — code still can't dodge them).
+- **The sweep pushes `main`, because an unpushed `main` poisons everything
+  downstream**: doc and memory commits that only exist locally put every branch
+  cut from local `main` dozens of commits ahead of origin, and block the serving
+  checkout from ever fast-forwarding (#fssz). Syncing is a rebase of local-only
+  commits onto `origin/main` — never a merge commit, never a forced push — and a
+  rejected push just waits for the next sweep, which sees `main` ahead of origin
+  and retries.
 
 ## Changelog
 
 - **#1** — The files service and the Files surface land.
+- **#fssz** — The sweep syncs `main` with origin and pushes after merging, so
+  local `main` stops diverging from origin.
