@@ -3,7 +3,11 @@ import { errorMessage } from '@hull/lib/errors'
 import { startIntervalSweep } from '@hull/lib/interval-sweep'
 
 import { createFilesRepo } from './git'
-import { createFilesService, type FilesService } from './service'
+import {
+  createFilesService,
+  createSweepReporter,
+  type FilesService,
+} from './service'
 
 /* v8 ignore start -- live wiring: the real repo config, the process singleton,
    and the sweep timer. The service's decisions and git behaviour are tested in
@@ -41,10 +45,17 @@ export function liveFilesService(): FilesService {
     const service = createFilesService({ db, repo })
     // The shared recurring-sweep helper (unref'd interval, injected clock,
     // errors swallowed + logged) — the same one chat's schedule sweep rides.
+    // The helper only sees THROWN errors, so the tick reports the OUTCOME too:
+    // a sweep that keeps failing to reach origin must not look like an idle one
+    // (#p5as was invisible for 25 minutes because this value was discarded).
+    const report = createSweepReporter()
     startIntervalSweep({
       intervalMs: SWEEP_INTERVAL_MS,
       label: 'files',
-      tick: (now) => service.sweep(now),
+      tick: async (now) => {
+        const line = report(await service.sweep(now))
+        if (line !== null) console.warn(`files: ${line}`)
+      },
     })
     singleton = service
   }

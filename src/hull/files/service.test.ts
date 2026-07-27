@@ -1,5 +1,12 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -13,15 +20,23 @@ import { freshDb } from '@hull/db/test-db'
 import { listEventsSince } from '@hull/events/service'
 import { createUser } from '@hull/users/service'
 
-import { createFilesRepo, type FilesRepo } from './git'
+import { createFilesRepo, type FilesRepo, type MergeReadiness } from './git'
 import {
   createFilesService,
+  createSweepReporter,
   FILE_CHANGED,
   FILES_IDLE_MS,
   FILES_MERGED,
+  FILES_SWEEP_WEDGED,
+  findCapturedCommandBanner,
   shouldMergeStaging,
+  SWEEP_FAILURE_LIMIT,
+  SWEEP_LOG_REPEAT_EVERY,
+  SWEEP_WEDGED_PROBE_EVERY,
+  sweepGate,
   validateFilePath,
   type FilesService,
+  type SweepOutcome,
 } from './service'
 import { fileTopic } from './topic'
 
@@ -59,11 +74,14 @@ async function addOrigin(git: GitRunner): Promise<string> {
   return originDir
 }
 
-/** Move origin's main from elsewhere — a PR merged on GitHub, in miniature. */
+/**
+ * Move origin's main from elsewhere — a PR merged on GitHub, in miniature.
+ * `null` content deletes the path (a doc a PR removed on purpose).
+ */
 async function commitToOrigin(
   originDir: string,
   path: string,
-  content: string,
+  content: string | null,
 ): Promise<void> {
   const cloneDir = await mkdtemp(join(tmpdir(), 'skylark-clone-'))
   try {
@@ -72,8 +90,9 @@ async function commitToOrigin(
     await git('config', 'user.name', 'elsewhere')
     await git('config', 'user.email', 'elsewhere@test')
     await mkdir(join(cloneDir, 'files'), { recursive: true })
-    await writeFile(join(cloneDir, path), content)
-    await git('add', '.')
+    if (content === null) await git('rm', '--', path)
+    else await writeFile(join(cloneDir, path), content)
+    await git('add', '-A')
     await git('commit', '-m', `origin-side ${path}`)
     await git('push', 'origin', 'main')
   } finally {
@@ -255,6 +274,29 @@ describe('files service over a real git repo', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('refuses content that is captured command output, staging nothing', async () => {
+    await expect(
+      service.write({
+        path: 'agents/tilde/index.md',
+        content:
+          '> files\n> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/tilde/index.md\n\n# Tilde\n',
+        actor: AUTHOR,
+      }),
+      // The error names the problem, shows the offending lines, and says what
+      // to do instead — the caller is usually an agent that can fix itself.
+    ).rejects.toThrow(
+      /captured command output[\s\S]*cli\.ts read agents\/tilde[\s\S]*fenced code block/i,
+    )
+
+    // Nothing staged, nothing announced — the bad write never happened.
+    expect(await repo.stagingExists()).toBe(false)
+    const events = await listEventsSince(db, {
+      topicPatterns: ['file:*'],
+      audience: 'public',
+    })
+    expect(events).toHaveLength(0)
+  })
+
   it('announces every change on the ship log with the file topic', async () => {
     await service.write({ path: 'plan.md', content: 'x', actor: AUTHOR })
     await service.remove({ path: 'plan.md', actor: AUTHOR })
@@ -310,6 +352,58 @@ describe('files service over a real git repo', () => {
     expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('postponed')
     await git('checkout', 'main')
     expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+  })
+
+  /**
+   * The serving checkout is somebody's working copy: a crew member can be part
+   * way through resolving a merge by hand on main, with the conflict nowhere near
+   * the files dir. The sweep aborts merges it started — it must never abort one it
+   * didn't, or that hand resolution is gone.
+   */
+  it('keeps its hands off a merge somebody else started, even outside the files dir', async () => {
+    await writeFile(join(repoRoot, 'code.txt'), 'base\n')
+    await git('add', '.')
+    await git('commit', '-m', 'base code')
+    await git('checkout', '-b', 'theirs')
+    await writeFile(join(repoRoot, 'code.txt'), 'theirs\n')
+    await git('add', '.')
+    await git('commit', '-m', 'theirs code')
+    await git('checkout', 'main')
+    await writeFile(join(repoRoot, 'code.txt'), 'ours\n')
+    await git('add', '.')
+    await git('commit', '-m', 'ours code')
+    // A human, mid-merge, conflict still open.
+    await git('merge', 'theirs').catch(() => undefined)
+    const { stdout: before } = await git('status', '--porcelain')
+
+    expect(await repo.mergeReadiness()).toBe('merge-in-progress')
+    await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+    expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('postponed')
+
+    // Their merge is exactly where they left it, and the staged doc is safe.
+    await git('rev-parse', '--verify', 'MERGE_HEAD')
+    const { stdout: after } = await git('status', '--porcelain')
+    expect(after).toBe(before)
+    expect(await service.read('p.md')).toBe('x')
+  })
+
+  it('stays out of a half-finished rebase too, not just a merge', async () => {
+    await writeFile(join(repoRoot, 'code.txt'), 'base\n')
+    await git('add', '.')
+    await git('commit', '-m', 'base code')
+    await git('checkout', '-b', 'theirs')
+    await writeFile(join(repoRoot, 'code.txt'), 'theirs\n')
+    await git('add', '.')
+    await git('commit', '-m', 'theirs code')
+    await git('checkout', 'main')
+    await writeFile(join(repoRoot, 'code.txt'), 'ours\n')
+    await git('add', '.')
+    await git('commit', '-m', 'ours code')
+    // A human, mid-rebase, conflict still open — no MERGE_HEAD, but a rebase dir.
+    await git('rebase', 'theirs').catch(() => undefined)
+
+    expect(await repo.mergeReadiness()).toBe('merge-in-progress')
+    await git('rebase', '--abort')
   })
 
   it('sweep postpones when the files dir has uncommitted disk edits', async () => {
@@ -407,11 +501,53 @@ describe('files service over a real git repo', () => {
       expect(originTip.trim()).toBe(localTip.trim())
     })
 
-    it('sweep rebases local-only main commits onto a moved origin, then pushes everything', async () => {
+    /**
+     * The #p5as regression: local main is a DESCENDANT of origin/main with a
+     * backlog of unpushed doc commits. A plain push fast-forwards, so the sweep
+     * must not try to replay that backlog — the rebase it used to run wedged on
+     * commit 1 of 56 and never recovered. Pinned by SHA: a rebase (or any
+     * history rewrite) would change the backlog commit's id.
+     */
+    it('does not touch history when origin is already an ancestor — it just pushes the backlog', async () => {
+      await writeFile(join(repoRoot, 'files', 'backlog.md'), 'unpushed\n')
+      await git('add', '.')
+      await git('commit', '-m', 'backlog doc commit')
+      const { stdout: backlogSha } = await git('rev-parse', 'HEAD')
+
+      await service.write({
+        path: 'plan.md',
+        content: '# plan\n',
+        actor: AUTHOR,
+      })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      // The backlog commit is still itself, still in main's history: nothing
+      // replayed it, and no merge commit was needed to reach origin.
+      const { stdout: afterSha } = await git(
+        'rev-parse',
+        `${backlogSha.trim()}^{commit}`,
+      )
+      expect(afterSha.trim()).toBe(backlogSha.trim())
+      await git('merge-base', '--is-ancestor', backlogSha.trim(), 'main')
+      const { stdout: merges } = await git(
+        'rev-list',
+        '--count',
+        '--merges',
+        'main',
+      )
+      expect(merges.trim()).toBe('0')
+
+      const { stdout: localTip } = await git('rev-parse', 'main')
+      const { stdout: originTip } = await originGit('rev-parse', 'main')
+      expect(originTip.trim()).toBe(localTip.trim())
+    })
+
+    it('converges local-only commits with a moved origin without rewriting them, then pushes everything', async () => {
       // Local main has its own commit (yesterday's unpushed sweep, say)…
       await writeFile(join(repoRoot, 'files', 'local.md'), 'local\n')
       await git('add', '.')
       await git('commit', '-m', 'local-only')
+      const { stdout: localSha } = await git('rev-parse', 'HEAD')
       // …and origin moved independently.
       await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
 
@@ -422,6 +558,8 @@ describe('files service over a real git repo', () => {
       })
       expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
 
+      // Convergence is a merge, not a replay: the local commit keeps its id.
+      await git('merge-base', '--is-ancestor', localSha.trim(), 'main')
       const { stdout: localTip } = await git('rev-parse', 'main')
       const { stdout: originTip } = await originGit('rev-parse', 'main')
       expect(originTip.trim()).toBe(localTip.trim())
@@ -436,12 +574,68 @@ describe('files service over a real git repo', () => {
       }
     })
 
-    it('a conflicting sync aborts cleanly and postpones: no half-done rebase, staging intact', async () => {
-      // Local main and origin edit the same file, apart → the rebase conflicts.
-      await writeFile(join(repoRoot, 'files', 'seed.md'), 'local-side\n')
+    it('a doc both sides edited converges by union: neither side loses a line', async () => {
+      // Local main and origin edit the same doc, apart — the old rebase wedged
+      // here; convergence keeps both sides' lines and leaves no markers.
+      await writeFile(
+        join(repoRoot, 'files', 'seed.md'),
+        '# seed\nlocal note\n',
+      )
       await git('add', '.')
       await git('commit', '-m', 'local-side edit')
-      await commitToOrigin(originDir, 'files/seed.md', 'origin-side\n')
+      await commitToOrigin(originDir, 'files/seed.md', '# seed\norigin note\n')
+
+      await service.write({
+        path: 'plan.md',
+        content: '# plan\n',
+        actor: AUTHOR,
+      })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      const seed = await readFile(join(repoRoot, 'files', 'seed.md'), 'utf8')
+      expect(seed).toContain('local note')
+      expect(seed).toContain('origin note')
+      expect(seed).not.toContain('<<<<<<<')
+      const { stdout: status } = await git('status', '--porcelain')
+      expect(status.trim()).toBe('')
+      const { stdout: localTip } = await git('rev-parse', 'main')
+      const { stdout: originTip } = await originGit('rev-parse', 'main')
+      expect(originTip.trim()).toBe(localTip.trim())
+    })
+
+    it('two sides adding the same new doc keep both bodies', async () => {
+      await writeFile(join(repoRoot, 'files', 'both.md'), 'from the ship\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local adds both.md')
+      await commitToOrigin(originDir, 'files/both.md', 'from a PR\n')
+
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      const both = await readFile(join(repoRoot, 'files', 'both.md'), 'utf8')
+      expect(both).toContain('from the ship')
+      expect(both).toContain('from a PR')
+    })
+
+    it('a doc origin deleted but the ship kept writing survives — the sweep never destroys content', async () => {
+      await writeFile(join(repoRoot, 'files', 'seed.md'), '# seed\nship note\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local keeps writing seed.md')
+      await commitToOrigin(originDir, 'files/seed.md', null)
+
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      expect(await readFile(join(repoRoot, 'files', 'seed.md'), 'utf8')).toBe(
+        '# seed\nship note\n',
+      )
+    })
+
+    it('a conflict outside the files dir is never auto-resolved: it aborts cleanly and waits for a human', async () => {
+      await writeFile(join(repoRoot, 'code.txt'), 'local code\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local code edit')
+      await commitToOrigin(originDir, 'code.txt', 'origin code\n')
 
       await service.write({
         path: 'plan.md',
@@ -450,14 +644,12 @@ describe('files service over a real git repo', () => {
       })
       expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('conflict')
 
-      // Nothing is left mid-rebase; every side survives for the next attempt.
+      // Nothing left mid-merge; every side survives for the next attempt.
       const { stdout: status } = await git('status', '--porcelain')
       expect(status.trim()).toBe('')
-      await expect(
-        git('rev-parse', '--verify', 'REBASE_HEAD'),
-      ).rejects.toThrow()
-      expect(await readFile(join(repoRoot, 'files', 'seed.md'), 'utf8')).toBe(
-        'local-side\n',
+      await expect(git('rev-parse', '--verify', 'MERGE_HEAD')).rejects.toThrow()
+      expect(await readFile(join(repoRoot, 'code.txt'), 'utf8')).toBe(
+        'local code\n',
       )
       expect(await service.read('plan.md')).toBe('# plan\n')
       // A conflicted sweep merged nothing, so it must not announce a merge.
@@ -466,6 +658,70 @@ describe('files service over a real git repo', () => {
         audience: 'public',
       })
       expect(events.filter((e) => e.type === FILES_MERGED)).toHaveLength(0)
+    })
+
+    /**
+     * A staged file stops git from starting a merge at all, which leaves ZERO
+     * unmerged paths. That must read as "not now", not as "a document conflict
+     * nobody can settle" — a false alarm on the one alarm this issue adds would
+     * teach the crew to ignore it.
+     */
+    it('somebody with a staged file makes the sweep wait, not cry conflict', async () => {
+      await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
+      await writeFile(join(repoRoot, 'code.txt'), 'half-done work\n')
+      await git('add', 'code.txt')
+
+      expect(await repo.mergeReadiness()).toBe('index-dirty')
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('postponed')
+
+      // Their staged work is untouched, and nothing was announced as a conflict.
+      const { stdout: staged } = await git('diff', '--cached', '--name-only')
+      expect(staged.trim()).toBe('code.txt')
+
+      // Once they commit it, the very next sweep drains normally.
+      await git('commit', '-m', 'their work')
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+    })
+
+    it('a conflicting symlink is never unioned — writing through one would land outside the repo', async () => {
+      await symlink('/etc/passwd', join(repoRoot, 'files', 'link.md'))
+      await git('add', '-A')
+      await git('commit', '-m', 'local symlink')
+      await commitToOrigin(originDir, 'files/link.md', 'a real doc\n')
+
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('conflict')
+      const { stdout: status } = await git('status', '--porcelain')
+      expect(status.trim()).toBe('')
+      await expect(git('rev-parse', '--verify', 'MERGE_HEAD')).rejects.toThrow()
+    })
+
+    it('names the unioned documents in the merge commit, so the mess is findable', async () => {
+      await writeFile(join(repoRoot, 'files', 'seed.md'), '# seed\nlocal\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local edit')
+      await commitToOrigin(originDir, 'files/seed.md', '# seed\norigin\n')
+
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('merged')
+
+      const { stdout: log } = await git('log', '--format=%B', '-20')
+      expect(log).toContain('Unioned conflicting documents')
+      expect(log).toContain('- files/seed.md')
+    })
+
+    it('a conflicting binary doc is never unioned — union is a text rule only', async () => {
+      const bin = join(repoRoot, 'files', 'logo.bin')
+      await writeFile(bin, 'ship\0')
+      await git('add', '.')
+      await git('commit', '-m', 'local binary')
+      await commitToOrigin(originDir, 'files/logo.bin', 'origin\0')
+
+      await service.write({ path: 'p.md', content: 'x', actor: AUTHOR })
+      expect(await service.sweep(Date.now() + FILES_IDLE_MS)).toBe('conflict')
+      const { stdout: status } = await git('status', '--porcelain')
+      expect(status.trim()).toBe('')
     })
 
     it('pushMain reports rejected when origin moved after the fetch, instead of forcing', async () => {
@@ -484,9 +740,23 @@ describe('files service over a real git repo', () => {
       expect(originTree).not.toContain('files/local.md')
     })
 
-    it('aheadOfOrigin is 0 when origin/main was never fetched — nothing owed', async () => {
+    it('both origin counts are 0 when origin/main was never fetched — nothing owed, nothing to converge', async () => {
       await git('update-ref', '-d', 'refs/remotes/origin/main')
       expect(await repo.aheadOfOrigin()).toBe(0)
+      expect(await repo.behindOrigin()).toBe(0)
+    })
+
+    it('behindOrigin counts only what origin has that we lack', async () => {
+      expect(await repo.behindOrigin()).toBe(0)
+      // A local commit makes us ahead, never behind.
+      await writeFile(join(repoRoot, 'files', 'local.md'), 'local\n')
+      await git('add', '.')
+      await git('commit', '-m', 'local-only')
+      expect(await repo.behindOrigin()).toBe(0)
+      // Origin moving is what makes us behind — once we have fetched it.
+      await commitToOrigin(originDir, 'files/upstream.md', 'from a PR\n')
+      await repo.fetchOrigin()
+      expect(await repo.behindOrigin()).toBe(1)
     })
 
     it('a sweep with nothing staged and nothing to push touches origin not at all', async () => {
@@ -541,7 +811,9 @@ describe('the sweep against a fake repo: order and failure handling', () => {
     staging: boolean
     origin: boolean
     ahead: number
-    sync: 'synced' | 'conflict'
+    behind: number
+    readiness: MergeReadiness
+    converge: 'converged' | 'conflict'
     merge: 'merged' | 'conflict'
     push: 'pushed' | 'rejected'
   }
@@ -555,7 +827,9 @@ describe('the sweep against a fake repo: order and failure handling', () => {
       staging: true,
       origin: true,
       ahead: 0,
-      sync: 'synced',
+      behind: 0,
+      readiness: 'ready',
+      converge: 'converged',
       merge: 'merged',
       push: 'pushed',
       ...overrides,
@@ -570,16 +844,17 @@ describe('the sweep against a fake repo: order and failure handling', () => {
       readDisk: () => Promise.resolve(null),
       commitToStaging: () => Promise.resolve(),
       stagedAt: () => Promise.resolve(0),
-      mergeReadiness: () => Promise.resolve('ready' as const),
+      mergeReadiness: () => Promise.resolve(state.readiness),
       hasOrigin: () => Promise.resolve(state.origin),
       fetchOrigin: () => {
         calls.push('fetch')
         return Promise.resolve()
       },
       aheadOfOrigin: () => Promise.resolve(state.ahead),
-      syncWithOrigin: () => {
-        calls.push('sync')
-        return Promise.resolve(state.sync)
+      behindOrigin: () => Promise.resolve(state.behind),
+      convergeWithOrigin: () => {
+        calls.push('converge')
+        return Promise.resolve(state.converge)
       },
       mergeStaging: () => {
         calls.push('merge')
@@ -594,11 +869,18 @@ describe('the sweep against a fake repo: order and failure handling', () => {
     return { repo, calls, state }
   }
 
-  it('runs fetch → sync → merge → push, in that order', async () => {
+  it('runs fetch → merge → push, and does not converge when origin has not moved', async () => {
     const { repo, calls } = fakeRepo()
     const service = createFilesService({ db, repo })
     expect(await service.sweep(FILES_IDLE_MS)).toBe('merged')
-    expect(calls).toEqual(['fetch', 'sync', 'merge', 'push'])
+    expect(calls).toEqual(['fetch', 'merge', 'push'])
+  })
+
+  it('converges only when origin genuinely advanced past local main', async () => {
+    const { repo, calls } = fakeRepo({ behind: 2 })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('merged')
+    expect(calls).toEqual(['fetch', 'converge', 'merge', 'push'])
   })
 
   it('without an origin remote the sweep merges as before and never pushes', async () => {
@@ -608,26 +890,37 @@ describe('the sweep against a fake repo: order and failure handling', () => {
     expect(calls).toEqual(['merge'])
   })
 
-  it('a sync conflict postpones before anything merges or pushes', async () => {
-    const { repo, calls } = fakeRepo({ sync: 'conflict' })
+  it('a failed convergence stops before anything merges or pushes', async () => {
+    const { repo, calls } = fakeRepo({ behind: 1, converge: 'conflict' })
     const service = createFilesService({ db, repo })
     expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
-    expect(calls).toEqual(['fetch', 'sync'])
+    expect(calls).toEqual(['fetch', 'converge'])
   })
 
   it('a rejected push postpones after the merge landed; the next sweep retries it', async () => {
     const { repo, calls, state } = fakeRepo({ push: 'rejected' })
     const service = createFilesService({ db, repo })
     expect(await service.sweep(FILES_IDLE_MS)).toBe('push-rejected')
-    expect(calls).toEqual(['fetch', 'sync', 'merge', 'push'])
+    expect(calls).toEqual(['fetch', 'merge', 'push'])
 
     // Next sweep: staging merged away, but local main is ahead of the origin
-    // ref we last fetched — the sweep syncs with the moved origin and pushes.
+    // ref we last fetched — the sweep pushes it without a new write.
     calls.length = 0
     state.ahead = 1
     state.push = 'pushed'
     expect(await service.sweep(FILES_IDLE_MS)).toBe('pushed')
-    expect(calls).toEqual(['fetch', 'sync', 'push'])
+    expect(calls).toEqual(['fetch', 'push'])
+  })
+
+  /**
+   * The #p5as shape at the service level: nothing staged, a backlog of local
+   * commits, origin still an ancestor. The sweep must push and never converge.
+   */
+  it('pushes an unpushed backlog without converging when origin is an ancestor', async () => {
+    const { repo, calls } = fakeRepo({ staging: false, ahead: 63, behind: 0 })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('pushed')
+    expect(calls).toEqual(['fetch', 'push'])
   })
 
   it('nothing staged, nothing unpushed: the sweep does no git work at all', async () => {
@@ -635,5 +928,303 @@ describe('the sweep against a fake repo: order and failure handling', () => {
     const service = createFilesService({ db, repo })
     expect(await service.sweep(FILES_IDLE_MS)).toBe('no-staging')
     expect(calls).toEqual([])
+  })
+
+  it('a repo with no origin has nothing to push and stays out of git', async () => {
+    const { repo, calls } = fakeRepo({
+      staging: false,
+      origin: false,
+      ahead: 9,
+    })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('no-staging')
+    expect(calls).toEqual([])
+  })
+
+  it('an unpushed backlog waits for a clean main before it fetches anything', async () => {
+    const { repo, calls } = fakeRepo({
+      staging: false,
+      ahead: 3,
+      readiness: 'not-on-main',
+    })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('postponed')
+    expect(calls).toEqual([])
+  })
+
+  it('an unpushed backlog that cannot converge with a moved origin never pushes', async () => {
+    const { repo, calls } = fakeRepo({
+      staging: false,
+      ahead: 3,
+      behind: 1,
+      converge: 'conflict',
+    })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+    expect(calls).toEqual(['fetch', 'converge'])
+  })
+
+  it('an unpushed backlog whose push is rejected reports it and waits', async () => {
+    const { repo, calls } = fakeRepo({
+      staging: false,
+      ahead: 3,
+      push: 'rejected',
+    })
+    const service = createFilesService({ db, repo })
+    expect(await service.sweep(FILES_IDLE_MS)).toBe('push-rejected')
+    expect(calls).toEqual(['fetch', 'push'])
+  })
+
+  describe('a wedged sweep stops hammering git', () => {
+    it('latches after SWEEP_FAILURE_LIMIT identical failures and then touches no git', async () => {
+      const { repo, calls, state } = fakeRepo({
+        behind: 1,
+        converge: 'conflict',
+      })
+      const service = createFilesService({ db, repo })
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT; i++) {
+        expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+        state.staging = true
+      }
+      calls.length = 0
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('wedged')
+      expect(calls).toEqual([])
+    })
+
+    it('stays quiet on the ship log until the limit, then announces exactly once', async () => {
+      const { repo, state } = fakeRepo({ behind: 1, converge: 'conflict' })
+      const service = createFilesService({ db, repo })
+      const wedgeEvents = async () => {
+        const events = await listEventsSince(db, {
+          topicPatterns: ['files:*'],
+          audience: 'public',
+        })
+        return events.filter((e) => e.type === FILES_SWEEP_WEDGED)
+      }
+
+      // A failure or four is ordinary weather — nobody needs telling.
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT - 1; i++) {
+        expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+        state.staging = true
+        expect(await wedgeEvents()).toHaveLength(0)
+      }
+
+      // The limit-th failure is the news, and it's said once, with the detail.
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+      for (let i = 0; i < 3; i++) {
+        state.staging = true
+        await service.sweep(FILES_IDLE_MS)
+      }
+      const announced = await wedgeEvents()
+      expect(announced).toHaveLength(1)
+      expect(announced[0].source).toBe('files')
+      expect(announced[0].payload).toEqual({
+        outcome: 'conflict',
+        consecutiveFailures: SWEEP_FAILURE_LIMIT,
+      })
+    })
+
+    /**
+     * A THROW is a failure too. An offline ship's `git fetch` rejects on every
+     * tick; if throws skip the bookkeeping, the bound is a lie and the sweep
+     * hammers git forever without announcing anything — the #p5as shape again,
+     * wearing a different hat.
+     */
+    it('counts a thrown sweep toward the latch, and still surfaces the error', async () => {
+      const { repo, calls } = fakeRepo()
+      const offline = {
+        ...repo,
+        fetchOrigin: () => {
+          calls.push('fetch')
+          return Promise.reject(new Error('could not resolve host: github.com'))
+        },
+      }
+      const service = createFilesService({ db, repo: offline })
+
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT; i++) {
+        // The error still reaches the caller (the sweep helper logs it).
+        await expect(service.sweep(FILES_IDLE_MS)).rejects.toThrow(
+          /could not resolve host/,
+        )
+      }
+
+      // …and now it stops hammering git, and it said so on the ship's log.
+      calls.length = 0
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('wedged')
+      expect(calls).toEqual([])
+      const events = await listEventsSince(db, {
+        topicPatterns: ['files:*'],
+        audience: 'public',
+      })
+      const wedged = events.filter((e) => e.type === FILES_SWEEP_WEDGED)
+      expect(wedged).toHaveLength(1)
+      expect(wedged[0].payload).toEqual({
+        outcome: 'error',
+        consecutiveFailures: SWEEP_FAILURE_LIMIT,
+      })
+    })
+
+    it('announces once per wedge, not once per probe — no drip on the ship log', async () => {
+      const { repo, state } = fakeRepo({ behind: 1, converge: 'conflict' })
+      const service = createFilesService({ db, repo })
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT; i++) {
+        await service.sweep(FILES_IDLE_MS)
+        state.staging = true
+      }
+      for (let i = 0; i < SWEEP_WEDGED_PROBE_EVERY; i++) {
+        await service.sweep(FILES_IDLE_MS)
+      }
+      // The probe tick fails again — the wedge is old news, not new news.
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+      const events = await listEventsSince(db, {
+        topicPatterns: ['files:*'],
+        audience: 'public',
+      })
+      expect(events.filter((e) => e.type === FILES_SWEEP_WEDGED)).toHaveLength(
+        1,
+      )
+    })
+
+    it('probes again after SWEEP_WEDGED_PROBE_EVERY skipped ticks, so a cleared cause recovers', async () => {
+      const { repo, calls, state } = fakeRepo({
+        behind: 1,
+        converge: 'conflict',
+      })
+      const service = createFilesService({ db, repo })
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT; i++) {
+        await service.sweep(FILES_IDLE_MS)
+        state.staging = true
+      }
+      for (let i = 0; i < SWEEP_WEDGED_PROBE_EVERY; i++) {
+        expect(await service.sweep(FILES_IDLE_MS)).toBe('wedged')
+      }
+      // The cause cleared in the meantime — the probe tick finds it and drains.
+      state.converge = 'converged'
+      calls.length = 0
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('merged')
+      expect(calls).toEqual(['fetch', 'converge', 'merge', 'push'])
+      // …and a success clears the latch: the next tick works normally again.
+      state.staging = true
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('merged')
+    })
+
+    it('a successful sweep between failures resets the count', async () => {
+      const { repo, state } = fakeRepo({ behind: 1, converge: 'conflict' })
+      const service = createFilesService({ db, repo })
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT - 1; i++) {
+        expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+        state.staging = true
+      }
+      state.converge = 'converged'
+      expect(await service.sweep(FILES_IDLE_MS)).toBe('merged')
+      state.staging = true
+      state.converge = 'conflict'
+      for (let i = 0; i < SWEEP_FAILURE_LIMIT - 1; i++) {
+        expect(await service.sweep(FILES_IDLE_MS)).toBe('conflict')
+        state.staging = true
+      }
+    })
+  })
+})
+
+describe('sweepGate', () => {
+  it('probes while consecutive failures are under the limit', () => {
+    expect(sweepGate({ failures: 0, skipped: 0 })).toBe('probe')
+    expect(sweepGate({ failures: SWEEP_FAILURE_LIMIT - 1, skipped: 0 })).toBe(
+      'probe',
+    )
+  })
+
+  it('skips at the limit until enough ticks have gone by, then probes once', () => {
+    expect(sweepGate({ failures: SWEEP_FAILURE_LIMIT, skipped: 0 })).toBe(
+      'skip',
+    )
+    expect(
+      sweepGate({
+        failures: SWEEP_FAILURE_LIMIT,
+        skipped: SWEEP_WEDGED_PROBE_EVERY - 1,
+      }),
+    ).toBe('skip')
+    expect(
+      sweepGate({
+        failures: SWEEP_FAILURE_LIMIT,
+        skipped: SWEEP_WEDGED_PROBE_EVERY,
+      }),
+    ).toBe('probe')
+  })
+})
+
+describe('createSweepReporter', () => {
+  it('says nothing for idle or successful sweeps — a quiet log means a healthy sweep', () => {
+    const report = createSweepReporter()
+    for (const outcome of [
+      'waiting',
+      'no-staging',
+      'merged',
+      'pushed',
+    ] satisfies SweepOutcome[]) {
+      expect(report(outcome)).toBeNull()
+    }
+  })
+
+  it('speaks the first time a sweep fails to get its work done', () => {
+    for (const outcome of [
+      'postponed',
+      'conflict',
+      'push-rejected',
+      'wedged',
+    ] satisfies SweepOutcome[]) {
+      expect(createSweepReporter()(outcome)).toContain(outcome)
+    }
+  })
+
+  it('throttles a repeating failure instead of flooding, but never goes silent', () => {
+    const report = createSweepReporter()
+    expect(report('conflict')).not.toBeNull()
+    for (let i = 2; i < SWEEP_LOG_REPEAT_EVERY; i++) {
+      expect(report('conflict')).toBeNull()
+    }
+    expect(report('conflict')).not.toBeNull()
+  })
+
+  it('speaks again as soon as the outcome changes', () => {
+    const report = createSweepReporter()
+    expect(report('conflict')).not.toBeNull()
+    expect(report('conflict')).toBeNull()
+    expect(report('postponed')).not.toBeNull()
+    expect(report('conflict')).not.toBeNull()
+  })
+})
+
+describe('findCapturedCommandBanner', () => {
+  const banner =
+    '> files\n> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read a.md\n'
+
+  it('finds npm’s two-line script banner captured into a document', () => {
+    expect(findCapturedCommandBanner(banner)).toContain('> files')
+    expect(
+      findCapturedCommandBanner(`# memory\n\n${banner}\nnotes\n`),
+    ).toContain('cli.ts')
+    expect(
+      findCapturedCommandBanner('> skylark@1.0.0 issue\n> node --x=1 cli.ts\n'),
+    ).not.toBeNull()
+  })
+
+  it('leaves ordinary prose, blockquotes, and code fences alone', () => {
+    expect(findCapturedCommandBanner('')).toBeNull()
+    expect(findCapturedCommandBanner('# notes\n\nplain text\n')).toBeNull()
+    expect(
+      findCapturedCommandBanner('> A quote\n> that runs on for a while\n'),
+    ).toBeNull()
+    expect(
+      findCapturedCommandBanner('> Heads up\n> run npm run files -- list\n'),
+    ).toBeNull()
+    expect(
+      findCapturedCommandBanner(
+        'Run it:\n\n```\nnode --env-file-if-exists=.env cli.ts read a.md\n```\n',
+      ),
+    ).toBeNull()
+    // A single banner-shaped line with no command after it is just a quote.
+    expect(findCapturedCommandBanner('> files\n\nreal content\n')).toBeNull()
   })
 })
