@@ -1,5 +1,13 @@
 import { spawn } from 'node:child_process'
-import { mkdir, readdir, readFile, realpath, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
@@ -80,12 +88,21 @@ export interface FilesRepo {
    */
   aheadOfOrigin(): Promise<number>
   /**
-   * Bring local main up to date with the fetched origin/main: fast-forward
-   * when strictly behind; when local main has commits of its own, rebase them
-   * on top. Updates the working tree, so only call on a clean, main-checked-out
-   * repo. A conflict aborts the rebase and leaves main as it was.
+   * How many commits origin/main (as of the last fetch) carries that local main
+   * does not. 0 means origin/main is already an ancestor of local main, so a
+   * plain push fast-forwards and there is nothing to converge — the common case,
+   * and the one an unconditional sync used to wedge on (#p5as).
    */
-  syncWithOrigin(): Promise<'synced' | 'conflict'>
+  behindOrigin(): Promise<number>
+  /**
+   * Converge local main with a genuinely-advanced origin/main: fast-forward when
+   * strictly behind, else a real merge of origin/main into main — content, not a
+   * replay of local history, so no historical commit can ever block it. A
+   * conflict INSIDE the files dir is resolved by union (both sides' lines kept);
+   * anything else aborts and leaves main exactly as it was. Updates the working
+   * tree, so only call on a clean, main-checked-out repo.
+   */
+  convergeWithOrigin(): Promise<'converged' | 'conflict'>
   /**
    * Push local main to origin — never forced. 'rejected' when origin moved
    * since the fetch (the next sweep's sync handles the new divergence).
@@ -164,6 +181,111 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
       }
     })()
     return ownRepoChecked
+  }
+
+  /** Is this repo-relative path inside the directory the service owns? */
+  function insideFilesDir(path: string): boolean {
+    return path.startsWith(`${filesDir}/`)
+  }
+
+  /**
+   * The paths left unmerged by the merge in progress — raw (NUL-separated), so
+   * a unicode or spaced filename arrives exactly as git holds it.
+   */
+  async function unmergedPaths(): Promise<string[]> {
+    const out = await git(['diff', '-z', '--name-only', '--diff-filter=U'])
+      /* v8 ignore next -- git diff has no failure mode here; treating one as
+         "no conflicts I can settle" keeps the caller's abort path in charge. */
+      .catch(() => '')
+    return out.split('\0').filter(Boolean)
+  }
+
+  /** One side of a conflicted path, or null when that side doesn't have it. */
+  async function conflictStage(
+    stage: 1 | 2 | 3,
+    path: string,
+  ): Promise<string | null> {
+    try {
+      return await git(['show', `:${String(stage)}:${path}`])
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Resolve one conflicted document by union: both sides' hunks, in order,
+   * with no markers. A path only one side still has survives with that side's
+   * content — the sweep does not delete a document out from under a writer.
+   */
+  async function unionResolve(
+    path: string,
+    sides: { base: string | null; ours: string; theirs: string },
+  ): Promise<void> {
+    const dir = await mkdtemp(join(tmpdir(), 'skylark-files-union-'))
+    try {
+      const paths = {
+        base: join(dir, 'base'),
+        ours: join(dir, 'ours'),
+        theirs: join(dir, 'theirs'),
+      }
+      await writeFile(paths.base, sides.base ?? '')
+      await writeFile(paths.ours, sides.ours)
+      await writeFile(paths.theirs, sides.theirs)
+      const merged = await git([
+        'merge-file',
+        '--union',
+        '-p',
+        paths.ours,
+        paths.base,
+        paths.theirs,
+      ])
+      await writeFile(resolve(repoRoot, path), merged)
+      await git(['add', '--', path])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  /**
+   * Try to resolve the merge in progress under the union policy. Returns false —
+   * having changed nothing — when the conflict is not ours to settle: a path
+   * outside the files dir (code, config: a human's call), a binary document
+   * (union is a line rule), or no unmerged paths at all (the merge failed for
+   * some other reason, e.g. a dirty working tree). The caller then aborts.
+   */
+  async function unionResolveDocConflicts(): Promise<boolean> {
+    const paths = await unmergedPaths()
+    if (paths.length === 0 || !paths.every(insideFilesDir)) return false
+    const sides = await Promise.all(
+      paths.map(async (path) => ({
+        path,
+        base: await conflictStage(1, path),
+        ours: await conflictStage(2, path),
+        theirs: await conflictStage(3, path),
+      })),
+    )
+    if (sides.some((s) => [s.ours, s.theirs].some((v) => v?.includes('\0')))) {
+      return false
+    }
+    for (const side of sides) {
+      if (side.ours !== null && side.theirs !== null) {
+        await unionResolve(side.path, {
+          base: side.base,
+          ours: side.ours,
+          theirs: side.theirs,
+        })
+        continue
+      }
+      const kept = side.ours ?? side.theirs
+      /* v8 ignore next 2 -- both sides gone (git's "DD"): rare enough that no
+         fixture produces it, and a guess about a doc nobody has is a human's. */
+      if (kept === null) return false
+      // Modify/delete: keep the side that still has the document, by writing it
+      // back — a sweep never destroys content it didn't author.
+      await writeFile(resolve(repoRoot, side.path), kept)
+      await git(['add', '--', side.path])
+    }
+    return true
   }
 
   async function stagingExists(): Promise<boolean> {
@@ -359,24 +481,54 @@ export function createFilesRepo(config: FilesRepoConfig): FilesRepo {
       }
     },
 
-    async syncWithOrigin() {
-      await assertOwnRepo()
+    async behindOrigin() {
       try {
-        // One move covers every shape: strictly behind fast-forwards, local-only
-        // commits replay on top, already-in-sync is a no-op.
-        await git(['rebase', originMainRef, mainBranch], {
-          env: {
-            GIT_COMMITTER_NAME: COMMITTER.name,
-            GIT_COMMITTER_EMAIL: COMMITTER.email,
-          },
-        })
+        const out = await git([
+          'rev-list',
+          '--count',
+          `refs/heads/${mainBranch}..${originMainRef}`,
+        ])
+        return Number.parseInt(out.trim(), 10)
       } catch {
-        // Leave nothing mid-rebase; a failed abort means there was no rebase
-        // to abort (it failed before starting), which is already clean.
-        await git(['rebase', '--abort']).catch(() => undefined)
-        return 'conflict'
+        // No origin/main ref yet — origin cannot have advanced past us.
+        return 0
       }
-      return 'synced'
+    },
+
+    async convergeWithOrigin() {
+      await assertOwnRepo()
+      const env = {
+        GIT_AUTHOR_NAME: COMMITTER.name,
+        GIT_AUTHOR_EMAIL: COMMITTER.email,
+        GIT_COMMITTER_NAME: COMMITTER.name,
+        GIT_COMMITTER_EMAIL: COMMITTER.email,
+      }
+      const message = `files sweep: converge ${mainBranch} with ${ORIGIN}/${mainBranch}`
+      try {
+        // Strictly behind fast-forwards; otherwise this is one content-level
+        // three-way merge — never a replay of local history.
+        await git(['merge', '--no-edit', '-m', message, originMainRef], { env })
+        return 'converged'
+      } catch {
+        if (!(await unionResolveDocConflicts())) {
+          // Leave nothing mid-merge; a failed abort means there was no merge to
+          // abort (it failed before starting), which is already clean.
+          await git(['merge', '--abort']).catch(() => undefined)
+          return 'conflict'
+        }
+        try {
+          await git(
+            ['commit', '-m', `${message}\n\nConflicting documents unioned.`],
+            { env },
+          )
+          /* v8 ignore next 4 -- committing a fully-resolved merge shouldn't fail;
+             if it somehow does, leave nothing mid-merge and ask for a human. */
+        } catch {
+          await git(['merge', '--abort']).catch(() => undefined)
+          return 'conflict'
+        }
+        return 'converged'
+      }
     },
 
     async pushMain() {

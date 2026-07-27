@@ -24,12 +24,33 @@ import { fileTopic } from './topic'
 /** Event types this service emits (one name, used by emitters and subscribers). */
 export const FILE_CHANGED = 'file.changed'
 export const FILES_MERGED = 'files.staging_merged'
+export const FILES_SWEEP_WEDGED = 'files.sweep_wedged'
 
 /** The topic the merge announcement rides (system event, not one file's). */
 export const FILES_MERGE_TOPIC = 'files:staging'
 
+/** The topic the sweep's own health rides — not any one file's business. */
+export const FILES_SWEEP_TOPIC = 'files:sweep'
+
 /** How long the staging branch must sit quiet before the sweep merges it. */
 export const FILES_IDLE_MS = 2 * 60_000
+
+/**
+ * How many consecutive failed sweeps before the sweep stops trying every tick.
+ * A wedged sweep that keeps re-running the same doomed git command every 30s
+ * (#p5as ran one for 25 minutes) helps nobody: past this many, it latches.
+ */
+export const SWEEP_FAILURE_LIMIT = 5
+
+/**
+ * Once latched, how many ticks to skip before probing again — a cause that
+ * clears itself (origin moved on, a human resolved it) still recovers without
+ * a restart, at ~10 minutes instead of 30 seconds.
+ */
+export const SWEEP_WEDGED_PROBE_EVERY = 20
+
+/** How many identical noisy outcomes in a row before the log repeats itself. */
+export const SWEEP_LOG_REPEAT_EVERY = 10
 
 /**
  * Validate and normalize a file path: relative, no traversal, no empty
@@ -53,6 +74,50 @@ export function validateFilePath(path: string): string {
 }
 
 /**
+ * npm's two-line script banner, as `npm run files -- read x` prints it:
+ *
+ *     > files
+ *     > node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read x
+ *
+ * An agent that round-trips that output back into a write buries the banner in
+ * the document (#q2zi repaired exactly that damage in the crew's memory files,
+ * and it recurred — #p5as). The PAIR is the signature and the reason this can
+ * stay narrow: a lone `> word` is an ordinary blockquote, and a sentence in a
+ * blockquote is prose, but a one-token line followed by a line whose second
+ * token is a flag or a script file is npm talking, not a person writing.
+ */
+const BANNER_SCRIPT_LINE = /^>[ \t]+(?:\S+@\S+[ \t]+)?[\w:@./-]+[ \t]*$/
+const BANNER_COMMAND_LINE =
+  /^>[ \t]+\S+[ \t]+(?:--?[\w-]+|[\w./-]+\.[cm]?[jt]sx?\b)/
+
+/**
+ * The captured-banner block in this content, or null if there is none. Returns
+ * the offending lines so the error can show the caller exactly what it saw.
+ */
+export function findCapturedCommandBanner(content: string): string | null {
+  const lines = content.split('\n')
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (
+      BANNER_SCRIPT_LINE.test(lines[i]) &&
+      BANNER_COMMAND_LINE.test(lines[i + 1])
+    ) {
+      return `${lines[i]}\n${lines[i + 1]}`
+    }
+  }
+  return null
+}
+
+/** Refuse a write whose content is really captured command output. */
+function assertNoCapturedCommandBanner(path: string, content: string): void {
+  const banner = findCapturedCommandBanner(content)
+  if (banner === null) return
+  throw new Error(
+    `Refusing to write "${path}": the content looks like captured command output, not document text — it carries npm's script banner:\n${banner}\n` +
+      `Write the document's own content. To quote a command on purpose, put it in a fenced code block instead of a blockquote.`,
+  )
+}
+
+/**
  * Should the sweep merge staging now? Quiet for the idle window since the
  * staging tip was committed. The clock is git's committer time, so it holds
  * across restarts and across processes (a CLI write elsewhere resets it too).
@@ -67,7 +132,9 @@ export function shouldMergeStaging(input: {
 /**
  * What one sweep did — 'postponed' and 'push-rejected' retry next tick,
  * 'conflict' needs a human. 'pushed' is a sweep that had no staging to merge
- * but landed a push a previous sweep couldn't.
+ * but landed a push a previous sweep couldn't. 'wedged' is a tick that didn't
+ * even try: the same failure has repeated past SWEEP_FAILURE_LIMIT, so the
+ * sweep has stopped hammering git and is only probing occasionally.
  */
 export type SweepOutcome =
   | 'no-staging'
@@ -77,6 +144,61 @@ export type SweepOutcome =
   | 'pushed'
   | 'conflict'
   | 'push-rejected'
+  | 'wedged'
+
+/** Outcomes where git ran and did not get the work done. */
+function isSweepFailure(outcome: SweepOutcome): boolean {
+  return outcome === 'conflict' || outcome === 'push-rejected'
+}
+
+/**
+ * Should this tick actually run the sweep, or skip it? Under the failure limit,
+ * always probe. At or past it the sweep is wedged: skip until
+ * SWEEP_WEDGED_PROBE_EVERY ticks have gone by, then probe once.
+ */
+export function sweepGate(input: {
+  failures: number
+  skipped: number
+}): 'probe' | 'skip' {
+  if (input.failures < SWEEP_FAILURE_LIMIT) return 'probe'
+  return input.skipped >= SWEEP_WEDGED_PROBE_EVERY ? 'probe' : 'skip'
+}
+
+/** What a not-done outcome should say out loud, in the crew's own words. */
+const SWEEP_COMPLAINTS: Partial<Record<SweepOutcome, string>> = {
+  postponed:
+    'postponed — the repo is not on a clean main (another branch checked out, or the files dir has uncommitted edits)',
+  conflict:
+    'conflict — a document merge could not be settled automatically; the docs are safe but main is not moving until a human looks',
+  'push-rejected':
+    'push-rejected — origin moved between the fetch and the push; retrying on the next sweep',
+  wedged:
+    'wedged — the same failure keeps repeating, so the sweep has stopped retrying every tick and is only probing occasionally; docs are staged but not reaching origin',
+}
+
+/**
+ * A console reporter for sweep outcomes, with just enough memory not to flood
+ * the log. An idle or successful sweep says nothing — so a quiet log really does
+ * mean a healthy sweep, which is exactly what #p5as could not tell. A sweep that
+ * didn't get its work done speaks the first time and then once every
+ * SWEEP_LOG_REPEAT_EVERY repeats, so it never goes quiet enough to look fine.
+ *
+ * Returns the line to log, or null for silence; `live.ts` owns the console.
+ */
+export function createSweepReporter(): (
+  outcome: SweepOutcome,
+) => string | null {
+  let last: SweepOutcome | undefined
+  let streak = 0
+  return (outcome) => {
+    streak = outcome === last ? streak + 1 : 1
+    last = outcome
+    const complaint = SWEEP_COMPLAINTS[outcome]
+    if (complaint === undefined) return null
+    if (streak !== 1 && streak % SWEEP_LOG_REPEAT_EVERY !== 0) return null
+    return `sweep ${complaint}`
+  }
+}
 
 export interface FilesServiceDeps {
   db: Database
@@ -114,21 +236,66 @@ export function createFilesService({
     return next
   }
 
+  // The wedge guard: consecutive failed sweeps, and how many ticks have been
+  // skipped since the last probe. Per service instance — a restart starts fresh,
+  // which is the right call: a restart is a human doing something.
+  let failures = 0
+  let skipped = 0
+  let announcedWedge = false
+
+  /**
+   * Make local main pushable: fetch, then converge ONLY if origin genuinely
+   * advanced past us. When origin/main is already an ancestor of local main —
+   * the overwhelmingly common case, including a fat backlog of unpushed doc
+   * commits — a plain push fast-forwards and there is nothing to converge.
+   * Syncing unconditionally is what wedged the sweep in #p5as: it replayed 56
+   * historical doc commits onto a moved origin and conflicted on the first.
+   */
+  async function readyToPush(): Promise<'ready' | 'conflict'> {
+    await repo.fetchOrigin()
+    if ((await repo.behindOrigin()) === 0) return 'ready'
+    return (await repo.convergeWithOrigin()) === 'conflict'
+      ? 'conflict'
+      : 'ready'
+  }
+
   /**
    * Nothing staged, so the only work a sweep could owe is a push a previous
-   * sweep couldn't land (origin moved between its fetch and its push): local
-   * main still carries commits origin lacks. Sync with the moved origin and
-   * push, under the same clean-main guard as a merge. When nothing is ahead —
-   * the steady state — this touches no git at all.
+   * sweep couldn't land (origin moved between its fetch and its push, or the
+   * ship has been offline): local main still carries commits origin lacks. Push
+   * it, under the same clean-main guard as a merge. When nothing is ahead — the
+   * steady state — this touches no git at all.
    */
   async function retryPendingPush(): Promise<SweepOutcome> {
     if (!(await repo.hasOrigin())) return 'no-staging'
     if ((await repo.aheadOfOrigin()) === 0) return 'no-staging'
     if ((await repo.mergeReadiness()) !== 'ready') return 'postponed'
-    await repo.fetchOrigin()
-    if ((await repo.syncWithOrigin()) === 'conflict') return 'conflict'
+    if ((await readyToPush()) === 'conflict') return 'conflict'
     if ((await repo.pushMain()) === 'rejected') return 'push-rejected'
     return 'pushed'
+  }
+
+  /** One sweep's actual work, before the wedge guard's bookkeeping. */
+  async function runSweep(now: number): Promise<SweepOutcome> {
+    if (!(await repo.stagingExists())) return retryPendingPush()
+    const stagedAt = await repo.stagedAt()
+    if (!shouldMergeStaging({ stagedAt, now })) return 'waiting'
+    if ((await repo.mergeReadiness()) !== 'ready') return 'postponed'
+    // Converge BEFORE merging, so the docs land on a main that already carries
+    // origin's latest — and the push afterwards fast-forwards.
+    const origin = await repo.hasOrigin()
+    if (origin && (await readyToPush()) === 'conflict') return 'conflict'
+    const outcome = await repo.mergeStaging()
+    if (outcome === 'conflict') return 'conflict'
+    await emitEvent(db, {
+      type: FILES_MERGED,
+      source: 'files',
+      topic: FILES_MERGE_TOPIC,
+      audience: PUBLIC_AUDIENCE,
+      payload: {},
+    })
+    if (origin && (await repo.pushMain()) === 'rejected') return 'push-rejected'
+    return 'merged'
   }
 
   async function change(
@@ -138,6 +305,7 @@ export function createFilesService({
     action: 'write' | 'delete',
   ): Promise<void> {
     validateFilePath(path)
+    if (content !== null) assertNoCapturedCommandBanner(path, content)
     await locked(() =>
       repo.commitToStaging(
         [{ path, content }],
@@ -177,30 +345,31 @@ export function createFilesService({
 
     sweep(now) {
       return locked(async (): Promise<SweepOutcome> => {
-        if (!(await repo.stagingExists())) return retryPendingPush()
-        const stagedAt = await repo.stagedAt()
-        if (!shouldMergeStaging({ stagedAt, now })) return 'waiting'
-        if ((await repo.mergeReadiness()) !== 'ready') return 'postponed'
-        // Sync BEFORE merging, so the docs land on a main that already carries
-        // origin's latest — and the push afterwards fast-forwards.
-        const origin = await repo.hasOrigin()
-        if (origin) {
-          await repo.fetchOrigin()
-          if ((await repo.syncWithOrigin()) === 'conflict') return 'conflict'
+        if (sweepGate({ failures, skipped }) === 'skip') {
+          skipped++
+          return 'wedged'
         }
-        const outcome = await repo.mergeStaging()
-        if (outcome === 'conflict') return 'conflict'
-        await emitEvent(db, {
-          type: FILES_MERGED,
-          source: 'files',
-          topic: FILES_MERGE_TOPIC,
-          audience: PUBLIC_AUDIENCE,
-          payload: {},
-        })
-        if (origin && (await repo.pushMain()) === 'rejected') {
-          return 'push-rejected'
+        skipped = 0
+        const outcome = await runSweep(now)
+        if (!isSweepFailure(outcome)) {
+          failures = 0
+          announcedWedge = false
+          return outcome
         }
-        return 'merged'
+        failures++
+        if (failures >= SWEEP_FAILURE_LIMIT && !announcedWedge) {
+          announcedWedge = true
+          // Say it on the ship's log too, once per wedge: the console scrolls
+          // away, and a sweep that cannot reach origin is crew news.
+          await emitEvent(db, {
+            type: FILES_SWEEP_WEDGED,
+            source: 'files',
+            topic: FILES_SWEEP_TOPIC,
+            audience: PUBLIC_AUDIENCE,
+            payload: { outcome, consecutiveFailures: failures },
+          })
+        }
+        return outcome
       })
     },
   }
