@@ -248,6 +248,73 @@ describe('WidgetCanvas: the desktop grid', () => {
     expect(onStackWidget).toHaveBeenCalledWith('w1')
   })
 
+  it('spends the buttons on the first tap, so a double tap answers once', () => {
+    // The host's `busy` flag drops the moment the write returns, but the
+    // answered tile is still on screen until the refetched data lands — a
+    // window a thumb goes straight through, and the second tap came back as an
+    // uncaught "this widget has already been answered". The stack has always
+    // guarded it locally; the canvas answers the same rows and must behave the
+    // same way whichever surface the tap lands on.
+    act(() => {
+      setWidth(DESKTOP)
+    })
+    const { onAnswerWidget } = renderCanvas({
+      widgets: [
+        {
+          kind: 'choice',
+          props: { question: 'Ship it?', options: ['Yes', 'No'] },
+        },
+      ],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-offers the options if the answer did not take', () => {
+    // Same reasoning as the stack: a FAILED answer leaves the tile on the page,
+    // and it has to be answerable again rather than sitting there with dead
+    // buttons until you reload.
+    act(() => {
+      setWidth(DESKTOP)
+    })
+    const onAnswerWidget = vi.fn()
+    function paint(busy: boolean) {
+      return (
+        <WidgetCanvas
+          pages={PAGES}
+          widgets={[
+            tile({
+              kind: 'choice',
+              props: { question: 'Ship it?', options: ['Yes', 'No'] },
+            }),
+          ]}
+          activePageId="p1"
+          busy={busy}
+          eventSourceFactory={factory}
+          onSelectPage={vi.fn()}
+          onNewPage={vi.fn()}
+          onRenamePage={vi.fn()}
+          onRemovePage={vi.fn()}
+          onPlaceWidget={vi.fn()}
+          onStackWidget={vi.fn()}
+          onAnswerWidget={onAnswerWidget}
+        />
+      )
+    }
+    const { rerender } = render(paint(false))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
+
+    rerender(paint(true)) // in flight — still spent
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(1)
+
+    rerender(paint(false)) // it came back, and the tile is STILL here
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(onAnswerWidget).toHaveBeenCalledTimes(2)
+  })
+
   it('renders a body open, without being tapped', () => {
     // The opposite of a stack tile: you arranged this precisely so you could
     // see it at a glance.

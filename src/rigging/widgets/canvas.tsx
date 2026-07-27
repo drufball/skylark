@@ -17,6 +17,7 @@ import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 
+import { useAnswerGuard } from './answer-guard'
 import { TAP_TARGET } from './kind'
 import { resolveWidget } from './registry'
 import type { WidgetItem } from './stack'
@@ -140,6 +141,9 @@ export function WidgetCanvas({
   eventSourceFactory,
 }: WidgetCanvasProps) {
   const isMobile = useIsMobile()
+  // The same guard the stack holds, for the same reason: these are the same
+  // rows and the same door, so a double tap has to mean the same thing here.
+  const answers = useAnswerGuard(busy)
   const activePage = pages.find((p) => p.id === activePageId) ?? pages.at(0)
   const onPage = useMemo(
     () => widgets.filter((w) => w.pageId === activePage?.id),
@@ -162,6 +166,11 @@ export function WidgetCanvas({
     setRevision((n) => n + 1)
   }, [])
   useShipLog(topics, onEvent, eventSourceFactory)
+
+  function answer(widgetId: string, value: string) {
+    answers.mark(widgetId)
+    onAnswerWidget(widgetId, value)
+  }
 
   function step(by: number) {
     if (!activePage) return
@@ -190,9 +199,9 @@ export function WidgetCanvas({
         <MobilePage
           widgets={onPage}
           revision={revision}
-          busy={busy}
+          spent={answers.spent}
           onStackWidget={onStackWidget}
-          onAnswerWidget={onAnswerWidget}
+          onAnswerWidget={answer}
           onSwipe={step}
         />
       ) : (
@@ -200,10 +209,10 @@ export function WidgetCanvas({
           pageId={activePage.id}
           widgets={onPage}
           revision={revision}
-          busy={busy}
+          spent={answers.spent}
           onPlaceWidget={onPlaceWidget}
           onStackWidget={onStackWidget}
-          onAnswerWidget={onAnswerWidget}
+          onAnswerWidget={answer}
         />
       )}
     </section>
@@ -355,14 +364,14 @@ function Empty({
 function MobilePage({
   widgets,
   revision,
-  busy,
+  spent,
   onStackWidget,
   onAnswerWidget,
   onSwipe,
 }: {
   widgets: CanvasWidgetItem[]
   revision: number
-  busy: boolean
+  spent: (id: string) => boolean
   onStackWidget: (id: string) => void
   onAnswerWidget: (id: string, value: string) => void
   onSwipe: (by: number) => void
@@ -395,7 +404,7 @@ function MobilePage({
             key={widget.id}
             widget={widget}
             revision={revision}
-            busy={busy}
+            spent={spent(widget.id)}
             onStack={() => {
               onStackWidget(widget.id)
             }}
@@ -424,7 +433,7 @@ function DesktopPage({
   pageId,
   widgets,
   revision,
-  busy,
+  spent,
   onPlaceWidget,
   onStackWidget,
   onAnswerWidget,
@@ -432,7 +441,7 @@ function DesktopPage({
   pageId: string
   widgets: CanvasWidgetItem[]
   revision: number
-  busy: boolean
+  spent: (id: string) => boolean
   onPlaceWidget: (id: string, box: CanvasBox & { pageId: string }) => void
   onStackWidget: (id: string) => void
   onAnswerWidget: (id: string, value: string) => void
@@ -530,7 +539,7 @@ function DesktopPage({
             <CanvasTile
               widget={widget}
               revision={revision}
-              busy={busy}
+              spent={spent(widget.id)}
               onStack={() => {
                 onStackWidget(widget.id)
               }}
@@ -581,7 +590,7 @@ function PageEmpty() {
 function CanvasTile({
   widget,
   revision,
-  busy,
+  spent,
   onStack,
   onAnswer,
   onGrab,
@@ -589,7 +598,7 @@ function CanvasTile({
 }: {
   widget: CanvasWidgetItem
   revision: number
-  busy: boolean
+  spent: boolean
   onStack: () => void
   onAnswer: (value: string) => void
   onGrab?: (
@@ -656,7 +665,7 @@ function CanvasTile({
           <resolution.view.Body
             revision={revision}
             onAnswer={onAnswer}
-            spent={busy}
+            spent={spent}
           />
         ) : (
           <p className="flex items-start gap-1 p-2 text-xs text-muted-foreground">

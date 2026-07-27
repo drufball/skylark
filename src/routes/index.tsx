@@ -249,8 +249,14 @@ function ChatRoute() {
   }
 
   async function answerWidget(widgetId: string, value: string) {
-    await run(() => answerChatWidget({ data: { widgetId, value } }))
-    await router.invalidate()
+    // The refresh is PART of the action, not something after it: `busy` has to
+    // stay on until the answered widget has actually left the surface, or the
+    // buttons re-arm for the tens of milliseconds the invalidate is in flight
+    // and a second tap reaches a door that can only refuse it.
+    await run(async () => {
+      await answerChatWidget({ data: { widgetId, value } })
+      await router.invalidate()
+    })
   }
 
   async function dismissWidget(widgetId: string) {

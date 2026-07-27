@@ -79,14 +79,18 @@ describe('offeredAnswer', () => {
 })
 
 describe('answerMessageBody', () => {
-  it('quotes the question above the answer, so the transcript stands alone', () => {
-    expect(answerMessageBody('Ship it?', 'Yes')).toBe('> Ship it?\n\nYes')
+  it('states the question above the answer, so the transcript stands alone', () => {
+    // Plain characters on purpose: the thread renders a message body verbatim,
+    // so the markdown blockquote this used to compose arrived in the crew's own
+    // bubble as a stray "> ".
+    expect(answerMessageBody('Ship it?', 'Yes')).toBe('Ship it?\n→ Yes')
   })
 
-  it('quotes every line of a multi-line question', () => {
-    // Without per-line quoting the second line reads as the answer.
+  it('keeps a multi-line question whole, with only the answer marked', () => {
+    // The marker goes on the ANSWER, not the question — that's what stops the
+    // second line of a two-line question reading as the reply.
     expect(answerMessageBody('Ship it?\nReally?', 'No')).toBe(
-      '> Ship it?\n> Really?\n\nNo',
+      'Ship it?\nReally?\n→ No',
     )
   })
 })
