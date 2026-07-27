@@ -1,7 +1,3 @@
-
-> files
-> node --env-file-if-exists=.env --import tsx src/hull/files/cli.ts read agents/babysitter/index.md
-
 # Babysitter memory
 
 ## Role
