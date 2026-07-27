@@ -43,6 +43,10 @@ with Tailwind and shadcn.
 - **Files** — the crew's shared documents: real files in the repo
   (`src/home/files/`), staged and auto-merged by the hull's files service
   ([`hull/files/zine.md`](hull/files/zine.md)).
+- **Widgets** — the live little views a chat keeps open above its composer. The
+  row lives in the hull's chat service; what a kind MEANS lives in the rigging
+  catalog ([`rigging/widgets/zine.md`](rigging/widgets/zine.md)) — hull holds
+  the row, rigging holds the meaning.
 - **Notifications** — every user's inbox, fed by watches on ship-log topics; for
   agents, a notification is a wake-up
   ([`hull/notifications/zine.md`](hull/notifications/zine.md)).
@@ -90,6 +94,8 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **Chat widgets get a catalog, in rigging.** Hull holds the widget row; rigging
+  holds the meaning — see [`rigging/widgets/zine.md`](rigging/widgets/zine.md).
 - **Agent profiles retire; config moves onto the agent.** The Agents surface's
   Profiles tab folds into Crew — see [`hull/agent/zine.md`](hull/agent/zine.md).
 - **#6** — The planning loop closes: files + notifications services, agent

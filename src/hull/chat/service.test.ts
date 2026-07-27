@@ -885,21 +885,27 @@ describe('widget persistence + answering', () => {
     expect(await listOpenWidgets(db, chatId)).toHaveLength(1)
   })
 
-  it('refuses to answer a widget whose props do not parse', async () => {
+  it('refuses to answer a widget whose props offer nothing', async () => {
     // An agent wrote nonsense props. The tile says so; answering can't invent
     // an option list out of a blob nobody can read.
     const id = await raise({ question: 'Ship it?' })
     await expect(
       answerWidget(db, { widgetId: id, actorId: dru, value: 'Yes' }),
-    ).rejects.toThrow(/props do not parse/)
+    ).rejects.toThrow(/offers nothing to answer/)
     expect(await listMessages(db, chatId)).toEqual([])
   })
 
-  it('refuses to answer a kind this ship does not know', async () => {
-    const id = await raise({ anything: true }, { kind: 'orrery' })
+  it('refuses to answer a kind that carries no answers at all', async () => {
+    // A `note` is read, not answered — and so is a kind this ship has never
+    // heard of. The hull needs no kind names to say so: no options, no answer.
+    const id = await raise({ text: 'Standup at 09:30' }, { kind: 'note' })
     await expect(
       answerWidget(db, { widgetId: id, actorId: dru, value: 'Yes' }),
-    ).rejects.toThrow(/does not know/)
+    ).rejects.toThrow(/offers nothing to answer/)
+    const alien = await raise({ anything: true }, { kind: 'orrery' })
+    await expect(
+      answerWidget(db, { widgetId: alien, actorId: dru, value: 'Yes' }),
+    ).rejects.toThrow(/offers nothing to answer/)
   })
 
   it('refuses to answer a widget whose chat was deleted — the row is gone', async () => {

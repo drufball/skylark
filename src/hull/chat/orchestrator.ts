@@ -111,9 +111,11 @@ all for the end). If you genuinely have nothing to add, end the turn without
 posting: silence is allowed, and the crew is shown that you read it.
 
 If you need a decision and you know the possible answers, call \`chat_widget\`
-with action "raise" instead of typing the question — the crew gets tappable
-options above the composer and their answer arrives as an ordinary message.
-Better than "yes or no?" on a phone.
+with action "raise" and kind "choice" instead of typing the question — the crew
+gets tappable options above the composer and their answer arrives as an ordinary
+message. Better than "yes or no?" on a phone. There are other kinds too (a
+pinned note, a live list of issues); \`chat_widget\`'s own description lists
+every kind this ship can render and the props each one takes.
 
 To file work for the ship, use bash:
   ${cmd}

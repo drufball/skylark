@@ -1,6 +1,6 @@
 # The Rigging
 
-_rigging zine — issue #1_
+_rigging zine — issue #cse3_
 
 ## tl;dr
 
@@ -22,6 +22,10 @@ replaced per ship without breaking anything below it.
 - **`useShipLog`** (`lib/use-ship-log.ts`) — the client half of the ship's log:
   give it topic patterns and a callback, it opens an `EventSource` on
   `/api/stream?topics=…` and fires per event. This replaces polling.
+- **Widgets** (`widgets/`) — the catalog of widget kinds a chat can keep open,
+  and the shelf that renders them: [`widgets/zine.md`](widgets/zine.md). The
+  hull owns the widget ROW; the catalog owns its meaning, because it has to know
+  every service's topics — which is why it lives on this deck.
 
 ## Structure
 
@@ -54,6 +58,11 @@ durable log — the hook adds nothing but the subscription lifecycle.
 
 ## Changelog
 
+- **#cse3** — The widget catalog joins the deck
+  ([`widgets/zine.md`](widgets/zine.md)). It's the one place rigging
+  deliberately reads hull services directly (each kind's data comes through that
+  service's own door), and the reason it isn't in the hull is the import cycle
+  that would be.
 - **#1** — First issue: the deck's shape written down — owned shadcn primitives,
   the thin-route/props view convention, `useShipLog`, and the CSS variable
   theme.

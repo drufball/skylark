@@ -22,7 +22,7 @@ import {
   reorderWidget,
   scheduleTiming,
 } from './service'
-import { parseProps } from './widgets'
+import type { JsonValue } from './widgets'
 
 // The default door onto the chat service for an agent's own bash tool — how an
 // agent woken on its inbox session (hull/chat/orchestrator.ts `wake`) finds the
@@ -248,6 +248,13 @@ async function cmdSchedule(args: string[]): Promise<void> {
  * options, and an optional `--order` slot in the stack. Options come either as
  * repeated `--option Yes --option No` or as one comma list `--options Yes,No` —
  * both spellings, because an agent writing this from bash will reach for either.
+ *
+ * `--kind` and `--props` are the raw pair, for any kind that isn't a `choice` —
+ * and for deliberately storing a blob the ship CAN'T render, which is how you see
+ * the honest tile a bad blob becomes. That's the CLI's job and not the agent
+ * tool's: `chat_widget` validates against the catalog because an agent can fix
+ * itself mid-turn, whereas a human debugging widget rendering needs the dud.
+ *
  * Pure + exported so it's tested directly, like `parseScheduleNewArgs`.
  */
 export function parseWidgetNewArgs(args: string[]): {
@@ -255,6 +262,8 @@ export function parseWidgetNewArgs(args: string[]): {
   question: string
   options: string[]
   order?: number
+  kind?: string
+  props?: JsonValue
 } {
   const rest = [...args]
   function takeFlag(name: string): string | undefined {
@@ -289,23 +298,45 @@ export function parseWidgetNewArgs(args: string[]): {
     if (Number.isNaN(parsed)) throw new Error('--order requires a number')
     order = parsed
   }
+  const kind = takeFlag('--kind')
+  const propsRaw = takeFlag('--props')
+  let props: JsonValue | undefined
+  if (propsRaw !== undefined) {
+    try {
+      props = JSON.parse(propsRaw) as JsonValue
+    } catch {
+      throw new Error('--props requires a JSON value')
+    }
+  }
   const [chatId, ...questionParts] = rest
-  return { chatId, question: questionParts.join(' ').trim(), options, order }
+  return {
+    chatId,
+    question: questionParts.join(' ').trim(),
+    options,
+    order,
+    kind,
+    props,
+  }
 }
 
 async function cmdWidgetNew(args: string[]): Promise<void> {
-  const { chatId, question, options, order } = parseWidgetNewArgs(args)
-  if (!chatId || !question || options.length === 0)
+  const { chatId, question, options, order, kind, props } =
+    parseWidgetNewArgs(args)
+  // Two spellings of the same write: the `choice` shorthand (a question plus its
+  // options) and the raw `--kind`/`--props` pair for everything else.
+  const raw = kind !== undefined || props !== undefined
+  if (!chatId || (raw ? !kind : !question || options.length === 0))
     throw new Error(
-      'usage: chat widget new <chatId> (--option <text> … | --options a,b,c) [--order N] <question>',
+      'usage: chat widget new <chatId> (--option <text> … | --options a,b,c) [--order N] <question>\n' +
+        '       chat widget new <chatId> --kind <kind> --props <json> [--order N]',
     )
   const widgetId = await withCliActor(async (tx, me) => {
     await ensureChatVisible(tx, chatId)
     const row = await addWidget(tx, {
       id: uuidv7(),
       chatId,
-      kind: 'choice',
-      props: { question, options },
+      kind: kind ?? 'choice',
+      props: raw ? (props ?? {}) : { question, options },
       stackOrder: order,
       createdById: me.id,
     })
@@ -325,14 +356,11 @@ async function cmdWidgetList(args: string[]): Promise<void> {
       return
     }
     for (const w of rows) {
-      // Every row prints, parseable or not: a widget whose props (or whose very
-      // kind) this ship can't read is exactly what you're here to find out about.
-      const parsed = parseProps(w.kind, w.props)
-      const summary = parsed.ok
-        ? `${parsed.props.question}  [${parsed.props.options.join(' | ')}]`
-        : parsed.fault === 'unknown-kind'
-          ? `(this ship doesn't know a “${parsed.detail}” widget)`
-          : `(props don't parse: ${parsed.detail})`
+      // The raw blob, not a rendered summary. Whether a kind can be rendered at
+      // all is the rigging catalog's answer, and the hull may not ask it (see
+      // widgets.ts) — but the row is what you came here for anyway: this is the
+      // door you use to find out what an agent actually wrote.
+      const summary = JSON.stringify(w.props)
       const state = w.dismissedAt ? ' (dismissed)' : ''
       process.stdout.write(
         `${w.id}  ${w.kind}${state}\n` +
@@ -394,6 +422,7 @@ async function cmdWidget(args: string[]): Promise<void> {
       throw new Error(
         'usage: chat widget <new|list|answer|dismiss|reorder> …\n' +
           '  new <chatId> (--option <text> … | --options a,b,c) [--order N] <question>\n' +
+          '  new <chatId> --kind <kind> --props <json> [--order N]   any other kind\n' +
           '  list <chatId>                widgets on a chat, dismissed ones marked\n' +
           '  answer <widgetId> <value>    answer it — posts an ordinary chat message\n' +
           '  dismiss <widgetId>           wave it away unanswered\n' +

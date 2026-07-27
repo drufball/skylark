@@ -21,7 +21,34 @@ import {
   setMemberSession,
 } from './service'
 import { chatTopic } from './topic'
-import { parseProps } from './widgets'
+import { registerWidgetKinds, type WidgetKindSpec } from './widget-catalog'
+import { offeredAnswer } from './widgets'
+
+/**
+ * The catalog the hull is HANDED at boot. A hull test can't import the rigging
+ * registry (the deck direction forbids it — which is the whole reason the seam
+ * exists), so it registers its own two kinds: one answerable, one not.
+ */
+const TEST_KINDS: WidgetKindSpec[] = [
+  {
+    kind: 'choice',
+    summary: 'A question with a fixed set of answers.',
+    propsDoc: '{ question: string, options: string[] }',
+    example: { question: 'Ship it?', options: ['Yes', 'No'] },
+    validate: (props) =>
+      offeredAnswer(props) ? null : 'needs a question and options',
+  },
+  {
+    kind: 'note',
+    summary: 'A small markdown card.',
+    propsDoc: '{ text: string }',
+    example: { text: 'Standup 09:30' },
+    validate: (props) =>
+      typeof (props as { text?: unknown }).text === 'string'
+        ? null
+        : 'text must be a non-empty string',
+  },
+]
 
 /**
  * Call a tool the way pi's agent loop does. `ctx` is the extension context the
@@ -48,28 +75,154 @@ function resultText(result: ToolResult): string {
 }
 
 describe('prepareWidgetArgs', () => {
-  it('accepts options as a JSON string — the mistake a real model made first try', () => {
+  it('reads props sent as a JSON string', () => {
     expect(
-      prepareWidgetArgs({ action: 'raise', options: '["Yes", "No"]' }),
-    ).toEqual({ action: 'raise', options: ['Yes', 'No'] })
+      prepareWidgetArgs({
+        action: 'raise',
+        kind: 'note',
+        props: '{"text":"Standup"}',
+      }),
+    ).toStrictEqual({
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'Standup' },
+    })
   })
 
-  it('accepts a comma list, the way the CLI spells it', () => {
-    expect(prepareWidgetArgs({ options: 'Tonight, Tomorrow morning' })).toEqual(
-      {
-        options: ['Tonight', 'Tomorrow morning'],
-      },
-    )
+  it('reads nested options sent as a JSON string — the mistake a real model made', () => {
+    expect(
+      prepareWidgetArgs({
+        action: 'raise',
+        kind: 'choice',
+        props: { question: 'Ship it?', options: '["Yes", "No"]' },
+      }),
+    ).toStrictEqual({
+      action: 'raise',
+      kind: 'choice',
+      props: { question: 'Ship it?', options: ['Yes', 'No'] },
+    })
   })
 
-  it('leaves a proper array, and anything else, for the schema to judge', () => {
-    const good = { action: 'raise', options: ['Yes'] }
-    expect(prepareWidgetArgs(good)).toBe(good)
-    // A JSON string that isn't an array falls through untouched.
-    const notAList = { options: '{"a":1}' }
-    expect(prepareWidgetArgs(notAList)).toBe(notAList)
+  it('reads nested options sent as a comma list, the way the CLI spells it', () => {
+    expect(
+      prepareWidgetArgs({
+        action: 'raise',
+        kind: 'choice',
+        props: { question: 'When?', options: 'Tonight, Tomorrow morning' },
+      }),
+    ).toMatchObject({ props: { options: ['Tonight', 'Tomorrow morning'] } })
+  })
+
+  it('falls back to a comma list when nested options are JSON but not a list', () => {
+    expect(
+      prepareWidgetArgs({
+        action: 'raise',
+        kind: 'choice',
+        props: { question: 'q', options: '{"a":1}' },
+      }),
+    ).toMatchObject({ props: { options: ['{"a":1}'] } })
+  })
+
+  it('nests a blob written flat beside `action`, and infers the choice kind', () => {
+    // Nesting under `props` is the one thing this tool's shape asks for that the
+    // old choice-only one didn't, so it's the mistake most worth absorbing — a
+    // flat question/options pair is unambiguously a choice.
+    expect(
+      prepareWidgetArgs({
+        action: 'raise',
+        question: 'Ship it?',
+        options: ['Yes', 'No'],
+      }),
+    ).toStrictEqual({
+      action: 'raise',
+      kind: 'choice',
+      props: { question: 'Ship it?', options: ['Yes', 'No'] },
+    })
+  })
+
+  it('keeps an explicit kind over the inferred one', () => {
+    expect(
+      prepareWidgetArgs({
+        action: 'raise',
+        kind: 'poll',
+        question: 'q',
+        options: ['a'],
+      }),
+    ).toMatchObject({ kind: 'poll' })
+  })
+
+  it.each([
+    ['only a question', { question: 'q' }],
+    ['only options', { options: ['a'] }],
+    ['neither', { text: 'a note' }],
+  ])('infers no kind from a flat blob with %s', (_label, flat) => {
+    // Guessing would raise a DIFFERENT widget than the agent meant. Leaving the
+    // kind off means the agent sees "needs a kind" and the list of real kinds.
+    const prepared = prepareWidgetArgs({ action: 'raise', ...flat })
+    expect(Object.keys(prepared as object)).toEqual(['action', 'props'])
+  })
+
+  it('keeps a stack slot alongside the props it nested', () => {
+    expect(
+      prepareWidgetArgs({
+        action: 'raise',
+        kind: 'note',
+        props: { text: 'hi' },
+        stackOrder: 5,
+      }),
+    ).toStrictEqual({
+      action: 'raise',
+      kind: 'note',
+      props: { text: 'hi' },
+      stackOrder: 5,
+    })
+  })
+
+  it('keeps a widgetId that arrived beside props rather than dropping it', () => {
+    expect(
+      prepareWidgetArgs({
+        action: 'dismiss',
+        props: { text: 'hi' },
+        widgetId: 'w1',
+      }),
+    ).toStrictEqual({
+      action: 'dismiss',
+      props: { text: 'hi' },
+      widgetId: 'w1',
+    })
+  })
+
+  it('leaves reorder and dismiss alone — they carry no props', () => {
+    expect(prepareWidgetArgs({ action: 'dismiss', widgetId: 'w1' })).toEqual({
+      action: 'dismiss',
+      widgetId: 'w1',
+    })
+    expect(
+      prepareWidgetArgs({ action: 'reorder', widgetId: 'w1', stackOrder: 2 }),
+    ).toEqual({ action: 'reorder', widgetId: 'w1', stackOrder: 2 })
+  })
+
+  it.each([
+    ['null', 'null'],
+    ['a list', '[1,2]'],
+    ['a bare string', '"x"'],
+    ['not JSON at all', 'Standup'],
+  ])(
+    'leaves props that are %s as a string for the schema to refuse',
+    (_l, props) => {
+      // Only a JSON OBJECT is a props blob; anything else must reach the schema
+      // untouched rather than being coerced into something that looks valid.
+      const args = { action: 'raise', kind: 'note', props }
+      expect(prepareWidgetArgs(args)).toBe(args)
+    },
+  )
+
+  it('leaves anything that isn’t an object for the schema to judge', () => {
     expect(prepareWidgetArgs(null)).toBeNull()
     expect(prepareWidgetArgs('nope')).toBe('nope')
+    // An explicitly null `props` with nothing else is nothing to nest.
+    const empty = { action: 'raise', props: null }
+    expect(prepareWidgetArgs(empty)).toBe(empty)
   })
 })
 
@@ -85,6 +238,7 @@ describe('chat session tools', () => {
   let tools: ReturnType<typeof createChatSessionTools>
 
   beforeEach(async () => {
+    registerWidgetKinds(TEST_KINDS)
     ;({ db, close } = await freshDb())
     dru = uuidv7()
     tilde = uuidv7()
@@ -202,59 +356,129 @@ describe('chat session tools', () => {
     const widget = await toolNamed('chat_widget')
     const result = await call(widget, {
       action: 'raise',
-      question: 'Ship it?',
-      options: ['Yes', 'Not yet'],
+      kind: 'choice',
+      props: { question: 'Ship it?', options: ['Yes', 'Not yet'] },
     })
 
     const [row] = await listOpenWidgets(db, chatId)
     expect(row.createdByHandle).toBe('tilde')
-    const parsed = parseProps(row.kind, row.props)
-    expect(parsed.ok && parsed.props).toEqual({
+    expect(row.kind).toBe('choice')
+    expect(row.props).toEqual({
       question: 'Ship it?',
       options: ['Yes', 'Not yet'],
     })
-    expect(resultText(result)).toContain('Ship it?')
+    // The model is told the answer is coming back as a message, because for an
+    // answerable kind that's the next thing that happens to it.
+    expect(resultText(result)).toContain('chat message')
+  })
+
+  it('raises any kind the catalog knows, props passed through untouched', async () => {
+    // The tool learned `note` without a line of code here: the catalog is
+    // injected, so a kind added in the rigging registry is raisable at once.
+    const widget = await toolNamed('chat_widget')
+    const result = await call(widget, {
+      action: 'raise',
+      kind: 'note',
+      props: { text: '**Standup** 09:30' },
+    })
+    const [row] = await listOpenWidgets(db, chatId)
+    expect(row.kind).toBe('note')
+    expect(row.props).toEqual({ text: '**Standup** 09:30' })
+    // Nothing to answer, so it doesn't promise a reply that will never come.
+    expect(resultText(result)).not.toContain('chat message')
+  })
+
+  it('tells the agent which kinds exist, generated from the catalog', async () => {
+    const widget = await toolNamed('chat_widget')
+    for (const spec of TEST_KINDS) {
+      expect(widget.description).toContain(spec.kind)
+      expect(widget.description).toContain(spec.propsDoc)
+    }
+  })
+
+  it('refuses a kind the ship can’t render, and says what it can', async () => {
+    // An agent can fix this mid-turn, which is worth far more than storing a
+    // row that renders as a dud tile in a human's face. (The CLI still stores
+    // one deliberately — that's how you SEE the dud.)
+    const widget = await toolNamed('chat_widget')
+    await expect(
+      call(widget, { action: 'raise', kind: 'orrery', props: {} }),
+    ).rejects.toThrow(/orrery.*choice, note/s)
+    expect(await listOpenWidgets(db, chatId)).toHaveLength(0)
+  })
+
+  it('refuses props that don’t fit the kind, quoting the reason', async () => {
+    const widget = await toolNamed('chat_widget')
+    await expect(
+      call(widget, {
+        action: 'raise',
+        kind: 'choice',
+        props: { question: 'q' },
+      }),
+    ).rejects.toThrow(/choice.*question and options/s)
+    expect(await listOpenWidgets(db, chatId)).toHaveLength(0)
+  })
+
+  it('trims the kind and the widgetId a model padded with spaces', async () => {
+    // A padded kind would otherwise be an "unknown kind" refusal, and a padded
+    // widgetId a "no such widget" — both baffling to read.
+    const widget = await toolNamed('chat_widget')
+    await call(widget, {
+      action: 'raise',
+      kind: ' note ',
+      props: { text: 'hi' },
+    })
+    const row = defined((await listOpenWidgets(db, chatId)).at(0))
+    expect(row.kind).toBe('note')
+    await call(widget, { action: 'dismiss', widgetId: `  ${row.id}  ` })
+    expect(await listOpenWidgets(db, chatId)).toHaveLength(0)
+  })
+
+  it('refuses a raise with no kind at all, listing the ones there are', async () => {
+    const widget = await toolNamed('chat_widget')
+    await expect(
+      call(widget, { action: 'raise', props: { text: 'hi' } }),
+    ).rejects.toThrow(/needs a kind/)
+  })
+
+  it('refuses everything when the catalog was never registered', async () => {
+    // Loud, not silent: an unregistered catalog is a boot fault (src/boot.ts),
+    // and an agent quietly storing unrenderable rows would be far harder to see.
+    registerWidgetKinds([])
+    const widget = await toolNamed('chat_widget')
+    await expect(
+      call(widget, { action: 'raise', kind: 'note', props: { text: 'hi' } }),
+    ).rejects.toThrow(/no widget kinds/)
   })
 
   it('honours a stack slot on raise, and 0 by default', async () => {
     const widget = await toolNamed('chat_widget')
     await call(widget, {
       action: 'raise',
-      question: 'second',
-      options: ['ok'],
+      kind: 'choice',
+      props: { question: 'second', options: ['ok'] },
       stackOrder: 5,
     })
-    await call(widget, { action: 'raise', question: 'first', options: ['ok'] })
-
-    const parsedQuestions = (await listOpenWidgets(db, chatId)).map((w) => {
-      const parsed = parseProps(w.kind, w.props)
-      return parsed.ok ? parsed.props.question : '?'
-    })
-    expect(parsedQuestions).toEqual(['first', 'second'])
-  })
-
-  it('trims and drops blank options, and refuses a question with none left', async () => {
-    const widget = await toolNamed('chat_widget')
     await call(widget, {
       action: 'raise',
-      question: 'pick',
-      options: [' Yes ', '  ', 'No'],
+      kind: 'choice',
+      props: { question: 'first', options: ['ok'] },
     })
-    const [row] = await listOpenWidgets(db, chatId)
-    const parsed = parseProps(row.kind, row.props)
-    expect(parsed.ok && parsed.props.options).toEqual(['Yes', 'No'])
 
-    await expect(
-      call(widget, { action: 'raise', question: 'pick', options: ['  '] }),
-    ).rejects.toThrow('answer option')
-    await expect(
-      call(widget, { action: 'raise', options: ['Yes'] }),
-    ).rejects.toThrow('question')
+    expect(
+      (await listOpenWidgets(db, chatId)).map(
+        (w) => offeredAnswer(w.props)?.question,
+      ),
+    ).toEqual(['first', 'second'])
   })
 
   it('reorders and dismisses a widget it already raised', async () => {
     const widget = await toolNamed('chat_widget')
-    await call(widget, { action: 'raise', question: 'q', options: ['a'] })
+    await call(widget, {
+      action: 'raise',
+      kind: 'choice',
+      props: { question: 'q', options: ['a'] },
+    })
     const widgetId = defined((await listOpenWidgets(db, chatId)).at(0)).id
 
     await call(widget, { action: 'reorder', widgetId, stackOrder: 3 })
@@ -301,8 +525,8 @@ describe('chat session tools', () => {
     )
     await call(bixWidgets, {
       action: 'raise',
-      question: 'theirs',
-      options: ['x'],
+      kind: 'choice',
+      props: { question: 'theirs', options: ['x'] },
     })
     const widgetId = defined((await listOpenWidgets(db, elsewhere)).at(0)).id
 
