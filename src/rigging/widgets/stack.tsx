@@ -4,6 +4,7 @@ import { AlertTriangle, ChevronRight, LayoutGrid, X } from 'lucide-react'
 import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
 
+import { useAnswerGuard } from './answer-guard'
 import { TAP_TARGET } from './kind'
 import { resolveWidget, type WidgetResolution } from './registry'
 
@@ -66,23 +67,10 @@ export function WidgetStack({
   eventSourceFactory,
 }: WidgetStackProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  // Which widget this crew member has just answered. The server's own event
-  // refreshes the stack a moment later; until then the buttons are spent, so a
-  // double tap can't fire a second answer the door would only refuse. (The host
-  // usually flips `busy` too, but a rigging component shouldn't need it to
-  // avoid double-firing.)
-  const [answered, setAnswered] = useState<string[]>([])
-
-  // Forget what's spent the moment the host stops being busy. On a successful
-  // answer the widget is gone from the stack anyway; on a FAILED one it's still
-  // here, and it has to be answerable again rather than sitting there with dead
-  // buttons forever. Compared during render so the first paint after the
-  // request settles is already right.
-  const [wasBusy, setWasBusy] = useState(busy)
-  if (wasBusy !== busy) {
-    setWasBusy(busy)
-    if (!busy) setAnswered([])
-  }
+  // Which widget this crew member has just answered: the buttons are spent until
+  // the refreshed rows arrive, so a double tap can't fire a second answer the
+  // door would only refuse. Shared with the canvas, which answers the same rows.
+  const answers = useAnswerGuard(busy)
 
   // Every topic any open widget needs, deduped. A shelf of static widgets asks
   // for none, and `useShipLog` opens no connection at all for an empty set.
@@ -118,12 +106,12 @@ export function WidgetStack({
             widget={widget}
             revision={revision}
             expanded={expandedId === widget.id}
-            spent={busy || answered.includes(widget.id)}
+            spent={answers.spent(widget.id)}
             onToggle={() => {
               setExpandedId((id) => (id === widget.id ? null : widget.id))
             }}
             onAnswer={(value) => {
-              setAnswered((ids) => [...ids, widget.id])
+              answers.mark(widget.id)
               onAnswerWidget(widget.id, value)
             }}
             onDismiss={() => {

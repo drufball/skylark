@@ -9,6 +9,7 @@ import {
   type ChatViewProps,
   chatName,
   composerPlaceholder,
+  emptyThreadLine,
   scheduleSummary,
   seenByHandles,
   workingFromMembers,
@@ -370,6 +371,59 @@ describe('ChatView', () => {
     expect(screen.getByText(/start a conversation/i)).toBeTruthy()
   })
 
+  it('starts a chat from the empty state itself', () => {
+    // On a phone the sidebar's New button is inside a closed drawer, so copy
+    // that said "New to begin" pointed at a control that wasn't on the screen.
+    setWidth(390)
+    const { onNew } = renderView()
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(onNew).toHaveBeenCalled()
+  })
+
+  it('says what a fresh chat is for instead of showing a blank thread', () => {
+    // Every other surface here has an empty state (the chat list, the canvas, a
+    // canvas page); a brand-new thread had none, so the first thing a new crew
+    // member saw was a void that reads as a broken ship.
+    renderView({
+      activeId: 'c1',
+      members: [{ userId: 'a', handle: 'tilde', type: 'agent' }],
+      messages: [],
+    })
+    expect(screen.getByTestId('thread-empty')).toBeTruthy()
+  })
+
+  it('drops the empty-thread state the moment anything is said', () => {
+    renderView({
+      activeId: 'c1',
+      messages: [{ id: 'm1', authorHandle: 'dru', body: 'hi', mine: true }],
+    })
+    expect(screen.queryByTestId('thread-empty')).toBeNull()
+  })
+
+  it('folds the member roster away on a phone', () => {
+    // Title, the Thread/Canvas toggle, Schedules and a chip per member wrapped
+    // to four rows on a 390px screen — a quarter of the phone spent on chrome
+    // before the conversation got a pixel.
+    setWidth(390)
+    renderView({
+      activeId: 'c1',
+      members: [{ userId: 'a', handle: 'tilde', type: 'agent' }],
+    })
+    expect(screen.queryByLabelText('Remove tilde')).toBeNull()
+    fireEvent.click(screen.getByLabelText('People'))
+    expect(screen.getByLabelText('Remove tilde')).toBeTruthy()
+  })
+
+  it('keeps the roster in the header on a desktop pane, where it fits', () => {
+    setWidth(1280)
+    renderView({
+      activeId: 'c1',
+      members: [{ userId: 'a', handle: 'tilde', type: 'agent' }],
+    })
+    expect(screen.getByLabelText('Remove tilde')).toBeTruthy()
+    expect(screen.queryByLabelText('People')).toBeNull()
+  })
+
   it('does not send a blank message', () => {
     const { onSend } = renderView({ activeId: 'c1' })
     const box = screen.getByPlaceholderText(/message/i)
@@ -722,6 +776,25 @@ describe('ChatView widget stack', () => {
   })
 })
 
+describe('emptyThreadLine', () => {
+  it('tells a chat that has an agent in it what the agent can do', () => {
+    // The blank screen is the one moment somebody will read an explanation of
+    // the two surfaces, so it's the one place worth spending it.
+    const line = emptyThreadLine([
+      { userId: 'a', handle: 'dru', type: 'human' },
+      { userId: 'b', handle: 'tilde', type: 'agent' },
+    ])
+    expect(line).toContain('canvas')
+  })
+
+  it('promises nothing about agents in a chat that has none', () => {
+    const line = emptyThreadLine([
+      { userId: 'a', handle: 'dru', type: 'human' },
+    ])
+    expect(line).not.toContain('agent')
+  })
+})
+
 describe('scheduleSummary', () => {
   it('summarizes a recurring schedule with its cadence', () => {
     expect(
@@ -845,6 +918,32 @@ describe('ChatView: the canvas lives inside the chat', () => {
     })
     expect(screen.getByTestId('widget-stack')).toBeTruthy()
     expect(screen.getByTestId('widget-canvas')).toBeTruthy()
+  })
+
+  it('gives a phone’s canvas the whole screen, and counts what’s waiting in the thread', () => {
+    // The shelf is turn-shaped and belongs with the thread. Left under the
+    // canvas it took a quarter of a 390px screen off the surface you switched
+    // to on purpose — so it goes with the thread, and the way back carries the
+    // count so nothing an agent asked for goes quiet.
+    setWidth(390)
+    withCanvas({ widgets: [choiceWidget({ id: 'w2' })] })
+    expect(screen.getByTestId('widget-stack')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'canvas' }))
+    expect(screen.queryByTestId('widget-stack')).toBeNull()
+    expect(screen.getByLabelText('Thread — 1 waiting')).toBeTruthy()
+  })
+
+  it('keeps the working line in sight when a phone is on the canvas', () => {
+    // The status line lives in the thread, and on a phone the canvas replaces
+    // the thread — so an agent mid-turn went completely silent on the device
+    // this whole feature is aimed at.
+    setWidth(390)
+    withCanvas({ working: { handle: 'tilde', line: 'using bash…' } })
+    fireEvent.click(screen.getByRole('button', { name: 'canvas' }))
+    expect(screen.getByTestId('agent-working').textContent).toContain(
+      '@tilde is working',
+    )
   })
 
   it('offers no canvas at all when the host hasn’t wired one', () => {

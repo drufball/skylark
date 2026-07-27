@@ -40,7 +40,14 @@ generated from the same entries.
   half. Resolves every row through the catalog, renders honest tiles for the two
   failures, and owns the ONE ship-log subscription over the union of its
   widgets' topics. It knows no kind by name. A tile can be pinned down to the
-  canvas page the viewer has open — the human twin of the agent's `place`.
+  canvas page the viewer has open — the human twin of the agent's `place`. On a
+  phone the shelf shows only on the thread surface (see the chat zine); the
+  Thread toggle carries its count while you're on the canvas.
+- **Answer guard** (`answer-guard.ts`) — `useAnswerGuard`, the "this one is
+  already spent" state both surfaces hold. The host's `busy` flag drops when the
+  write returns, but the answered tile is on screen until the refetch lands — a
+  window a thumb double-taps straight through. Shared rather than copied,
+  because the two surfaces answer the SAME rows through the same door.
 - **Canvas** (`canvas.tsx`) — the state-shaped surface: a strip of page tabs and
   the tiles arranged on the open page. Same catalog, same one subscription, same
   two failure tiles — but a canvas tile's body is **open by default**, because
@@ -166,6 +173,13 @@ place, and the hull still imports nothing from rigging.
 
 ## Changelog
 
+- **#cse5 — One product on a phone.** The double-tap guard the stack has always
+  held moves into `answer-guard.ts` and the canvas gains it: answering from the
+  canvas was firing twice through the window between the write returning and the
+  refetch landing, which came back as an uncaught "already answered". A tile
+  takes `spent` rather than `busy`, so the two surfaces are guarded by the same
+  state for the same reason. The phone's canvas surface no longer shares the
+  screen with the shelf — see the chat zine for why that belongs to the thread.
 - **#cse4 — The canvas.** A second surface for the same rows: `canvas.tsx`
   renders a chat's canvas pages as an arrangeable grid on a desktop pane and as
   one swipeable column on a phone, with the tile bodies open by default. The

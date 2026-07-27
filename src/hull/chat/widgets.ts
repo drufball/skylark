@@ -98,18 +98,20 @@ export function offeredAnswer(props: unknown): WidgetOffer | null {
 }
 
 /**
- * The body of the ordinary chat message an answer posts. The question is quoted
- * above the answer so the transcript stands on its own forever — the widget row
- * is dismissed and gone from the stack, but the conversation still reads as a
- * question and its answer. Every line of the question is quoted, or a
- * multi-line question's tail would read as the answer.
+ * The body of the ordinary chat message an answer posts. The question sits above
+ * the answer so the transcript stands on its own forever — the widget row is
+ * dismissed and gone from the stack, but the conversation still reads as a
+ * question and its answer.
+ *
+ * **Plain characters, no markdown.** This used to quote each line of the question
+ * with `> `, which reads correctly to a model and wrongly to everybody else: the
+ * thread renders a message body verbatim, so the most-repeated message in the
+ * whole feature arrived in the crew's own bubble with a stray `> ` on it. The
+ * marker moved to the ANSWER instead, which is the one line that has to be
+ * distinguishable — a multi-line question keeps its own shape above it.
  */
 export function answerMessageBody(question: string, value: string): string {
-  const quoted = question
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n')
-  return `${quoted}\n\n${value}`
+  return `${question}\n→ ${value}`
 }
 
 // --- Canvas geometry -------------------------------------------------------

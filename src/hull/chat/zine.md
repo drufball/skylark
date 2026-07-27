@@ -108,11 +108,13 @@ rigging.
   widget the HULL keeps: `offeredAnswer(props)` reads the question and the exact
   values a row will accept back, structurally (a filled `question` plus a
   non-empty `options` list of non-empty strings) and **without knowing any kind
-  by name**; `answerMessageBody` composes the message an answer posts. Total:
-  every input returns an offer or null, nothing throws. A kind that offers no
-  answers (a `note`, an `issue-list`) simply has no options on its blob, so
-  answering it is refused for free — and so is answering a blob an agent
-  malformed.
+  by name**; `answerMessageBody` composes the message an answer posts — the
+  question, then the answer marked with `→`, in plain characters, because the
+  thread renders a body verbatim and markdown would arrive as punctuation.
+  Total: every input returns an offer or null, nothing throws. A kind that
+  offers no answers (a `note`, an `issue-list`) simply has no options on its
+  blob, so answering it is refused for free — and so is answering a blob an
+  agent malformed.
 - **Canvas page** — a row in `chat_canvas_pages`: one page of a chat's canvas,
   with a title and a place in the strip. Pages are EXPLICIT rows rather than
   implied by whichever widgets carry a page number, because the two things we
@@ -520,6 +522,15 @@ agent.
   rejected for being confusing. The point of the whole surface is that you never
   leave the conversation to look at the thing you built, so the moment the
   canvas becomes somewhere you GO, it has lost the argument.
+- **On a phone the shelf goes with the thread, and the toggle carries its
+  count.** The stack is turn-shaped, so it belongs to the surface the turn is
+  on. Left under the canvas as well it took a quarter of a 390px screen away
+  from the surface you had deliberately switched to — two height-capped bands
+  and a wrapped header, and the canvas got barely a third of the phone. So the
+  phone's canvas surface hides the shelf and the Thread half of the toggle shows
+  how many widgets are waiting, which is the one thing you would otherwise lose:
+  a raise you never saw. The composer still sits under both, and a desktop pane
+  still shows all three at once, because there it fits.
 - **Which page you're looking at is a property of the PERSON, not the chat.**
   Three people in one chat can be on three different pages, so `chat_view_state`
   is keyed by (chat, user) and its RLS policy adds `user_id = the acting user`
@@ -555,6 +566,21 @@ agent.
 
 ## Changelog
 
+- **#cse5 — One product on a phone.** The integrated pass over #cse1–#cse4,
+  driven at 390px: the four slices were each right alone and collided in the
+  header, where the title, the Thread/Canvas toggle, Schedules and a chip per
+  member wrapped to four rows and spent a quarter of the screen before anything
+  in the conversation got a pixel. The header folds to two rows (the roster
+  behind a count, Schedules down to its icon); the phone's canvas surface hides
+  the turn-shaped shelf and the Thread toggle carries the waiting count; the
+  working line follows the composer so an agent mid-turn isn't silent on the
+  canvas; a chat with nothing in it says so instead of showing a void; and
+  `answerMessageBody` stops composing a markdown blockquote the thread was
+  rendering as a literal `> `. One real bug: answering from the canvas had no
+  double-tap guard (the stack's), so a second tap in the window between the
+  write returning and the refetch landing reached the door and came back as an
+  uncaught refusal — the guard is now shared by both surfaces, and the route
+  keeps `busy` on across the invalidate that closes the window at the source.
 - **#cse4 — The chat canvas.** A chat gets a spatial surface beside its thread:
   `chat_canvas_pages` (migration 0033, RLS 0034), a `placement` discriminator on
   `chat_widgets` plus a page and a clamped grid box, and `chat_view_state` — the

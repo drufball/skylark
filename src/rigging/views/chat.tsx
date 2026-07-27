@@ -258,6 +258,24 @@ export function composerPlaceholder(members: ChatMemberItem[]): string {
   return group ? 'Message… @mention an agent' : 'Message…'
 }
 
+/**
+ * What a chat with nothing said in it says for itself.
+ *
+ * A brand-new thread used to be a blank rectangle — the chat list, the canvas
+ * and a canvas page all have an empty state and the one you actually land in
+ * didn't, so the first thing a new crew member saw read as a broken ship. It's
+ * also the one moment somebody will read an explanation of the two surfaces, so
+ * that's what it spends its words on — but only where it's TRUE: a chat with no
+ * agents in it can't promise anything about what an agent will do. Pure and
+ * exported so the wording is tested.
+ */
+export function emptyThreadLine(members: ChatMemberItem[]): string {
+  const hasAgent = members.some((m) => m.type === 'agent')
+  return hasAgent
+    ? 'Say something to start it off. The agents in here answer, put questions up for you to tap, and pin readouts to the canvas.'
+    : 'Say something to start it off.'
+}
+
 export function ChatView(props: ChatViewProps) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   return (
@@ -280,7 +298,7 @@ export function ChatView(props: ChatViewProps) {
           // pane is open), which belongs to the chat you were in, not to you.
           <ActiveChat key={props.activeId} {...props} />
         ) : (
-          <Empty />
+          <Empty onNew={props.onNew} />
         )}
       </section>
     </div>
@@ -382,6 +400,9 @@ function ActiveChat({
   const memberIds = new Set(members.map((m) => m.userId))
   const addable = crew.filter((c) => !memberIds.has(c.id))
   const [showSchedules, setShowSchedules] = useState(false)
+  // Whether the roster is unfolded. Only ever read on a phone: a desktop header
+  // is one row with room for the chips, so there is nothing to fold there.
+  const [showMembers, setShowMembers] = useState(false)
   const schedulingOn = Boolean(
     onCreateSchedule && onToggleSchedule && onDeleteSchedule,
   )
@@ -411,36 +432,77 @@ function ActiveChat({
   // Where a pinned stack widget lands: the page you have open, else the first.
   const landingPage =
     pages.find((p) => p.id === activePageId)?.id ?? pages.at(0)?.id
+  // How many widgets are waiting above the composer. Only interesting while a
+  // phone is on the canvas, where the shelf itself isn't on screen.
+  const waiting = widgets?.length ?? 0
 
   return (
     <>
-      <header className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-        <span className="font-medium">
-          {chatName({ title, memberHandles: members.map((m) => m.handle) })}
-        </span>
+      {/* One row on a desktop pane, two on a phone. It used to wrap to FOUR at
+          390px — title, the surface toggle, Schedules, and a chip per member —
+          spending a quarter of the screen on chrome before the conversation got
+          a pixel. So the name truncates, Schedules drops to its icon (the same
+          move the canvas page strip's Rename makes), and the roster folds away
+          behind its count. */}
+      <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2 md:px-4">
+        {/* Name + people share the first row on a phone, so the two surface
+            controls always get a whole one to themselves — including when the
+            Thread half grows a badge. */}
+        <div className="flex w-full min-w-0 items-center gap-2 md:w-auto md:flex-1">
+          <span className="min-w-0 flex-1 truncate font-medium">
+            {chatName({ title, memberHandles: members.map((m) => m.handle) })}
+          </span>
+          {isMobile && (
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="People"
+              aria-pressed={showMembers}
+              onClick={() => {
+                setShowMembers((v) => !v)
+              }}
+            >
+              <Users className="size-4" />
+              {members.length}
+            </Button>
+          )}
+        </div>
         {canvasOn &&
           (isMobile ? (
             // A phone can't show both, so it gets a plain either/or — and the
             // Thread half is always right there, so the canvas can never be a
-            // place you get stuck.
+            // place you get stuck. It carries the count of what's waiting in the
+            // shelf, which the canvas surface doesn't show.
             <div className="flex overflow-hidden rounded-md border">
-              {(['thread', 'canvas'] as const).map((which) => (
-                <button
-                  key={which}
-                  type="button"
-                  aria-pressed={surface === which}
-                  onClick={() => {
-                    setSurface(which)
-                  }}
-                  className={cn(
-                    'px-3 text-sm capitalize',
-                    TAP_TARGET,
-                    surface === which && 'bg-accent text-accent-foreground',
-                  )}
-                >
-                  {which}
-                </button>
-              ))}
+              {(['thread', 'canvas'] as const).map((which) => {
+                const badge =
+                  which === 'thread' && !threadVisible && waiting > 0
+                return (
+                  <button
+                    key={which}
+                    type="button"
+                    aria-pressed={surface === which}
+                    aria-label={
+                      badge ? `Thread — ${String(waiting)} waiting` : undefined
+                    }
+                    onClick={() => {
+                      setSurface(which)
+                    }}
+                    className={cn(
+                      'flex items-center gap-1 px-2.5 text-sm capitalize',
+                      TAP_TARGET,
+                      surface === which && 'bg-accent text-accent-foreground',
+                    )}
+                  >
+                    {which}
+                    {badge && (
+                      <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+                        {waiting}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           ) : (
             <Button
@@ -467,54 +529,61 @@ function ActiveChat({
             }}
           >
             <CalendarClock className="size-4" />
-            Schedules
+            {!isMobile && 'Schedules'}
             {schedules && schedules.length > 0
               ? ` (${String(schedules.length)})`
               : ''}
           </Button>
         )}
-        <div className="flex flex-wrap items-center gap-1">
-          {members.map((m) => (
-            <span
-              key={m.userId}
-              className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-xs"
-            >
-              {m.type === 'agent' ? (
-                <Bot className="size-3" />
-              ) : (
-                <User className="size-3" />
-              )}
-              @{m.handle}
-              <button
-                type="button"
-                aria-label={`Remove ${m.handle}`}
-                onClick={() => {
-                  onRemoveMember(m.userId)
-                }}
-                className="text-muted-foreground hover:text-destructive"
+        {(!isMobile || showMembers) && (
+          <div
+            className={cn(
+              'flex flex-wrap items-center gap-1',
+              isMobile && 'w-full',
+            )}
+          >
+            {members.map((m) => (
+              <span
+                key={m.userId}
+                className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-xs"
               >
-                <X className="size-3" />
-              </button>
-            </span>
-          ))}
-          {addable.length > 0 && (
-            <select
-              aria-label="Add member"
-              className={selectClass('text-xs')}
-              value=""
-              onChange={(e) => {
-                if (e.target.value) onAddMember(e.target.value)
-              }}
-            >
-              <option value="">+ add</option>
-              {addable.map((c) => (
-                <option key={c.id} value={c.id}>
-                  @{c.handle}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+                {m.type === 'agent' ? (
+                  <Bot className="size-3" />
+                ) : (
+                  <User className="size-3" />
+                )}
+                @{m.handle}
+                <button
+                  type="button"
+                  aria-label={`Remove ${m.handle}`}
+                  onClick={() => {
+                    onRemoveMember(m.userId)
+                  }}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+            {addable.length > 0 && (
+              <select
+                aria-label="Add member"
+                className={selectClass('text-xs')}
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) onAddMember(e.target.value)
+                }}
+              >
+                <option value="">+ add</option>
+                {addable.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    @{c.handle}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
       </header>
       {schedulingOn &&
         showSchedules &&
@@ -530,13 +599,14 @@ function ActiveChat({
           />
         )}
       {/* The thread and the canvas, side by side on a desktop pane and one at a
-          time on a phone — but always INSIDE the chat. The stack and the
-          composer sit under both, so looking at the canvas never costs you the
-          conversation or the ability to say something about what you see. */}
+          time on a phone — but always INSIDE the chat. The composer sits under
+          both, so looking at the canvas never costs you the ability to say
+          something about what you see. */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {threadVisible && (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <Messages
+              members={members}
               messages={messages}
               working={working}
               seenBy={seenByHandles(members, messages)}
@@ -573,24 +643,40 @@ function ActiveChat({
             </div>
           )}
       </div>
-      {onAnswerWidget && onDismissWidget && widgets && widgets.length > 0 && (
-        <WidgetStack
-          widgets={widgets}
-          busy={busy}
-          onAnswerWidget={onAnswerWidget}
-          onDismissWidget={onDismissWidget}
-          // Only when there IS a page to send it to. A pin button on a chat
-          // with no canvas would be an affordance pointing nowhere.
-          onPinWidget={
-            onPlaceWidget && landingPage
-              ? (widgetId) => {
-                  // No corner on purpose — see onPlaceWidget's note.
-                  onPlaceWidget(widgetId, { pageId: landingPage })
-                }
-              : undefined
-          }
-        />
+      {/* The status line lives in the thread, which a phone on the canvas isn't
+          showing — so an agent mid-turn went silent on the device this feature
+          is aimed at. It follows the composer instead, which is under both. */}
+      {!threadVisible && working && (
+        <div className="shrink-0 border-t px-4 py-1.5">
+          <WorkingLine working={working} />
+        </div>
       )}
+      {/* The shelf is turn-shaped, so it belongs with the thread. On a phone
+          showing the canvas it was taking a quarter of the screen off the
+          surface you'd deliberately switched to; the Thread toggle carries the
+          count instead, so nothing an agent asked for goes quiet. */}
+      {threadVisible &&
+        onAnswerWidget &&
+        onDismissWidget &&
+        widgets &&
+        widgets.length > 0 && (
+          <WidgetStack
+            widgets={widgets}
+            busy={busy}
+            onAnswerWidget={onAnswerWidget}
+            onDismissWidget={onDismissWidget}
+            // Only when there IS a page to send it to. A pin button on a chat
+            // with no canvas would be an affordance pointing nowhere.
+            onPinWidget={
+              onPlaceWidget && landingPage
+                ? (widgetId) => {
+                    // No corner on purpose — see onPlaceWidget's note.
+                    onPlaceWidget(widgetId, { pageId: landingPage })
+                  }
+                : undefined
+            }
+          />
+        )}
       <Composer
         busy={busy}
         onSend={onSend}
@@ -743,11 +829,36 @@ function SchedulesPanel({
   )
 }
 
+/**
+ * The live indicator, as its own component because it has two homes: inside the
+ * thread where it belongs, and directly above the composer when a phone is
+ * showing the canvas instead. One definition, so the two can't say it
+ * differently.
+ */
+function WorkingLine({
+  working,
+}: {
+  working: { handle: string; line: string }
+}) {
+  return (
+    <p
+      data-testid="agent-working"
+      className="flex items-center gap-2 self-start text-xs text-muted-foreground"
+    >
+      <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-current" />
+      {workingLabel(working)}
+    </p>
+  )
+}
+
 function Messages({
+  members,
   messages,
   working,
   seenBy,
-}: Pick<ChatViewProps, 'messages' | 'working'> & { seenBy: string[] }) {
+}: Pick<ChatViewProps, 'members' | 'messages' | 'working'> & {
+  seenBy: string[]
+}) {
   // Keep the newest thing in view — the Agents transcript has always done this
   // and the front door never did, so answering a widget could post your own
   // message somewhere you couldn't see it. Re-runs on a new message and on the
@@ -760,6 +871,17 @@ function Messages({
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 p-6">
+        {/* A chat you just made is the first thing a new crew member sees, and
+            an unexplained blank rectangle reads as a broken ship. */}
+        {messages.length === 0 && !working && (
+          <div
+            data-testid="thread-empty"
+            className="my-auto text-center text-sm text-muted-foreground"
+          >
+            <p className="font-medium text-foreground">Nothing said yet</p>
+            <p>{emptyThreadLine(members)}</p>
+          </div>
+        )}
         {messages.map((m) => (
           <div
             key={m.id}
@@ -788,15 +910,7 @@ function Messages({
         {/* A status line, not a message-shaped bubble: the agent is mid-turn,
             which is all this can honestly claim. It may already have posted
             above and still be working; it may finish without posting at all. */}
-        {working && (
-          <p
-            data-testid="agent-working"
-            className="flex items-center gap-2 self-start text-xs text-muted-foreground"
-          >
-            <span className="inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-current" />
-            {workingLabel(working)}
-          </p>
-        )}
+        {working && <WorkingLine working={working} />}
         {/* Nobody is mid-turn and an agent read the last message without
             answering. Saying so beats an auto-posted "ok!" nobody meant. */}
         {!working && seenBy.length > 0 && (
@@ -880,15 +994,23 @@ function NewChat({
   )
 }
 
-function Empty() {
+function Empty({ onNew }: Pick<ChatViewProps, 'onNew'>) {
   return (
     <div className="flex flex-1 items-center justify-center p-8 text-center">
       <div className="max-w-sm">
         <Users className="mx-auto mb-3 size-8 text-muted-foreground" />
         <p className="text-lg font-medium">Start a conversation</p>
-        <p className="text-sm text-muted-foreground">
-          Make a chat with your crew — humans and agents. New to begin.
+        <p className="mb-4 text-sm text-muted-foreground">
+          A chat is a room with some of your crew in it — people and agents. It
+          grows into whatever the two of you need it to be.
         </p>
+        {/* The button, not just the word "New": on a phone the sidebar's own
+            New button is inside a closed drawer, so pointing at it from here
+            was pointing at something that wasn't on the screen. */}
+        <Button onClick={onNew}>
+          <Plus className="size-4" />
+          New chat
+        </Button>
       </div>
     </div>
   )
