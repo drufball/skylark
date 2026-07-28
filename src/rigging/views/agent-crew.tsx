@@ -173,7 +173,7 @@ function AgentCard({
             }
           }}
           aria-label={`Display name for @${member.handle}`}
-          className="w-40 rounded-md border bg-background px-2 py-1 text-sm font-medium outline-none focus:border-accent-foreground/30"
+          className="w-40 rounded-md border bg-background px-2 py-1 text-base font-medium outline-none md:text-sm focus:border-accent-foreground/30"
         />
         <span className="text-sm text-muted-foreground">@{member.handle}</span>
         <span className="flex-1" />
@@ -451,7 +451,7 @@ function NewAgent({
             setHandle(e.target.value)
           }}
           placeholder="handle (e.g. scout)"
-          className="w-48 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-accent-foreground/30"
+          className="w-48 rounded-md border bg-background px-3 py-2 text-base outline-none md:text-sm focus:border-accent-foreground/30"
         />
         <input
           value={displayName}
@@ -459,7 +459,7 @@ function NewAgent({
             setDisplayName(e.target.value)
           }}
           placeholder="Display name"
-          className="w-48 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-accent-foreground/30"
+          className="w-48 rounded-md border bg-background px-3 py-2 text-base outline-none md:text-sm focus:border-accent-foreground/30"
         />
       </div>
       <p className="text-xs text-muted-foreground">

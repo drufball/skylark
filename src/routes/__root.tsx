@@ -26,7 +26,13 @@ export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+      // viewport-fit=cover lets the app draw into the notch/home-indicator
+      // areas on a phone; the dock pads the bottom rail by the safe-area
+      // inset so nothing interactive hides under the indicator.
+      {
+        name: 'viewport',
+        content: 'width=device-width, initial-scale=1, viewport-fit=cover',
+      },
       { title: 'Skylark' },
     ],
     links: [{ rel: 'stylesheet', href: appCss }],

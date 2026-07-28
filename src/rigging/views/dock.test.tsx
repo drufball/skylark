@@ -129,6 +129,27 @@ describe('Dock', () => {
     )
   })
 
+  /**
+   * On a phone installed to the home screen (viewport-fit=cover) the home
+   * indicator overlays the bottom edge — the rail keeps its tap targets above
+   * it by padding with the safe-area inset, never less than its normal gap.
+   */
+  it('keeps the bottom rail above the home indicator via the safe-area inset', () => {
+    const { container } = render(
+      <Dock active="home" Link={FakeLink} onLogout={() => undefined}>
+        <span />
+      </Dock>,
+    )
+    const nav = container.querySelector('nav')?.className.split(/\s+/)
+    expect(nav).toEqual(
+      expect.arrayContaining([
+        'pb-[max(0.25rem,env(safe-area-inset-bottom))]',
+        'md:pt-3',
+        'md:pb-3',
+      ]),
+    )
+  })
+
   /** A thumb needs 44px, and the rail is the control it reaches for most. */
   it('gives every rail target a thumb-sized floor', () => {
     render(
@@ -149,10 +170,13 @@ describe('Dock', () => {
     )
     // The outer row is exactly the viewport height (not a min-height), and
     // clips instead of letting a tall child drag the whole row down the page —
-    // each side is responsible for its own internal scroll instead.
+    // each side is responsible for its own internal scroll instead. Dynamic
+    // viewport units, not `h-screen`: 100vh is the LARGE viewport on a phone,
+    // so with the browser toolbar visible a 100vh shell puts the bottom rail
+    // (and the composer above it) partly behind the toolbar.
     const root = container.firstElementChild
     expect(root?.className.split(/\s+/)).toEqual(
-      expect.arrayContaining(['h-screen', 'overflow-hidden']),
+      expect.arrayContaining(['h-dvh', 'overflow-hidden']),
     )
     // The slot the active surface mounts into can't be pushed taller than the
     // row by its content — min-h-0 is what makes a flex child's own overflow

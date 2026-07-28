@@ -15,8 +15,11 @@ function Input({ className, ...props }: React.ComponentProps<'input'>) {
  * Use this for hand-rolled inputs that need the same styling.
  */
 function inputClass(extra?: string) {
+  // text-base on a phone, not text-sm: iOS Safari zooms the whole page when
+  // focusing any input under 16px (the same fix stock shadcn keeps on
+  // textarea.tsx).
   return cn(
-    'w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:bg-input/30 dark:aria-invalid:ring-destructive/40',
+    'w-full rounded-md border border-input bg-background px-3 py-2 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40',
     FOCUS_RING,
     extra,
   )
@@ -28,7 +31,7 @@ function inputClass(extra?: string) {
  */
 function selectClass(extra?: string) {
   return cn(
-    'rounded-md border border-input bg-background px-2 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
+    'rounded-md border border-input bg-background px-2 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30',
     FOCUS_RING,
     extra,
   )

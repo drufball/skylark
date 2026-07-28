@@ -820,7 +820,7 @@ function Roster({
       {addable.length > 0 && (
         <select
           aria-label="Add member"
-          className={selectClass(thumb ? cn('text-sm', TAP_TARGET) : 'text-xs')}
+          className={selectClass(thumb ? TAP_TARGET : 'text-xs')}
           value=""
           onChange={(e) => {
             if (e.target.value) onAddMember(e.target.value)
@@ -932,7 +932,7 @@ function SchedulesPanel({
           />
           <select
             aria-label="Schedule mode"
-            className={selectClass('text-sm')}
+            className={selectClass()}
             value={mode}
             onChange={(e) => {
               setMode(e.target.value === 'repeat' ? 'repeat' : 'once')
@@ -945,7 +945,7 @@ function SchedulesPanel({
             <input
               type="datetime-local"
               aria-label="Fire time"
-              className={inputClass('text-sm')}
+              className={inputClass()}
               value={at}
               onChange={(e) => {
                 setAt(e.target.value)
@@ -958,7 +958,7 @@ function SchedulesPanel({
                 type="number"
                 aria-label="Interval minutes"
                 min={5}
-                className={inputClass('w-20 text-sm')}
+                className={inputClass('w-20')}
                 value={every}
                 onChange={(e) => {
                   setEvery(e.target.value)

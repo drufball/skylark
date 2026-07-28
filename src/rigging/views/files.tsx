@@ -300,7 +300,7 @@ function NewFile({
           setPath(e.target.value)
         }}
         placeholder="notes/plan.md"
-        className="w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm outline-none focus:border-accent-foreground/30"
+        className="w-full min-w-0 rounded-md border bg-background px-2 py-1 text-base outline-none md:text-sm focus:border-accent-foreground/30"
       />
       <Button type="submit" size="sm" disabled={busy || !path.trim()}>
         Create
