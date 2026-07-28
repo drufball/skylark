@@ -38,6 +38,36 @@ const STATUS_MARK: Record<IssueStatus, string> = {
 }
 
 /**
+ * The npm-flag-swallow error, shared by both `Unknown flag` detection paths
+ * below — the leftover-token one and the npm_config_* one — since it's the
+ * same root cause and the same fix either way.
+ */
+function unknownFlagError(flag: string): Error {
+  return new Error(
+    `Unknown flag: ${flag} — did you forget the \`--\` separator? ` +
+      'Use `npm run issue -- new <title> [--body <text>] …`.',
+  )
+}
+
+/**
+ * Detect npm having silently eaten one of OUR flags before argv ever saw it.
+ * Without the `--` separator, `npm run issue new "Title" --body "text"` lets
+ * npm's own CLI arg parser treat `--body` as an (unknown) npm config flag: it
+ * consumes the `--body` token entirely — no `--body` string survives into
+ * argv for the unknown-flag check below to catch — but it sets
+ * `npm_config_body` in the child's env as a side effect, and leaves just the
+ * bare value (`"text"`) as an extra positional. Same for `--owner`/
+ * `--playbook`. That env var is the only surviving signal (see #0zis, the
+ * follow-up to #7u5b's own flag-swallow incident).
+ */
+function npmAteOneOfOurFlags(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.npm_config_body) return '--body'
+  if (env.npm_config_owner) return '--owner'
+  if (env.npm_config_playbook) return '--playbook'
+  return undefined
+}
+
+/**
  * Parse `issue new`'s args: the title, plus optional `--body <text>`,
  * `--owner <handle>` (who answers for it; defaults to the creator downstream),
  * and `--playbook <name>` (how it gets worked; defaults to `build`). A flag
@@ -49,14 +79,23 @@ const STATUS_MARK: Record<IssueStatus, string> = {
  * 1000+ character titles with an empty body). A title over MAX_TITLE_LENGTH
  * fails the same way, as a backstop for the flags npm eats entirely (it never
  * reaches us as a `--body` token to catch — it just vanishes, leaving its
- * value stuck onto the title).
+ * value stuck onto the title). And `env` — defaulting to `process.env`, but
+ * overridable for tests — catches the case #7u5b's own fix missed: npm can
+ * eat the `--body`/`--owner`/`--playbook` token so completely that NO
+ * `--something` token survives into argv at all, only its bare value; the
+ * `npm_config_*` var it leaves behind is the only remaining tell (#0zis).
  */
-export function parseNewArgs(args: string[]): {
+export function parseNewArgs(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): {
   title: string
   body?: string
   ownerHandle?: string
   playbookName?: string
 } {
+  const swallowed = npmAteOneOfOurFlags(env)
+  if (swallowed) throw unknownFlagError(swallowed)
   const rest = [...args]
   const takeFlag = (flag: string): string | undefined => {
     const at = rest.indexOf(flag)
@@ -72,12 +111,7 @@ export function parseNewArgs(args: string[]): {
   const ownerHandle = takeFlag('--owner')?.replace(/^@/, '')
   const playbookName = takeFlag('--playbook')
   const unknownFlag = rest.find((token) => token.startsWith('--'))
-  if (unknownFlag) {
-    throw new Error(
-      `Unknown flag: ${unknownFlag} — did you forget the \`--\` separator? ` +
-        'Use `npm run issue -- new <title> [--body <text>] …`.',
-    )
-  }
+  if (unknownFlag) throw unknownFlagError(unknownFlag)
   const title = rest.join(' ').trim()
   if (title.length > MAX_TITLE_LENGTH) {
     throw new Error(

@@ -106,6 +106,42 @@ describe('parseNewArgs — unknown flags (#7u5b)', () => {
   })
 })
 
+describe('parseNewArgs — npm silently eating the flag entirely (#0zis)', () => {
+  it(
+    'fails loudly when npm_config_body is set even though no --body token ' +
+      'survives in argv — this is what `npm run issue new "Title" --body ' +
+      '"text"` (missing the `--` separator) actually produces: argv ' +
+      '["Title", "text"], no --body anywhere, but npm sets npm_config_body',
+    () => {
+      expect(() =>
+        parseNewArgs(['Title', 'text'], { npm_config_body: 'true' }),
+      ).toThrow(/Unknown flag: --body/)
+    },
+  )
+
+  it('does the same for npm_config_owner and npm_config_playbook', () => {
+    expect(() =>
+      parseNewArgs(['Title', 'tilde'], { npm_config_owner: 'true' }),
+    ).toThrow(/Unknown flag: --owner/)
+    expect(() =>
+      parseNewArgs(['Title', 'build'], { npm_config_playbook: 'true' }),
+    ).toThrow(/Unknown flag: --playbook/)
+  })
+
+  it('mentions the `--` separator, the actual root cause', () => {
+    expect(() =>
+      parseNewArgs(['Title', 'text'], { npm_config_body: 'true' }),
+    ).toThrow(/--/)
+  })
+
+  it('is unaffected when none of the npm_config_* vars are set', () => {
+    expect(parseNewArgs(['Title', 'text'], {})).toEqual({
+      title: 'Title text',
+      body: undefined,
+    })
+  })
+})
+
 describe('parseNewArgs — title length backstop (#7u5b)', () => {
   it('accepts a title right at the limit', () => {
     const title = 'x'.repeat(200)
