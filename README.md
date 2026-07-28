@@ -154,3 +154,5 @@ that wake agents back into the conversation. This README is still the charter;
 if any of the above made your heart beat faster — welcome aboard.
 
 Fair winds and following seas. ☀️⛵
+
+<!-- review-check canary 2: post-#168, reads the real SDK error. Safe to close. -->
