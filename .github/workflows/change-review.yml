@@ -58,8 +58,14 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Pin a real, versioned model id — NOT the floating `opus` alias.
+          # The action resolves that alias on its own, and got it wrong once
+          # already (resolved to the nonexistent `claude-opus-5`), which
+          # killed every run in ~45s and left this advisory check red on
+          # every PR (#souf). A pinned id fails loudly and rarely if the
+          # action's alias table changes again; it never silently rots.
           claude_args: |
-            --model opus
+            --model claude-opus-4-8
             --max-turns 50
             --allowedTools Bash,Read,Grep,Glob
           prompt: |
