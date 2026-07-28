@@ -5,7 +5,7 @@ import {
   redirect,
 } from '@tanstack/react-router'
 
-import { currentSession } from '@hull/auth/server'
+import { canonicalRedirectUrl, currentSession } from '@hull/auth/server'
 import appCss from '@rigging/styles.css?url'
 
 // Any route reroutes to /login unless there's a valid session — this is UX
@@ -19,6 +19,12 @@ const PUBLIC_PATHS = new Set(['/login', '/signup'])
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
+    // Off the ship's one public hostname (a LAN address, an old bookmark) —
+    // send the browser there FIRST, before a session cookie scoped to the
+    // wrong origin can be set or read (#q6xm: the tunnel/LAN split that looks
+    // exactly like a random logout).
+    const canonical = await canonicalRedirectUrl()
+    if (canonical) redirect({ href: canonical, throw: true })
     if (PUBLIC_PATHS.has(location.pathname)) return
     const me = await currentSession()
     if (!me) redirect({ to: '/login', throw: true })

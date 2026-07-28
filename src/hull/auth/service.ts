@@ -70,6 +70,13 @@ export const SESSION_COOKIE = 'skylark_session'
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
+/** How much of the TTL has to have burned down before a live session is worth
+ * extending again — the sliding-renewal knob. A session only gets touched
+ * once real time has passed since it was last (re)issued, not on every
+ * request: cheap enough that an active user's session never silently expires
+ * mid-use, without turning every page load into a write. */
+const SESSION_RENEW_AFTER_MS = 24 * 60 * 60 * 1000
+
 /** Start a session for `userId`, returning the raw token — the only place it
  * exists outside the caller's cookie. */
 export async function createSession(
@@ -109,13 +116,34 @@ async function getLiveSession(
   return row
 }
 
-/** Resolve a raw session token to its user, or undefined if it's unknown or expired. */
+/**
+ * Slide a live session's TTL forward if it's due — the fix for sessions
+ * dying exactly 30 days after login regardless of how often they're used.
+ * `expiresAt` is always `<lastRenewal> + SESSION_TTL_MS` by construction, so
+ * "more than a day since last renewal" needs no extra column: it's just
+ * "less than `SESSION_TTL_MS - SESSION_RENEW_AFTER_MS` remains". A session
+ * that isn't due yet is left untouched — most calls are a no-op read, not a
+ * write.
+ */
+async function touchSession(db: Database, session: SessionRow): Promise<void> {
+  const remainingMs = session.expiresAt.getTime() - Date.now()
+  if (remainingMs >= SESSION_TTL_MS - SESSION_RENEW_AFTER_MS) return
+  await db
+    .update(sessions)
+    .set({ expiresAt: new Date(Date.now() + SESSION_TTL_MS) })
+    .where(eq(sessions.id, session.id))
+}
+
+/** Resolve a raw session token to its user, or undefined if it's unknown or
+ * expired — and slide the session's TTL forward if it's due (see
+ * `touchSession`), so an actively-used session never silently expires. */
 export async function getSessionUser(
   db: Database,
   token: string,
 ): Promise<UserRow | undefined> {
   const session = await getLiveSession(db, token)
   if (!session) return undefined
+  await touchSession(db, session)
   return getUserById(db, session.userId)
 }
 
