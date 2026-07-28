@@ -154,3 +154,5 @@ that wake agents back into the conversation. This README is still the charter;
 if any of the above made your heart beat faster — welcome aboard.
 
 Fair winds and following seas. ☀️⛵
+
+<!-- review-check canary: verifying CLAUDE_CODE_OAUTH_TOKEN after re-mint (2026-07-28). Safe to merge or close. -->
