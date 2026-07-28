@@ -3,9 +3,7 @@ import {
   Link,
   redirect,
   useNavigate,
-  useRouter,
 } from '@tanstack/react-router'
-import { useCallback } from 'react'
 
 import { answerChatWidget, listChats } from '@hull/chat/server'
 import {
@@ -21,8 +19,8 @@ import { Dock } from '@rigging/views/dock'
 import { HomeCanvas, type HomeTileItem } from '@rigging/widgets/home-canvas'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
-import { useServerAction } from '@rigging/lib/use-server-action'
-import { useShipLog } from '@rigging/lib/use-ship-log'
+import { useInvalidatingAction } from '@rigging/lib/use-invalidating-action'
+import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 
 // **The front door: your home canvas.** Pages of POINTERS at widgets that live
 // in chats you're in — a heads-up display of your software, with the agents
@@ -81,8 +79,7 @@ function HomeRoute() {
   const { page } = Route.useSearch()
   const { home, chats } = Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
-  const router = useRouter()
-  const { busy, run } = useServerAction()
+  const { busy, act } = useInvalidatingAction()
 
   // The live half. A raise in ANY pointed-at chat has to change what a tile
   // shows, and that's a re-resolve on the server (membership is checked there),
@@ -90,10 +87,7 @@ function HomeRoute() {
   // set comes from the server too — one per chat it could actually resolve —
   // so a tile you've lost access to contributes nothing and the stream can't
   // become the side channel the read just closed.
-  const onEvent = useCallback(() => {
-    void router.invalidate()
-  }, [router])
-  useShipLog(home.topics, onEvent)
+  useShipLogInvalidate(home.topics)
 
   const tiles: HomeTileItem[] = home.tiles.map((t) => ({
     id: t.id,
@@ -109,14 +103,8 @@ function HomeRoute() {
     home.pages.find((p) => p.id === page)?.id ?? home.pages.at(0)?.id ?? null
 
   async function newPage(title: string) {
-    const created = await run(() => createHomeCanvasPage({ data: { title } }))
-    await router.invalidate()
+    const created = await act(() => createHomeCanvasPage({ data: { title } }))
     if (created) await navigate({ search: { page: created.id } })
-  }
-
-  async function act(fn: () => Promise<unknown>) {
-    await run(fn)
-    await router.invalidate()
   }
 
   const onLogout = useLogout()
@@ -168,14 +156,7 @@ function HomeRoute() {
         onAnswerWidget={(widgetId, value) => {
           // Chat's OWN answer door, not a home one: an answer from here is the
           // same ordinary chat message it would be from the stack or the canvas.
-          // The invalidate is PART of the action so `busy` stays on until the
-          // answered tile has actually changed — otherwise the buttons re-arm
-          // for the few dozen milliseconds the refetch is in flight and a thumb
-          // goes straight through them.
-          void run(async () => {
-            await answerChatWidget({ data: { widgetId, value } })
-            await router.invalidate()
-          })
+          void act(() => answerChatWidget({ data: { widgetId, value } }))
         }}
       />
     </Dock>

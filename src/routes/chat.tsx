@@ -50,7 +50,7 @@ import type { CanvasWidgetItem } from '@rigging/widgets/canvas'
 import type { WidgetItem } from '@rigging/widgets/stack'
 import { Dock } from '@rigging/views/dock'
 import { roomViewLink } from '@rigging/rooms/rooms'
-import { useServerAction } from '@rigging/lib/use-server-action'
+import { useInvalidatingAction } from '@rigging/lib/use-invalidating-action'
 import { useShipLog, type ShipLogEvent } from '@rigging/lib/use-ship-log'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
@@ -89,16 +89,18 @@ export const Route = createFileRoute('/chat')({
     // Default to the most recent chat unless we're composing a new one.
     const activeId = deps.composing ? undefined : (deps.chat ?? chats[0]?.id)
     const thread = activeId ? await getChatThread({ data: activeId }) : null
-    const schedules =
-      thread && activeId ? await listChatSchedules({ data: activeId }) : []
-    const widgets =
-      thread && activeId ? await listChatWidgets({ data: activeId }) : []
-    // The canvas comes down with the thread, not on a second navigation: it
-    // lives INSIDE the chat, so it loads with it.
-    const canvas =
+    // The thread gates the rest (a chat we can't see fetches nothing more);
+    // the other three depend only on the id, so they come down TOGETHER — one
+    // round trip, not three queued behind each other. The canvas is among
+    // them, not a second navigation: it lives INSIDE the chat.
+    const [schedules, widgets, canvas] =
       thread && activeId
-        ? await getChatCanvas({ data: activeId })
-        : { pages: [], widgets: [], viewPageId: null }
+        ? await Promise.all([
+            listChatSchedules({ data: activeId }),
+            listChatWidgets({ data: activeId }),
+            getChatCanvas({ data: activeId }),
+          ])
+        : [[], [], { pages: [], widgets: [], viewPageId: null }]
     return {
       me,
       chats,
@@ -132,7 +134,7 @@ function ChatRoute() {
     Route.useLoaderData()
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
-  const { busy, run } = useServerAction()
+  const { busy, run, act } = useInvalidatingAction()
 
   // The progress bubble remembers WHICH chat it belongs to: it's cleared by a
   // posted message, not by switching chats, so without the chatId a bubble
@@ -233,67 +235,55 @@ function ChatRoute() {
     }
   }
 
+  // Every small action below is `act`: run the door, re-run the loader, one
+  // busy window — see useInvalidatingAction for why the refresh is inside.
+
   async function changeMembers(input: {
     addMemberId?: string
     removeMemberId?: string
   }) {
     if (!activeId) return
-    await updateChat({ data: { chatId: activeId, ...input } })
-    await router.invalidate()
+    await act(() => updateChat({ data: { chatId: activeId, ...input } }))
   }
 
   async function addSchedule(input: NewSchedule) {
     if (!activeId) return
-    await run(() =>
+    await act(() =>
       createChatSchedule({ data: { chatId: activeId, ...input } }),
     )
-    await router.invalidate()
   }
 
   async function toggleSchedule(scheduleId: string, enabled: boolean) {
-    await run(() => setChatScheduleEnabled({ data: { scheduleId, enabled } }))
-    await router.invalidate()
+    await act(() => setChatScheduleEnabled({ data: { scheduleId, enabled } }))
   }
 
   async function removeSchedule(scheduleId: string) {
-    await run(() => deleteChatSchedule({ data: { scheduleId } }))
-    await router.invalidate()
+    await act(() => deleteChatSchedule({ data: { scheduleId } }))
   }
 
   async function answerWidget(widgetId: string, value: string) {
-    // The refresh is PART of the action, not something after it: `busy` has to
-    // stay on until the answered widget has actually left the surface, or the
-    // buttons re-arm for the tens of milliseconds the invalidate is in flight
-    // and a second tap reaches a door that can only refuse it.
-    await run(async () => {
-      await answerChatWidget({ data: { widgetId, value } })
-      await router.invalidate()
-    })
+    await act(() => answerChatWidget({ data: { widgetId, value } }))
   }
 
   async function dismissWidget(widgetId: string) {
-    await run(() => dismissChatWidget({ data: { widgetId } }))
-    await router.invalidate()
+    await act(() => dismissChatWidget({ data: { widgetId } }))
   }
 
   async function newPage(title: string) {
     if (!activeId) return
-    const created = await run(() =>
+    const created = await act(() =>
       createChatPage({ data: { chatId: activeId, title } }),
     )
     // Land on the page you just made — your own view, so nobody else moves.
     if (created) await selectPage(created.id)
-    await router.invalidate()
   }
 
   async function renamePage(pageId: string, title: string) {
-    await run(() => renameChatPage({ data: { pageId, title } }))
-    await router.invalidate()
+    await act(() => renameChatPage({ data: { pageId, title } }))
   }
 
   async function removePage(pageId: string) {
-    await run(() => removeChatPage({ data: { pageId } }))
-    await router.invalidate()
+    await act(() => removeChatPage({ data: { pageId } }))
   }
 
   async function placeWidget(
@@ -306,19 +296,11 @@ function ChatRoute() {
       gridH?: number
     },
   ) {
-    await run(() => placeChatWidget({ data: { widgetId, ...box } }))
-    await router.invalidate()
+    await act(() => placeChatWidget({ data: { widgetId, ...box } }))
   }
 
   async function stackWidget(widgetId: string) {
-    await run(() => stackChatWidget({ data: { widgetId } }))
-    await router.invalidate()
-  }
-
-  /** Run a door and refresh — the shape most of the small actions above share. */
-  async function act(fn: () => Promise<unknown>) {
-    await run(fn)
-    await router.invalidate()
+    await act(() => stackChatWidget({ data: { widgetId } }))
   }
 
   /**
