@@ -211,3 +211,14 @@ authoritative process)
   used the pinned id and still failed in ~2s). The real cause may be
   something else entirely (auth/quota/action-version issue), not the opus
   alias.
+- wkh8 (Per-chat files subfolder + turnContext shortcut, PR #166):
+  smoke/verify/coverage all passed clean, no rebase needed. `review` failed
+  again with the same repo-wide advisory infra blip confirmed via `gh run
+  list --workflow "Change review" --limit 10` (9/10 recent runs across
+  unrelated PRs failing identically, no comments posted) — souf's #164 model
+  pin still hasn't fixed the underlying issue as of this date, consistent
+  with q6xm's finding. mergeStateStatus went UNKNOWN transiently right after
+  checks settled, then UNSTABLE/MERGEABLE on recheck. No review comments, no
+  branch protection. Squash-merged in one round, no builder round-trip
+  needed. Usual --delete-branch worktree-collision error (merge succeeded per
+  mergedAt); remote branch still present so deleted manually.
