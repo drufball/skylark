@@ -1,6 +1,6 @@
 # The Rigging
 
-_rigging zine — issue #cse8_
+_rigging zine — issue #cse9_
 
 ## tl;dr
 
@@ -38,11 +38,13 @@ replaced per ship without breaking anything below it.
   @dot), `Inbox` (an `inbox` tile, @bix). Each also names the **view it is the
   room for** (`/issues`, `/files`, `/inbox`) and links through to it from its
   own header — those surfaces left the rail, and the room is the way in now.
-  `rooms.ts` is the specs as data, `seed.ts` the idempotent write (rooms, then
-  homes), `cli.ts` the door — `npm run rooms seed`, which `scripts/serve` runs
-  on every boot right after `npm run users seed` — and `server.ts` the one web
-  door, `welcomeAboard`, which the signup route calls so a crew member who joins
-  between restarts doesn't wait for one.
+  Each of those views carries the way BACK, too (`roomForView`, drawn by the
+  shell above the surface). `rooms.ts` is the specs as data, `seed.ts` the
+  idempotent write (rooms, then homes), `cli.ts` the door —
+  `npm run rooms seed`, which `scripts/serve` runs on every boot right after
+  `npm run users seed` — and `server.ts` the one web door, `welcomeAboard`,
+  which the signup route calls so a crew member who joins between restarts
+  doesn't wait for one.
 
 ## Structure
 
@@ -70,9 +72,10 @@ never a service's.
 each pass under THAT person's own actor — a home canvas is gated by
 `owner_id = the acting actor` and there is no door anywhere that takes an
 `ownerId`, so the operator cannot write somebody else's home and this doesn't
-try. It touches a home only if it has **no pages and no tiles**, and pins the
-room's canvas READOUT rather than the room itself: a chat pointer shows the top
-of a chat's stack, and a room's tile lives on its canvas, so three chat pointers
+try. It touches a home only if the ship has **never considered it before**
+(`home_canvas_seeds`) and it has **no pages and no tiles**, and pins the room's
+canvas READOUT rather than the room itself: a chat pointer shows the top of a
+chat's stack, and a room's tile lives on its canvas, so three chat pointers
 would give a new crew member three tiles saying "nothing raised right now". A
 widget pointer puts the open issues, the documents and the inbox on the home
 screen on the very first load, and the tile still names its room and links into
@@ -102,23 +105,30 @@ it.
   `src/navigation.test.ts` is the enforcement — every route is reachable from
   the rail or from a default room, or it's named there as not being a
   destination.
-- **A room keeps the view it replaced, and links to it.** `/issues`, `/files`
-  and `/inbox` did not go away when the rooms arrived: a tile is a readout —
-  eight issues, a folder, the last few notifications — and the board does things
-  a tile doesn't. Deleting a good working view in the same slice that moved the
-  front door would be two irreversible things at once. So the view stays a route
-  and the room carries the link. **Models stays in the rail**, and that's the
-  same argument from the other side: a settings surface is not a conversation,
-  and the thesis is proven by what migrates well rather than by mandating that
-  everything migrate.
-- **The home seed touches only an UNTOUCHED home.** Zero pages and zero tiles is
-  the whole predicate, and it's a stricter promise than the room seed makes (a
-  room converges what's new forever). Unpinning a tile is an ordinary move
-  somebody makes with a thumb, and a seed that undid it on the next boot would
-  be the ship arguing with its crew. The honest cost is the mirror image:
-  somebody who clears their home down to nothing gets the rooms back, because a
-  home with nothing in it is indistinguishable from one nobody has touched —
-  which reads as a reset rather than as damage.
+- **A room keeps the view it replaced, and the link goes BOTH ways.** `/issues`,
+  `/files` and `/inbox` did not go away when the rooms arrived: a tile is a
+  readout — eight issues, a folder, the last few notifications — and the board
+  does things a tile doesn't. Deleting a good working view in the same slice
+  that moved the front door would be two irreversible things at once. So the
+  view stays a route and the room carries the link. **Models stays in the
+  rail**, and that's the same argument from the other side: a settings surface
+  is not a conversation, and the thesis is proven by what migrates well rather
+  than by mandating that everything migrate. The way BACK (`roomForView`) is
+  drawn by the SHELL rather than by each view: it is the way OUT of a surface,
+  so it has to be somewhere always on screen, identical everywhere, and
+  impossible for a view to forget — and `/files` settles that on its own, since
+  its header sits inside a sidebar that's a closed drawer on a phone.
+- **The home seed arranges a home ONCE, and a row remembers that.** Two
+  conditions, and the first is what makes the second safe: the ship has never
+  considered this home (`home_canvas_seeds`, written whether or not a tile
+  lands), and the home has zero pages and zero tiles. That's a stricter promise
+  than the room seed makes — a room converges what's new forever — and
+  deliberately so: unpinning a tile is an ordinary move somebody makes with a
+  thumb, and a seed that undid it on the next boot would be the ship arguing
+  with its crew. Emptiness alone couldn't carry that promise, because it cannot
+  tell _untouched_ from _I removed everything_, so a deliberate clear-out used
+  to come straight back on the next boot. See
+  [`hull/home-canvas/zine.md`](../hull/home-canvas/zine.md) for the row itself.
 - **A newcomer is welcomed by a door, not by waiting for a reboot.** The boot
   seed converges the crew already aboard; somebody who signs up at four in the
   afternoon would otherwise land on a blank grid until the next restart, and
@@ -156,6 +166,18 @@ it.
 
 ## Changelog
 
+- **#cse9 — The closing pass: durability, and a phone header that can't grow.**
+  The three views that left the rail stop being one-way doors — `roomForView` is
+  the way back, drawn by the shell above every one of them, and
+  `navigation.test.ts` holds the round trip rather than half of it. The home
+  seed gains a durable marker, so a deliberate clear-out sticks (see
+  [`hull/home-canvas/zine.md`](../hull/home-canvas/zine.md)). The chat header
+  folds to ONE row at 390px — the name, the surface toggle with its waiting
+  count, and a single overflow holding the room link, Schedules and the roster —
+  so the next control somebody adds can't wrap it again. And the last sub-44px
+  tap targets on a phone go: the inbox's rows and its Mark-all-read, the board's
+  New issue, and the roster's own controls, where the overflow has room for
+  them.
 - **#cse8 — The front door moves, and a rail replaces the dock.** The dock's
   seven entries become four permanent ones (Home, Chats, Crew, Models), a bottom
   bar on a phone; Issues, Files and Inbox leave for their rooms, and each room

@@ -9,6 +9,7 @@ import { AlertTriangle, ArrowUpRight, EyeOff, Plus, X } from 'lucide-react'
 
 import type { CanvasBox } from '@hull/chat/widgets'
 import type { HomeTileTarget } from '@hull/home-canvas/service'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { useIsMobile } from '@rigging/lib/use-is-mobile'
 import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
@@ -19,12 +20,12 @@ import {
   ArrangeableGrid,
   askForPage,
   PageStrip,
+  phoneTileCapPx,
   SwipeColumn,
   TileFrame,
   type GridHandles,
   type GridPage,
 } from './grid'
-import { TAP_TARGET } from './kind'
 import { resolveWidget } from './registry'
 
 /**
@@ -491,26 +492,16 @@ function HomeTile({
   )
 
   return (
-    <TileFrame headline={headline} handles={handles} actions={unpin}>
-      {target.mode === 'lost' ? (
-        <Lost />
-      ) : (
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="min-h-0 flex-1 overflow-auto">
-            {target.widget ? (
-              <TileBody
-                widget={target.widget}
-                revision={revision}
-                spent={spent(target.widget.id)}
-                onAnswer={onAnswer}
-              />
-            ) : (
-              <p className="px-3 py-2 text-xs text-muted-foreground">
-                Nothing raised right now. This tile shows whatever this
-                conversation next needs from you.
-              </p>
-            )}
-          </div>
+    <TileFrame
+      headline={headline}
+      handles={handles}
+      actions={unpin}
+      // No grip means the phone column, which sizes nothing — so the tile takes
+      // the height its arrangement asked for rather than however tall eighteen
+      // documents happen to be. A desktop grid cell already bounds it.
+      capPx={handles ? undefined : phoneTileCapPx(tile.gridH)}
+      footer={
+        target.mode === 'lost' ? undefined : (
           <Link
             to={chatHref(target.chat.id)}
             aria-label={`Open the chat ${homeChatName(target.chat)}`}
@@ -525,7 +516,23 @@ function HomeTile({
             </span>
             <ArrowUpRight className="size-3 shrink-0" />
           </Link>
-        </div>
+        )
+      }
+    >
+      {target.mode === 'lost' ? (
+        <Lost />
+      ) : target.widget ? (
+        <TileBody
+          widget={target.widget}
+          revision={revision}
+          spent={spent(target.widget.id)}
+          onAnswer={onAnswer}
+        />
+      ) : (
+        <p className="px-3 py-2 text-xs text-muted-foreground">
+          Nothing raised right now. This tile shows whatever this conversation
+          next needs from you.
+        </p>
       )}
     </TileFrame>
   )

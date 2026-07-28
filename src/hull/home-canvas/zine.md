@@ -1,6 +1,6 @@
 # The home canvas
 
-_home-canvas zine — issue #cse8_
+_home-canvas zine — issue #cse9_
 
 ## tl;dr
 
@@ -58,6 +58,11 @@ including on the live event path.
   runs under `withCurrentActor`; **none of them takes an `ownerId`**, and the
   policy wouldn't accept one if it did. Notably absent: an answer door — see
   below.
+- **The seeded marker** — a row in `home_canvas_seeds`, one per crew member:
+  _the ship has already arranged this home_. Written by the rooms seed as that
+  person, under the same one-line policy as the pages and the tiles (migration
+  0038), and read by nothing else. `wasHomeSeeded` / `markHomeSeeded` are its
+  whole surface; there is no door, because no browser has any business in it.
 - **The view** — `rigging/widgets/home-canvas.tsx`, on the page primitives
   shared with the chat canvas (`rigging/widgets/grid.tsx`). See
   [`rigging/widgets/zine.md`](../../rigging/widgets/zine.md).
@@ -155,17 +160,31 @@ land you where you were.
   intact (agents posted those links for months), and `/home` forwards to `/` for
   the one slice's worth of bookmarks that shape earned. Home is first in the
   rail now, because it's what you land on.
-- **A blank home is the worst possible first screen, so the ship seeds one.**
-  The rooms seed arranges each crew member's home with the default rooms'
-  readouts, under that person's own actor — no door here takes an `ownerId` and
-  the policy wouldn't accept one, so a seed that wrote somebody else's home
-  would have to break this service's one rule first. It writes only a home with
-  zero pages and zero tiles. See [`rigging/zine.md`](../../rigging/zine.md); the
-  seed lives up there because it names widget KINDS, which is rigging's meaning
-  to hold.
+- **A blank home is the worst possible first screen, so the ship seeds one —
+  once.** The rooms seed arranges each crew member's home with the default
+  rooms' readouts, under that person's own actor — no door here takes an
+  `ownerId` and the policy wouldn't accept one, so a seed that wrote somebody
+  else's home would have to break this service's one rule first. See
+  [`rigging/zine.md`](../../rigging/zine.md); the seed lives up there because it
+  names widget KINDS, which is rigging's meaning to hold.
+- **Emptiness is not a memory, so the ship keeps one.** "No pages and no tiles"
+  cannot tell _untouched_ from _I removed everything_, and a seed reading the
+  second as the first put the whole default arrangement back on the next boot,
+  and the boot after that. `home_canvas_seeds` is the fact emptiness couldn't
+  carry: written the first time the seed considers a home whether or not it pins
+  anything, and never looked past. It's a table rather than a column on `users`
+  because it is home-canvas state, and the users service has no business growing
+  a field about a surface it doesn't know exists. The cost is one row per
+  person, forever, which is the cheapest durable thing in the ship.
 
 ## Changelog
 
+- **#cse9 — A cleared home stays cleared.** `home_canvas_seeds` (migration 0037,
+  RLS 0038): one row per crew member saying the ship has had its go, so
+  unpinning every tile and deleting your last page is a decision the next boot
+  respects rather than an emptiness it mistakes for a fresh start. No doors, no
+  new rules, and the seed is still idempotent and non-clobbering for everyone
+  else.
 - **#cse8 — Home becomes the front door.** No schema, no doors, no new rules:
   `/` renders this canvas, `/chat` took the chat route, and the old
   `/?chat=<id>` shape redirects rather than 404ing. The rooms seed

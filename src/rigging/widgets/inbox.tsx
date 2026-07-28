@@ -3,10 +3,11 @@ import { CircleSmall } from 'lucide-react'
 
 import { myInbox, type InboxItem } from '@hull/notifications/server'
 import { NOTIFY_TOPIC_PATTERN } from '@hull/notifications/topic'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { formatLocalTime } from '@rigging/lib/format-local-time'
 import { cn } from '@rigging/lib/utils'
 
-import { asRecord, TAP_TARGET, type WidgetKind, type WidgetParse } from './kind'
+import { asRecord, type WidgetKind, type WidgetParse } from './kind'
 
 /**
  * `inbox` — the VIEWER's own notifications, in a tile.

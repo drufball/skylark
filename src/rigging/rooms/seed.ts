@@ -18,7 +18,9 @@ import {
 import {
   listHomePages,
   listHomeTiles,
+  markHomeSeeded,
   pinHomeTile,
+  wasHomeSeeded,
 } from '@hull/home-canvas/service'
 import { listUsers } from '@hull/users/service'
 
@@ -234,16 +236,19 @@ export interface SeededHome {
  *   person. That also means each pin resolves the rooms through the CHAT
  *   service under THAT person's membership, so a room they aren't in simply
  *   doesn't land on their home.
- * - **An untouched home is the only one it writes.** Zero pages and zero tiles
- *   is the whole predicate. The moment somebody makes a page, pins something,
- *   or unpins one of these, their home stops being the ship's and becomes
- *   theirs — for good. That's a stricter promise than the room seed makes (a
- *   room converges what's new forever), and deliberately so: unpinning a tile
- *   is an ordinary move somebody makes with a thumb, and a seed that undid it
- *   on the next boot would be the ship arguing with its crew. The honest cost
- *   is the mirror image: somebody who clears their home down to nothing gets
- *   the rooms back, because a home with nothing in it is indistinguishable from
- *   one nobody has touched.
+ * - **It arranges a home ONCE, and there's a row that says so.** Two conditions
+ *   have to hold before anything is pinned: the ship has never considered this
+ *   home before (`wasHomeSeeded`), and the home is empty. The first is what
+ *   makes the second safe. Emptiness alone cannot tell *untouched* from *I
+ *   removed everything*, so the old predicate resurrected the whole default
+ *   arrangement for anybody who unpinned their tiles and deleted their last
+ *   page — every boot, forever, which is the ship arguing with its crew. Now
+ *   the marker is written whether or not a tile lands, so a deliberate
+ *   clear-out sticks and a home somebody had already arranged before this row
+ *   existed is recorded as finished rather than re-decided on every boot.
+ *
+ *   Both writes ride the one transaction `asActor` opens, so a pass that fails
+ *   half way leaves no marker and the next boot converges the person properly.
  */
 export async function seedHomes(input: {
   /** Everybody aboard. Agents are skipped — a home screen needs a thumb. */
@@ -264,6 +269,13 @@ export async function seedHomes(input: {
     }
     try {
       await input.asActor(user.id, async (tx) => {
+        // The ship has had its one go at this home. Whatever it looks like now
+        // is the crew's business — including nothing at all.
+        if (await wasHomeSeeded(tx, user.id)) return
+        // Written before the pins and inside the same transaction, so this pass
+        // is the last one either way: a home that's already arranged is left
+        // alone AND recorded as finished, rather than re-decided every boot.
+        await markHomeSeeded(tx, user.id)
         const [pages, tiles] = await Promise.all([
           listHomePages(tx, user.id),
           listHomeTiles(tx, user.id),

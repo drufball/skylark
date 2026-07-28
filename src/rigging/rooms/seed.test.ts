@@ -19,7 +19,14 @@ import {
   setTitle,
 } from '@hull/chat/service'
 
-import { listHomePages, listHomeTiles } from '@hull/home-canvas/service'
+import {
+  createHomePage,
+  listHomePages,
+  listHomeTiles,
+  removeHomePage,
+  unpinHomeTile,
+  wasHomeSeeded,
+} from '@hull/home-canvas/service'
 
 import type { RoomSpec } from './rooms'
 import { seedHomes, seedRooms } from './seed'
@@ -382,6 +389,70 @@ describe('seedRooms', () => {
       const [tile] = await listHomeTiles(db, captain)
       const [pinned] = await listWidgetsByIds(db, [defined(tile.widgetId)])
       expect(pinned.chatId).toBe('room-test-files')
+    })
+
+    /**
+     * The durability half. "No pages and no tiles" cannot tell an untouched
+     * home from one somebody cleared out on purpose, so a crew member who
+     * unpinned every tile and removed their last page used to get the whole
+     * default arrangement back on the next boot — and on every boot after that.
+     * A marker per person is the fact the emptiness couldn't carry.
+     */
+    it('lets a deliberate clear-out stick across a boot', async () => {
+      await seed()
+      await seedTheHomes()
+      // Clear the home right down to nothing — every tile, then the page.
+      await asActor(db, captain, async (tx) => {
+        for (const tile of await listHomeTiles(tx, captain)) {
+          await unpinHomeTile(tx, { tileId: tile.id })
+        }
+        for (const page of await listHomePages(tx, captain)) {
+          await removeHomePage(tx, { pageId: page.id })
+        }
+      })
+      expect(await listHomePages(db, captain)).toEqual([])
+
+      const again = await seedTheHomes()
+      expect(again[0].tilesAdded).toBe(0)
+      expect(await listHomeTiles(db, captain)).toEqual([])
+      expect(await listHomePages(db, captain)).toEqual([])
+    })
+
+    it('marks a home it deliberately left alone, so it stops looking', async () => {
+      // Somebody who arranged their home BEFORE the marker existed: the seed
+      // must not pin anything (it never would have), and must record that it's
+      // finished with them rather than re-deciding on every boot.
+      await seed()
+      await asActor(db, captain, (tx) =>
+        createHomePage(tx, { id: uuidv7(), ownerId: captain, title: 'Mine' }),
+      )
+      const report = await seedTheHomes()
+      expect(report[0].tilesAdded).toBe(0)
+      expect(
+        await asActor(db, captain, (tx) => wasHomeSeeded(tx, captain)),
+      ).toBe(true)
+      expect(await listHomeTiles(db, captain)).toEqual([])
+    })
+
+    it('leaves no marker behind when the pass fails', async () => {
+      // The marker and the pins land in one transaction (`withActor` opens
+      // one), so a pass that blows up half way leaves the person unmarked and
+      // the next boot converges them — rather than recording a seed that never
+      // happened.
+      await seed()
+      await seedHomes({
+        crew: [{ id: captain, handle: 'captain', type: 'human' }],
+        rooms: ROOMS,
+        asActor: (userId, fn) =>
+          asActor(db, userId, async (tx) => {
+            await fn(tx)
+            throw new Error('connection went away')
+          }),
+      })
+      expect(
+        await asActor(db, captain, (tx) => wasHomeSeeded(tx, captain)),
+      ).toBe(false)
+      expect(await listHomeTiles(db, captain)).toEqual([])
     })
 
     it('reports a crew member it cannot seed and still seeds the rest', async () => {

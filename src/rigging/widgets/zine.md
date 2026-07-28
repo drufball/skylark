@@ -1,6 +1,6 @@
 # Widgets
 
-_widgets zine — issue #cse8_
+_widgets zine — issue #cse9_
 
 ## tl;dr
 
@@ -58,8 +58,10 @@ generated from the same entries.
 - **Grid** (`grid.tsx`) — the layout engine BOTH canvases share: the page strip,
   the desktop `ArrangeableGrid` (drag by the title bar, resize from the corner,
   arrows to nudge), the phone's `SwipeColumn`, and `TileFrame` (a tile's
-  chrome). Plus the two pure halves of arranging, `cellAt` and `nudge`. It knows
-  nothing of widget kinds, chats or pointers — that's what makes it shareable.
+  chrome). Plus the two pure halves of arranging, `cellAt` and `nudge`, and the
+  tile's height contract — `phoneTileCapPx` and `isOverflowing` (see the
+  decision below). It knows nothing of widget kinds, chats or pointers — that's
+  what makes it shareable.
 - **Home canvas** (`home-canvas.tsx`) — your own screen and, since #cse8, the
   ship's front door (`/`). The one surface that holds POINTERS at widgets living
   in chats ([`hull/home-canvas/zine.md`](../../hull/home-canvas/zine.md)). Same
@@ -247,6 +249,18 @@ place, and the hull still imports nothing from rigging.
   an `issue-list` quietly dropping a pin — you cannot tell a small shelf from a
   capped one. Same rule as "a kind that pins a referent must SAY when it's
   gone".
+- **The FRAME caps a tile's height, no kind does — and a capped tile says so.**
+  A tile is a fixed box and its contents are not. The desktop grid cell bounded
+  a tile; the phone column bounded nothing, so a `files` tile holding eighteen
+  documents just grew, and the kinds had each grown an inner `max-h` to
+  compensate — which is how one tile ended up with three nested scrolls on a
+  device with one thumb. `TileFrame` owns the cap and owns the ONE scroll; the
+  phone borrows the tile's ARRANGED height (`phoneTileCapPx`, floored at two
+  rows so a squashed tile is still answerable), because that's the same claim
+  the desktop grid already makes about how much room the tile should take. And
+  when the body is hiding something the tile says "more below", measured rather
+  than assumed — the same honesty the `files` list owes its item count, owed for
+  the tile's own height.
 - **Inside a tile, the label goes over the timestamp, not beside it.** Observed
   live at 390px: `YYYY-MM-DD HH:MM` held a third of an inbox row and cut "@mate
   commented on #a1b2" down to "@mate c…". A tile is far narrower than the
@@ -262,6 +276,14 @@ place, and the hull still imports nothing from rigging.
 
 ## Changelog
 
+- **#cse9 — A tile is a fixed box, and now its contents know it.** `TileFrame`
+  caps the body, owns the only scroll inside a tile, and says "more below" when
+  it's hiding something; the phone column takes the height the arrangement asked
+  for instead of growing without limit, and `files` drops the inner `max-h` it
+  had grown to compensate. A home tile's "which chat is this?" line moves out of
+  the scrolling half into the frame's footer slot. `TAP_TARGET` left `kind.ts`
+  for `rigging/lib/tap-target` — it was never a widget fact, and the composer
+  and the sidebar were importing a widget module to spell a design token.
 - **#cse8 — The home canvas becomes the front door.** No new kinds. The empty
   home says what the surface is for and, for somebody with no conversations yet,
   points at where conversations are made rather than at a picker that would be

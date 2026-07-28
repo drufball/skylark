@@ -21,12 +21,14 @@ import {
   createHomePage,
   listHomePages,
   listHomeTiles,
+  markHomeSeeded,
   moveHomeTile,
   pinHomeTile,
   readHomeCanvas,
   removeHomePage,
   renameHomePage,
   unpinHomeTile,
+  wasHomeSeeded,
 } from './service'
 
 // The home canvas: pages of POINTERS at widgets that live in chats. Two things
@@ -377,5 +379,43 @@ describe('the home canvas', () => {
         }),
       ),
     ).rejects.toThrow(/no such widget/)
+  })
+
+  /**
+   * The marker that lets a deliberate clear-out stick. "No pages and no tiles"
+   * cannot tell an untouched home from one somebody emptied on purpose, so the
+   * seed used to resurrect the whole default arrangement on the next boot. This
+   * row is the difference the emptiness couldn't carry.
+   */
+  describe('the seeded marker', () => {
+    it('says nothing has arranged this home yet', async () => {
+      expect(await asActor(db, dru, (tx) => wasHomeSeeded(tx, dru))).toBe(false)
+    })
+
+    it('remembers, once marked', async () => {
+      await asActor(db, dru, (tx) => markHomeSeeded(tx, dru))
+      expect(await asActor(db, dru, (tx) => wasHomeSeeded(tx, dru))).toBe(true)
+    })
+
+    it('is idempotent — marking twice is not an error', async () => {
+      // It runs on every boot, so a second mark must be a no-op rather than a
+      // primary-key violation that costs the crew after it in the list.
+      await asActor(db, dru, (tx) => markHomeSeeded(tx, dru))
+      await asActor(db, dru, (tx) => markHomeSeeded(tx, dru))
+      expect(await asActor(db, dru, (tx) => wasHomeSeeded(tx, dru))).toBe(true)
+    })
+
+    it('is personal — one person’s marker is not another’s', async () => {
+      await asActor(db, dru, (tx) => markHomeSeeded(tx, dru))
+      expect(await asActor(db, sam, (tx) => wasHomeSeeded(tx, sam))).toBe(false)
+    })
+
+    it('is invisible to anybody but its owner', async () => {
+      // Same one-line policy as the pages and the tiles: `owner_id` is you.
+      // @sam asking about @dru's marker gets the same answer as asking about a
+      // marker that isn't there — which is the honest one.
+      await asActor(db, dru, (tx) => markHomeSeeded(tx, dru))
+      expect(await asActor(db, sam, (tx) => wasHomeSeeded(tx, dru))).toBe(false)
+    })
   })
 })

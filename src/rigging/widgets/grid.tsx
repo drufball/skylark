@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 
 import {
@@ -6,10 +6,9 @@ import {
   clampCanvasBox,
   type CanvasBox,
 } from '@hull/chat/widgets'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
-
-import { TAP_TARGET } from './kind'
 
 /**
  * The layout engine both canvases share: pages of tiles you arrange.
@@ -33,6 +32,45 @@ import { TAP_TARGET } from './kind'
 /** Row height and gutter in px — the grid's own units, and the drag maths'. */
 const ROW_PX = 104
 const GAP_PX = 8
+
+/** The fewest rows a phone tile is drawn at, however short its arrangement. */
+const MIN_PHONE_ROWS = 2
+
+/** Slack, in px, before a capped body counts as hiding something. */
+const OVERFLOW_SLACK_PX = 4
+
+/**
+ * How tall a tile's body may get in the phone column.
+ *
+ * The desktop grid gives a tile exactly `gridH` rows, so its body is bounded and
+ * scrolls inside a box somebody sized. The phone column had no such bound at
+ * all: a `files` tile holding eighteen documents grew into a tall scrolling
+ * column, inside a tile, inside a scrolling page — three nested scrolls on a
+ * device with one thumb. Borrowing the arranged height is the honest fix,
+ * because it's the same claim the desktop already makes about how much room the
+ * tile is meant to take.
+ *
+ * The floor is two rows: a tile squashed to one is 104px, under three tap
+ * targets, and a `choice` you can't answer with a thumb is a worse outcome than
+ * a tile slightly taller than somebody's desktop arrangement.
+ */
+export function phoneTileCapPx(rows: number): number {
+  const capped = Math.max(rows, MIN_PHONE_ROWS)
+  return capped * ROW_PX + (capped - 1) * GAP_PX
+}
+
+/**
+ * Is a capped body hiding content below its fold? The slack matters: borders and
+ * fractional line heights make a body that fits perfectly overshoot by a hair,
+ * and a tile that cried "more below" over two pixels would be the same
+ * dishonesty this line exists to fix, in reverse.
+ */
+export function isOverflowing(box: {
+  scrollHeight: number
+  clientHeight: number
+}): boolean {
+  return box.scrollHeight - box.clientHeight > OVERFLOW_SLACK_PX
+}
 
 /** Anything this engine can place: an identity and a box. */
 export interface GridItem extends CanvasBox {
@@ -406,6 +444,74 @@ export function SwipeColumn({
 }
 
 /**
+ * The one place a tile scrolls, and the line it owes you when it's hiding
+ * something.
+ *
+ * A tile is a fixed box and its contents are not. On a desktop pane the grid
+ * cell bounded it; the phone column didn't bound it at all, so a long body just
+ * grew — and the kinds had each grown their own inner cap to compensate, which
+ * is how one tile ended up with three nested scrolls. So the FRAME owns the cap
+ * and the scroll, the kinds own neither, and when there's more inside than the
+ * box shows, the tile says so. Same rule the `files` list already keeps for its
+ * item count ("and N more"), applied to the tile's own height.
+ */
+function TileBody({
+  capPx,
+  children,
+}: {
+  capPx?: number
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [clipped, setClipped] = useState(false)
+
+  // No dependency list on purpose. A widget body fills itself in AFTER it mounts
+  // (a `files` tile reads the shelf, an `issue-list` its issues) and does it in
+  // its OWN state, which never re-runs an effect up here — so the measurement
+  // has to be taken again on every render, and watched in between. The container
+  // itself never resizes (it's capped), so what's observed is what's inside it.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    function measure() {
+      if (el) setClipped(isOverflowing(el))
+    }
+    measure()
+    // jsdom has no ResizeObserver; the measurement above still runs, so a test
+    // sees the state a body's first paint puts it in.
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    for (const child of el.children) observer.observe(child)
+    return () => {
+      observer.disconnect()
+    }
+  })
+
+  return (
+    <>
+      <div
+        ref={ref}
+        data-testid="tile-body"
+        className="min-h-0 flex-1 overflow-auto"
+        // Inline rather than a class: the cap is the tile's ARRANGED height in
+        // px, which is a number the grid computes, not one of a fixed set.
+        style={capPx === undefined ? undefined : { maxHeight: capPx }}
+      >
+        {children}
+      </div>
+      {clipped && (
+        <p
+          data-testid="tile-clipped"
+          className="shrink-0 border-t px-3 py-1 text-[11px] text-muted-foreground"
+        >
+          More below — scroll inside this tile.
+        </p>
+      )}
+    </>
+  )
+}
+
+/**
  * One tile's chrome: a title bar that doubles as the drag grip, whatever
  * controls the surface puts beside it, the body, and (on a desktop pane) the
  * resize corner.
@@ -419,6 +525,8 @@ export function TileFrame({
   headline,
   actions,
   handles,
+  capPx,
+  footer,
   children,
 }: {
   headline: string
@@ -426,6 +534,19 @@ export function TileFrame({
   actions?: ReactNode
   /** Desktop arrangement. Omitted on a phone, which has no drag or resize. */
   handles?: GridHandles
+  /**
+   * How tall the body may get, in px. Omitted where the surface already sizes
+   * the tile (a desktop grid cell), given on the phone column, which doesn't —
+   * see `phoneTileCapPx`.
+   */
+  capPx?: number
+  /**
+   * A line the surface keeps BELOW the scrolling body — home's "which chat does
+   * this live in?". Outside the scroll because it's the answer to the question a
+   * home screen makes people ask constantly, and an answer you have to scroll to
+   * find isn't one.
+   */
+  footer?: ReactNode
   children: ReactNode
 }) {
   const grip = handles ? (
@@ -459,7 +580,8 @@ export function TileFrame({
         {grip}
         {actions}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+      <TileBody capPx={capPx}>{children}</TileBody>
+      {footer}
       {handles && (
         // The resize corner. Pointer-only on purpose: shift+arrows on the title
         // bar is the keyboard path, and a phone gets neither (see SwipeColumn).

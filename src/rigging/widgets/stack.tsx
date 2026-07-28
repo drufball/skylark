@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronRight, LayoutGrid, X } from 'lucide-react'
 
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
 
 import { useAnswerGuard } from './answer-guard'
-import { TAP_TARGET } from './kind'
 import { resolveWidget, type WidgetResolution } from './registry'
 
 /**

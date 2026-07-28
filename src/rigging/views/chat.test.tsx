@@ -410,7 +410,7 @@ describe('ChatView', () => {
       members: [{ userId: 'a', handle: 'tilde', type: 'agent' }],
     })
     expect(screen.queryByLabelText('Remove tilde')).toBeNull()
-    fireEvent.click(screen.getByLabelText('People'))
+    fireEvent.click(screen.getByLabelText('More'))
     expect(screen.getByLabelText('Remove tilde')).toBeTruthy()
   })
 
@@ -421,7 +421,7 @@ describe('ChatView', () => {
       members: [{ userId: 'a', handle: 'tilde', type: 'agent' }],
     })
     expect(screen.getByLabelText('Remove tilde')).toBeTruthy()
-    expect(screen.queryByLabelText('People')).toBeNull()
+    expect(screen.queryByLabelText('More')).toBeNull()
   })
 
   it('does not send a blank message', () => {
@@ -1059,6 +1059,9 @@ describe('ChatView: the room’s link to its own view', () => {
   })
 
   it('keeps the link a thumb target on a phone', () => {
+    // It's behind the header's overflow at 390px — see "the phone header" — but
+    // it is still the one control that answers "where did the board go?", so it
+    // is still a thumb target when you get to it.
     setWidth(390)
     renderView({
       activeId: 'room-files',
@@ -1066,6 +1069,7 @@ describe('ChatView: the room’s link to its own view', () => {
       viewLink: { to: '/files', label: 'All files' },
       Link: FakeLink,
     })
+    fireEvent.click(screen.getByLabelText('More'))
     expect(classTokensOf('All files', 'a')).toContain('min-h-11')
   })
 })
@@ -1080,6 +1084,7 @@ describe('ChatView: thumb targets on a phone', () => {
     setWidth(390)
     renderView({
       activeId: 'c1',
+      crew: [{ id: 'z', handle: 'bix', displayName: 'Bix', type: 'agent' }],
       members: [
         { userId: 'a', handle: 'tilde', type: 'agent' },
         { userId: 'b', handle: 'dru', type: 'human' },
@@ -1092,8 +1097,130 @@ describe('ChatView: thumb targets on a phone', () => {
     const target = (label: string) =>
       screen.getByLabelText(label).className.split(/\s+/)
     expect(target('Open Chats')).toContain('min-h-11')
-    expect(target('People')).toContain('min-h-11')
-    expect(target('Schedules')).toContain('min-h-11')
+    expect(target('More')).toContain('min-h-11')
     expect(target('Send message')).toContain('min-h-11')
+    fireEvent.click(screen.getByLabelText('More'))
+    expect(target('Schedules')).toContain('min-h-11')
+    // The roster's controls too: inside the overflow they're the only way to
+    // change who's in a chat, and they have the room. The desktop header keeps
+    // its dense chips — a 44px pill per member there would be the wrap again.
+    expect(target('Remove tilde')).toContain('min-h-11')
+    expect(target('Add member')).toContain('min-h-11')
+  })
+
+  it('keeps the desktop roster dense, where the row is the scarce thing', () => {
+    setWidth(1280)
+    renderView({
+      activeId: 'c1',
+      crew: [{ id: 'z', handle: 'bix', displayName: 'Bix', type: 'agent' }],
+      members: [{ userId: 'a', handle: 'tilde', type: 'agent' }],
+    })
+    expect(
+      screen.getByLabelText('Remove tilde').className.split(/\s+/),
+    ).not.toContain('min-h-11')
+  })
+})
+
+/**
+ * The header, paid down a second time.
+ *
+ * #cse5 took it from four rows to two and #cse8 promptly spent the slack: the
+ * name, People, the room's link, the Thread/Canvas toggle and Schedules all
+ * shared 390px, one control away from wrapping to three rows again. Shaving
+ * pixels off each of them is a debt you pay every slice, so this time the row
+ * has a FIXED shape — the two things that carry state, and one overflow — and
+ * anything new goes behind the overflow rather than into the row.
+ */
+describe('ChatView: the phone header', () => {
+  const FakeLink: NonNullable<ChatViewProps['Link']> = ({
+    to,
+    className,
+    children,
+  }) => (
+    <a href={to} className={className}>
+      {children}
+    </a>
+  )
+
+  /** A room, at 390px, with every control this header can carry. */
+  function loadedRoom(over: Partial<ChatViewProps> = {}) {
+    setWidth(390)
+    return renderView({
+      activeId: 'room-issues',
+      title: 'Issues',
+      members: [
+        { userId: 'a', handle: 'tilde', type: 'agent' },
+        { userId: 'b', handle: 'dru', type: 'human' },
+      ],
+      viewLink: { to: '/issues', label: 'Board' },
+      Link: FakeLink,
+      schedules: [],
+      onCreateSchedule: vi.fn(),
+      onToggleSchedule: vi.fn(),
+      onDeleteSchedule: vi.fn(),
+      canvasPages: [{ id: 'p1', title: 'Page 1' }],
+      canvasWidgets: [],
+      activePageId: 'p1',
+      onSelectPage: vi.fn(),
+      onNewPage: vi.fn(),
+      onRenamePage: vi.fn(),
+      onRemovePage: vi.fn(),
+      onPlaceWidget: vi.fn(),
+      onStackWidget: vi.fn(),
+      onAnswerWidget: vi.fn(),
+      ...over,
+    })
+  }
+
+  it('carries exactly three controls in the row, however loaded the chat is', () => {
+    loadedRoom()
+    const header = document.querySelector('header')
+    const inRow = [...(header?.querySelectorAll('button, a, select') ?? [])]
+    // Thread, Canvas, More. Nothing else competes for the row's width, so the
+    // next control somebody adds cannot wrap it.
+    expect(inRow.map((el) => el.textContent.trim())).toEqual([
+      'thread',
+      'canvas',
+      '',
+    ])
+  })
+
+  it('keeps the surface toggle and the waiting count in the row', () => {
+    // The two things that carry STATE. Behind an overflow, a raise you never
+    // saw is a raise you never saw.
+    loadedRoom({ widgets: [choiceWidget({ id: 'w1' })] })
+    fireEvent.click(screen.getByRole('button', { name: 'canvas' }))
+    expect(screen.getByLabelText('Thread — 1 waiting')).toBeTruthy()
+  })
+
+  it('puts the room link, the roster and Schedules behind the overflow', () => {
+    loadedRoom()
+    expect(screen.queryByText('Board')).toBeNull()
+    expect(screen.queryByLabelText('Schedules')).toBeNull()
+    expect(screen.queryByLabelText('Remove tilde')).toBeNull()
+
+    fireEvent.click(screen.getByLabelText('More'))
+    expect(screen.getByText('Board').closest('a')?.getAttribute('href')).toBe(
+      '/issues',
+    )
+    expect(screen.getByLabelText('Schedules')).toBeTruthy()
+    expect(screen.getByLabelText('Remove tilde')).toBeTruthy()
+  })
+
+  it('closes again, so the menu is never in the way', () => {
+    loadedRoom()
+    fireEvent.click(screen.getByLabelText('More'))
+    fireEvent.click(screen.getByLabelText('More'))
+    expect(screen.queryByLabelText('Schedules')).toBeNull()
+  })
+
+  it('leaves a desktop pane exactly as it was — one row, everything on it', () => {
+    setWidth(1280)
+    loadedRoom()
+    setWidth(1280)
+    expect(screen.queryByLabelText('More')).toBeNull()
+    expect(screen.getByText('Board')).toBeTruthy()
+    expect(screen.getByLabelText('Schedules')).toBeTruthy()
+    expect(screen.getByLabelText('Remove tilde')).toBeTruthy()
   })
 })

@@ -1,6 +1,6 @@
 # The Ship
 
-_src zine — issue #cse8_
+_src zine — issue #cse9_
 
 ## tl;dr
 
@@ -79,10 +79,12 @@ three, because wiring them together is its job.
 `/agents` and `/models` are the two surfaces that aren't conversations. Issues,
 Files and Inbox are reached through their ROOMS (default chats,
 [`rigging/zine.md`](rigging/zine.md)), each of which links through to its own
-richer view — those routes are alive, they just aren't in the rail any more.
+richer view — those routes are alive, they just aren't in the rail any more —
+and each of those views carries the way back to its room.
 `src/navigation.test.ts` holds the whole claim: every route the ship serves is
 reachable from the rail or from a default room, or is named in that file as
-deliberately not a destination.
+deliberately not a destination, and the three that left the rail are reachable
+in BOTH directions.
 
 **A request, end to end.** A browser hits a route in `src/routes` → the route's
 loader calls a server function → the server function calls a service's pure
@@ -129,6 +131,14 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **#cse9 — The closing pass: nothing new, everything durable.** The three views
+  that left the rail stop being one-way doors; the home seed learns to run once
+  per person, so clearing your home is a decision the next boot respects; a tile
+  stops being a fixed box full of unbounded contents on a phone; and the chat
+  header folds to one row that can't grow again
+  ([`rigging/zine.md`](rigging/zine.md)). The `/?chat=<id>` redirect the last
+  slice left behind is pinned by the smoke suite now, where a redirect whose job
+  is to work for years belongs.
 - **#cse8 — Chat became the front door in #5; now it's the ship.** `/` is your
   home canvas, `/chat` is every conversation, and the old `/?chat=<id>` links
   agents posted for months redirect there with the parameter intact. The dock

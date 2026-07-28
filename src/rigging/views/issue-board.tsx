@@ -3,6 +3,7 @@ import { MessageSquare, Plus } from 'lucide-react'
 
 import type { BoardIssue } from '@hull/issues/server'
 import { computeBuildActivity } from '@hull/issues/activity'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { cn } from '@rigging/lib/utils'
 import { BatonChip } from '@rigging/components/baton-chip'
 import { useNow } from '@rigging/lib/use-now'
@@ -184,6 +185,9 @@ function NewIssue({
     return (
       <Button
         variant="outline"
+        // The board's one action, and the only reason to be on this surface
+        // with a thumb — it was 36px.
+        className={TAP_TARGET}
         onClick={() => {
           setOpen(true)
         }}

@@ -2,12 +2,14 @@ import type { ComponentType, ReactNode } from 'react'
 import {
   Anchor,
   Boxes,
+  ChevronLeft,
   House,
   LogOut,
   MessageSquare,
   Users,
 } from 'lucide-react'
 
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { cn } from '@rigging/lib/utils'
 
 // The rail: the ship's permanent, hardcoded navigation. Four entries — Home
@@ -76,6 +78,19 @@ export interface DockProps {
    * renders only for a genuine positive count.
    */
   behindOrigin?: number | null
+  /**
+   * The ROOM this surface belongs to, for the three views that left the rail
+   * (`rigging/rooms`'s `roomForView`). Undefined everywhere else, which is most
+   * places.
+   *
+   * It lives in the shell rather than in each view for the same reason the rail
+   * does: it's the way OUT of a surface, so it has to be in the one place that's
+   * always on screen, drawn identically, and impossible for a view to forget.
+   * `/files` also settles the argument on its own — its header is inside a
+   * sidebar that's a closed drawer on a phone, so a link put there would be
+   * invisible on the device that needs it most.
+   */
+  room?: { to: string; label: string }
   children: ReactNode
 }
 
@@ -96,6 +111,7 @@ export function Dock({
   Link,
   onLogout,
   behindOrigin,
+  room,
   children,
 }: DockProps) {
   return (
@@ -138,11 +154,30 @@ export function Dock({
             Log out
           </button>
         </nav>
-        {/* overflow-y-auto is a fallback for a surface that manages no internal
-            scroll of its own (e.g. Models) — a surface that fills this slot
-            exactly (chat/issues/files/inbox, each already h-full + its own
-            ScrollArea) never grows past it, so this never triggers for them. */}
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {room && (
+            <div className="flex shrink-0 items-center border-b bg-muted/20 px-1">
+              <Link
+                to={room.to}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-2 text-sm',
+                  'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  TAP_TARGET,
+                )}
+              >
+                <ChevronLeft className="size-4" />
+                {room.label}
+              </Link>
+            </div>
+          )}
+          {/* overflow-y-auto is a fallback for a surface that manages no internal
+              scroll of its own (e.g. Models) — a surface that fills this slot
+              exactly (chat/issues/files/inbox, each already h-full + its own
+              ScrollArea) never grows past it, so this never triggers for them. */}
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+            {children}
+          </div>
+        </div>
       </div>
     </div>
   )

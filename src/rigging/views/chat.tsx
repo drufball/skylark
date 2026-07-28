@@ -10,6 +10,7 @@ import {
   Bot,
   CalendarClock,
   LayoutGrid,
+  MoreHorizontal,
   Plus,
   Trash2,
   User,
@@ -30,7 +31,7 @@ import {
   type CanvasPageItem,
   type CanvasWidgetItem,
 } from '@rigging/widgets/canvas'
-import { TAP_TARGET } from '@rigging/widgets/kind'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { WidgetStack, type WidgetItem } from '@rigging/widgets/stack'
 
 // The front door: chat between the crew — humans and agents. Participant-focused
@@ -430,9 +431,10 @@ function ActiveChat({
   const memberIds = new Set(members.map((m) => m.userId))
   const addable = crew.filter((c) => !memberIds.has(c.id))
   const [showSchedules, setShowSchedules] = useState(false)
-  // Whether the roster is unfolded. Only ever read on a phone: a desktop header
-  // is one row with room for the chips, so there is nothing to fold there.
-  const [showMembers, setShowMembers] = useState(false)
+  // Whether the header's overflow is unfolded. Only ever read on a phone: a
+  // desktop header is one row with room for everything, so there's nothing to
+  // fold there and no overflow control to draw.
+  const [menuOpen, setMenuOpen] = useState(false)
   const schedulingOn = Boolean(
     onCreateSchedule && onToggleSchedule && onDeleteSchedule,
   )
@@ -468,41 +470,25 @@ function ActiveChat({
 
   return (
     <>
-      {/* One row on a desktop pane, two on a phone. It used to wrap to FOUR at
-          390px — title, the surface toggle, Schedules, and a chip per member —
-          spending a quarter of the screen on chrome before the conversation got
-          a pixel. So the name truncates, Schedules drops to its icon (the same
-          move the canvas page strip's Rename makes), and the roster folds away
-          behind its count. */}
+      {/* ONE row on a phone, one on a desktop pane.
+
+          #cse5 took this header from four rows down to two and #cse8 spent the
+          slack again: the name, People, the room's link, the surface toggle and
+          Schedules all shared 390px, one control away from wrapping to three.
+          Shaving pixels off each of them is a debt you pay every slice, so the
+          phone row now has a FIXED shape instead — the name, the two things
+          that carry STATE (which surface you're on, and how many widgets are
+          waiting on the other one), and a single overflow. Everything else
+          lives behind the overflow, and so does the next thing somebody adds,
+          which is the point: the row can't grow. */}
       <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2 md:px-4">
-        {/* Name + people share the first row on a phone, so the two surface
-            controls always get a whole one to themselves — including when the
-            Thread half grows a badge. */}
-        <div className="flex w-full min-w-0 items-center gap-2 md:w-auto md:flex-1">
-          <span className="min-w-0 flex-1 truncate font-medium">
-            {chatName({ title, memberHandles: members.map((m) => m.handle) })}
-          </span>
-          {isMobile && (
-            <Button
-              variant="outline"
-              size="sm"
-              className={TAP_TARGET}
-              aria-label="People"
-              aria-pressed={showMembers}
-              onClick={() => {
-                setShowMembers((v) => !v)
-              }}
-            >
-              <Users className="size-4" />
-              {members.length}
-            </Button>
-          )}
-        </div>
-        {/* The way through to the surface this room replaced. Beside the name
-            rather than tucked in a menu: it's the answer to "where did the
-            board go?", and the board is a route with nothing else pointing at
-            it. */}
-        {viewLink && Link && (
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {chatName({ title, memberHandles: members.map((m) => m.handle) })}
+        </span>
+        {/* The way through to the surface this room replaced — on a desktop
+            pane, where it fits beside everything else. On a phone it's the
+            first thing in the overflow. */}
+        {!isMobile && viewLink && Link && (
           <Link
             to={viewLink.to}
             className={cn(
@@ -566,74 +552,80 @@ function ActiveChat({
               Canvas
             </Button>
           ))}
-        {schedulingOn && (
+        {!isMobile && schedulingOn && (
+          <SchedulesButton
+            count={schedules?.length ?? 0}
+            open={showSchedules}
+            onToggle={() => {
+              setShowSchedules((v) => !v)
+            }}
+          />
+        )}
+        {!isMobile && (
+          <Roster
+            members={members}
+            addable={addable}
+            thumb={false}
+            onAddMember={onAddMember}
+            onRemoveMember={onRemoveMember}
+          />
+        )}
+        {isMobile && (
           <Button
             variant="outline"
             size="sm"
-            className={cn(isMobile && TAP_TARGET)}
-            aria-label="Schedules"
-            aria-pressed={showSchedules}
+            className={cn('shrink-0 px-3', TAP_TARGET)}
+            aria-label="More"
+            aria-expanded={menuOpen}
             onClick={() => {
-              setShowSchedules((v) => !v)
+              setMenuOpen((v) => !v)
             }}
           >
-            <CalendarClock className="size-4" />
-            {!isMobile && 'Schedules'}
-            {schedules && schedules.length > 0
-              ? ` (${String(schedules.length)})`
-              : ''}
+            <MoreHorizontal className="size-4" />
           </Button>
         )}
-        {(!isMobile || showMembers) && (
-          <div
-            className={cn(
-              'flex flex-wrap items-center gap-1',
-              isMobile && 'w-full',
-            )}
-          >
-            {members.map((m) => (
-              <span
-                key={m.userId}
-                className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-xs"
-              >
-                {m.type === 'agent' ? (
-                  <Bot className="size-3" />
-                ) : (
-                  <User className="size-3" />
-                )}
-                @{m.handle}
-                <button
-                  type="button"
-                  aria-label={`Remove ${m.handle}`}
-                  onClick={() => {
-                    onRemoveMember(m.userId)
-                  }}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <X className="size-3" />
-                </button>
-              </span>
-            ))}
-            {addable.length > 0 && (
-              <select
-                aria-label="Add member"
-                className={selectClass('text-xs')}
-                value=""
-                onChange={(e) => {
-                  if (e.target.value) onAddMember(e.target.value)
-                }}
-              >
-                <option value="">+ add</option>
-                {addable.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    @{c.handle}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        )}
       </header>
+      {/* The overflow, unfolded. A panel under the header rather than a popover:
+          it's the same shape the Schedules panel already uses, it needs no
+          positioning maths at 390px, and there is nothing here a thumb has to
+          hit twice. */}
+      {isMobile && menuOpen && (
+        <div className="flex flex-col gap-2 border-b bg-muted/20 px-3 py-2">
+          {(viewLink ?? schedulingOn) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {viewLink && Link && (
+                <Link
+                  to={viewLink.to}
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-1 rounded-md border bg-background px-3 text-sm',
+                    'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                    TAP_TARGET,
+                  )}
+                >
+                  {viewLink.label}
+                  <ArrowUpRight className="size-4" />
+                </Link>
+              )}
+              {schedulingOn && (
+                <SchedulesButton
+                  count={schedules?.length ?? 0}
+                  open={showSchedules}
+                  onToggle={() => {
+                    setShowSchedules((v) => !v)
+                  }}
+                />
+              )}
+            </div>
+          )}
+          <Roster
+            members={members}
+            addable={addable}
+            thumb
+            onAddMember={onAddMember}
+            onRemoveMember={onRemoveMember}
+          />
+        </div>
+      )}
       {schedulingOn &&
         showSchedules &&
         onCreateSchedule &&
@@ -733,6 +725,116 @@ function ActiveChat({
         placeholder={composerPlaceholder(members)}
       />
     </>
+  )
+}
+
+/**
+ * The Schedules toggle. One definition, two homes — the desktop header's row
+ * and the phone's overflow — because two copies of a control with a count on it
+ * is two places for the count to be wrong.
+ */
+function SchedulesButton({
+  count,
+  open,
+  onToggle,
+}: {
+  count: number
+  open: boolean
+  onToggle: () => void
+}) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className={cn('shrink-0', TAP_TARGET)}
+      aria-label="Schedules"
+      aria-pressed={open}
+      onClick={onToggle}
+    >
+      <CalendarClock className="size-4" />
+      Schedules
+      {count > 0 ? ` (${String(count)})` : ''}
+    </Button>
+  )
+}
+
+/**
+ * Who's in the chat, and how somebody else gets in. Also one definition in two
+ * homes: on a desktop pane it sits in the header row, on a phone it's the body
+ * of the overflow — where it can afford to spell the word "Schedules" and show
+ * every chip, because it isn't competing with the conversation for the row.
+ */
+function Roster({
+  members,
+  addable,
+  thumb,
+  onAddMember,
+  onRemoveMember,
+}: {
+  members: ChatMemberItem[]
+  addable: CrewMember[]
+  /**
+   * Size every control for a thumb. True in the phone's overflow, where these
+   * are the only way to change who's in a chat and there is room to spare;
+   * false in the desktop header row, where the chips share a line with
+   * everything else and a 44px pill per member would be the wrap all over
+   * again.
+   */
+  thumb: boolean
+  onAddMember: (userId: string) => void
+  onRemoveMember: (userId: string) => void
+}) {
+  return (
+    <div
+      className={cn('flex flex-wrap items-center', thumb ? 'gap-2' : 'gap-1')}
+    >
+      {members.map((m) => (
+        <span
+          key={m.userId}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-full border bg-muted/40 text-xs',
+            thumb ? cn('gap-2 pl-3 pr-1', TAP_TARGET) : 'px-2 py-0.5',
+          )}
+        >
+          {m.type === 'agent' ? (
+            <Bot className="size-3" />
+          ) : (
+            <User className="size-3" />
+          )}
+          @{m.handle}
+          <button
+            type="button"
+            aria-label={`Remove ${m.handle}`}
+            onClick={() => {
+              onRemoveMember(m.userId)
+            }}
+            className={cn(
+              'text-muted-foreground hover:text-destructive',
+              thumb && cn('flex items-center px-2', TAP_TARGET),
+            )}
+          >
+            <X className={thumb ? 'size-4' : 'size-3'} />
+          </button>
+        </span>
+      ))}
+      {addable.length > 0 && (
+        <select
+          aria-label="Add member"
+          className={selectClass(thumb ? cn('text-sm', TAP_TARGET) : 'text-xs')}
+          value=""
+          onChange={(e) => {
+            if (e.target.value) onAddMember(e.target.value)
+          }}
+        >
+          <option value="">+ add</option>
+          {addable.map((c) => (
+            <option key={c.id} value={c.id}>
+              @{c.handle}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
   )
 }
 

@@ -260,6 +260,20 @@
       "when": 1785194900000,
       "tag": "0036_home_canvas_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1785209572913,
+      "tag": "0037_flimsy_tattoo",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1785209600000,
+      "tag": "0038_home_canvas_seeds_rls",
+      "breakpoints": true
     }
   ]
 }

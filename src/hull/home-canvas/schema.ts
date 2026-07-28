@@ -120,5 +120,34 @@ export const homeCanvasTiles = pgTable(
   ],
 )
 
+/**
+ * One row per crew member: **the ship has already arranged this home once.**
+ *
+ * The rooms seed (`rigging/rooms/seed.ts`) puts the default rooms' readouts on
+ * a new crew member's home so nobody's first screen is a blank grid. Its whole
+ * predicate used to be "this home has no pages and no tiles", which cannot tell
+ * *empty because untouched* from *empty because I removed everything* — so
+ * somebody who unpinned their tiles and deleted their last page got the entire
+ * default arrangement back on the next boot. That is the ship arguing with its
+ * crew, and it argues forever.
+ *
+ * This row is the difference the emptiness couldn't carry. It's written the
+ * first time the seed considers a home — whether or not it pins anything — and
+ * after that the seed never looks at that home again. Deliberately not a column
+ * on `users`: it's home-canvas state, and the users service must not grow a
+ * field about a surface it knows nothing about.
+ *
+ * Under the same one-line policy as the rest of this service (migration 0038):
+ * the row is yours, and the seed only ever writes it while running as you.
+ */
+export const homeCanvasSeeds = pgTable('home_canvas_seeds', {
+  ownerId: text('owner_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  seededAt: timestamp('seeded_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
 export type HomeCanvasPageRow = typeof homeCanvasPages.$inferSelect
 export type HomeCanvasTileRow = typeof homeCanvasTiles.$inferSelect

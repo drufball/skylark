@@ -161,6 +161,39 @@ describe('Dock', () => {
     expect(slot?.className.split(/\s+/)).toContain('min-h-0')
   })
 
+  /**
+   * `/issues`, `/files` and `/inbox` left the rail for their rooms, and for one
+   * slice they were a one-way door — the room linked in and nothing linked out,
+   * so the only way back was the browser's own back button. That isn't
+   * navigation, and it strands anybody who arrived by URL or by a link an agent
+   * posted. The shell carries the way back, so all three get it identically.
+   */
+  it('carries a way back to the room a surface belongs to', () => {
+    render(
+      <Dock
+        Link={FakeLink}
+        onLogout={() => undefined}
+        room={{ to: '/chat?chat=room-issues', label: 'Issues room' }}
+      >
+        <span />
+      </Dock>,
+    )
+    const back = screen.getByText('Issues room').closest('a')
+    expect(back?.getAttribute('href')).toBe('/chat?chat=room-issues')
+    // A thumb target: it's the only way out of the surface on a phone.
+    expect(classTokensOf('Issues room', 'a')).toContain('min-h-11')
+  })
+
+  it('draws no way back on a surface that is nobody’s room', () => {
+    const { container } = render(
+      <Dock active="models" Link={FakeLink} onLogout={() => undefined}>
+        <span />
+      </Dock>,
+    )
+    // Only the rail's own links — nothing extra above the surface.
+    expect(container.querySelectorAll('a')).toHaveLength(RAIL.length)
+  })
+
   it('renders nothing about staleness when behindOrigin is undefined, null, or 0', () => {
     for (const behindOrigin of [undefined, null, 0]) {
       const { container, unmount } = render(
