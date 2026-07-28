@@ -2,6 +2,36 @@
 
 ## Recent Work
 
+### Issue #0zis: CLI still swallows --body when the -- separator is missing (PR #163) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (1696 tests), coverage:check
+  clean (`cli.ts`/`cli.test.ts` excluded from the diff-coverage gate like all
+  CLI entrypoints — same posture as #7u5b).
+- **What**: follow-up to #7u5b/PR#161. #161 only caught the case where an
+  unconsumed `--flag`-looking token survives into argv. The actual
+  real-world-broken invocation (`npm run issue new "Title" --body "text"`,
+  no `--` separator) doesn't leave ANY such token: npm's own arg parser
+  intercepts `--body <value>` as an unrecognized npm config flag, swallows
+  the `--body` token entirely, and passes only the bare value through as an
+  extra positional — argv becomes `["new", "Title", "text"]`, nothing for
+  the unknown-flag check to catch, so `parseNewArgs` just joined the
+  positionals into the title exactly like before #7u5b's fix.
+- **The surviving signal**: npm sets `npm_config_body` (and
+  `npm_config_owner` / `npm_config_playbook`) in the child process's env
+  whenever it privately eats one of these unrecognized flags. `parseNewArgs`
+  (`hull/issues/cli.ts`) now takes an `env` param (defaults to
+  `process.env`, overridable for tests) and checks those three vars FIRST,
+  throwing the same "did you forget the `--` separator?" error before ever
+  falling through to joining positionals into the title.
+- **Red-green**: wrote the new npm_config_* tests in `cli.test.ts` first,
+  `git stash`ed just the `cli.ts` implementation change, confirmed all 4 new
+  tests failed for the right reason (old 1-arg signature couldn't even take
+  an `env` override), popped the stash, confirmed green.
+- **Pattern reinforced**: when a CLI's own args aren't the whole story
+  because a wrapper (npm) can eat a token before your code ever sees argv,
+  look for a side-effect the wrapper leaves behind (here, an env var) as the
+  next-best detection signal — don't just accept "we can't see it, so we
+  can't catch it."
+
 ### Issue #7u5b: Issue CLI silently swallows --body / files garbage titles (PR #161) — handed to babysitter
 - **Status**: PR open, `npm run check` clean (1649 tests), both coverage
   gates pass (100% diff coverage on `service.ts`; `cli.ts` is excluded from
