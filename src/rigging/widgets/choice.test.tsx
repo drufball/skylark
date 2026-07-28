@@ -91,7 +91,7 @@ describe('choice: the buttons and the door agree', () => {
     // here, where both sides are in scope, rather than trusted to stay in step.
     const props = { question: 'Ship it?', options: ['Yes', 'Not yet'] }
     const { Body } = parse(props)
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     const labels = screen.getAllByRole('button').map((b) => b.textContent)
     expect(labels).toEqual(offeredAnswer(props)?.options)
   })
@@ -114,15 +114,33 @@ describe('choice: the body', () => {
   it('offers every option as a tappable button', () => {
     const { Body } = parse({ question: 'Ship it?', options: ['Yes', 'No'] })
     const onAnswer = vi.fn()
-    render(<Body revision={0} onAnswer={onAnswer} spent={false} />)
+    render(
+      <Body revision={0} onAnswer={onAnswer} spent={false} answer={null} />,
+    )
     fireEvent.click(screen.getByRole('button', { name: 'No' }))
     expect(onAnswer).toHaveBeenCalledWith('No')
+  })
+
+  it('shows the decision instead of the buttons once it has been answered', () => {
+    // On a spatial surface an answered choice STAYS (the hull's
+    // `answerDismisses`), so the tile has to become the decision it recorded
+    // rather than sitting there offering a question that's already settled.
+    const { Body } = parse({ question: 'Ship it?', options: ['Yes', 'No'] })
+    const onAnswer = vi.fn()
+    render(<Body revision={0} onAnswer={onAnswer} spent={false} answer="Yes" />)
+    expect(screen.getByText('Yes')).toBeTruthy()
+    // The alternatives stay laid out, struck through — "Yes" on its own
+    // doesn't say what it beat.
+    expect(screen.getByText('No').className).toContain('line-through')
+    // And there is nothing left to tap, so a stray thumb can't reach a door
+    // that would only refuse it.
+    expect(screen.queryAllByRole('button')).toEqual([])
   })
 
   it('spends the buttons while an answer is in flight', () => {
     const { Body } = parse({ question: 'Ship it?', options: ['Yes'] })
     const onAnswer = vi.fn()
-    render(<Body revision={0} onAnswer={onAnswer} spent />)
+    render(<Body revision={0} onAnswer={onAnswer} spent answer={null} />)
     fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
     expect(onAnswer).not.toHaveBeenCalled()
   })

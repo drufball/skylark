@@ -690,6 +690,7 @@ function choiceWidget(over: Partial<WidgetItem> = {}): WidgetItem {
     kind: 'choice',
     props: { question: 'Ship the new theme?', options: ['Yes', 'No'] },
     createdByHandle: 'tilde',
+    answerValue: null,
     ...over,
   }
 }
@@ -745,7 +746,7 @@ describe('ChatView widget stack', () => {
       onAnswerWidget,
       onDismissWidget: vi.fn(),
     })
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open Ship the new theme?'))
     fireEvent.click(screen.getByRole('button', { name: 'No' }))
     expect(onAnswerWidget).toHaveBeenCalledWith('w1', 'No')
   })
@@ -758,7 +759,7 @@ describe('ChatView widget stack', () => {
       onAnswerWidget: vi.fn(),
       onDismissWidget,
     })
-    fireEvent.click(screen.getByLabelText('Dismiss widget w1'))
+    fireEvent.click(screen.getByLabelText('Dismiss Ship the new theme?'))
     expect(onDismissWidget).toHaveBeenCalledWith('w1')
   })
 
@@ -830,6 +831,7 @@ describe('ChatView: the canvas lives inside the chat', () => {
           kind: 'note',
           props: { text: 'deploys today' },
           createdByHandle: 'tilde',
+          answerValue: null,
           pageId: 'p1',
           gridX: 0,
           gridY: 0,
@@ -913,6 +915,7 @@ describe('ChatView: the canvas lives inside the chat', () => {
           kind: 'choice',
           props: { question: 'Ship it?', options: ['Yes', 'No'] },
           createdByHandle: 'tilde',
+          answerValue: null,
         },
       ],
     })
@@ -969,6 +972,7 @@ describe('ChatView: moving a widget between the two surfaces', () => {
           kind: 'note',
           props: { text: 'keep this' },
           createdByHandle: 'tilde',
+          answerValue: null,
         },
       ],
       canvasPages: [
@@ -986,7 +990,7 @@ describe('ChatView: moving a widget between the two surfaces', () => {
       onAnswerWidget: vi.fn(),
       onDismissWidget: vi.fn(),
     })
-    fireEvent.click(screen.getByLabelText('Keep widget w2 on the canvas'))
+    fireEvent.click(screen.getByLabelText('Keep keep this on the canvas'))
     expect(onPlaceWidget).toHaveBeenCalledWith('w2', { pageId: 'p2' })
   })
 
@@ -1002,6 +1006,7 @@ describe('ChatView: moving a widget between the two surfaces', () => {
           kind: 'note',
           props: { text: 'keep this' },
           createdByHandle: 'tilde',
+          answerValue: null,
         },
       ],
       canvasPages: [],

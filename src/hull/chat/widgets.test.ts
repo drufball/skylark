@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  answerDismisses,
   answerMessageBody,
   CANVAS_COLUMNS,
   CANVAS_PLACEMENT,
@@ -102,6 +103,27 @@ describe('placements', () => {
     // moving between them is an ordinary row update.
     expect(STACK_PLACEMENT).toBe('stack')
     expect(CANVAS_PLACEMENT).toBe('canvas')
+  })
+})
+
+describe('answerDismisses', () => {
+  it('takes an answered widget off the STACK — the turn is over', () => {
+    expect(answerDismisses(STACK_PLACEMENT)).toBe(true)
+  })
+
+  it('leaves an answered widget on a CANVAS — the decision IS the state', () => {
+    // On a spatial surface somebody arranged, a tile that vanishes when you
+    // answer it leaves a hole in their layout. An answered question there is
+    // not spent, it's a recorded decision.
+    expect(answerDismisses(CANVAS_PLACEMENT)).toBe(false)
+  })
+
+  it('treats an unrecognised placement as turn-shaped', () => {
+    // Total, like everything else in this module: the column is a plain string,
+    // and the safe reading of an unknown surface is the ephemeral one — a tile
+    // that clears is recoverable, one that never clears is a wart nobody can
+    // remove.
+    expect(answerDismisses('somewhere-new')).toBe(true)
   })
 })
 

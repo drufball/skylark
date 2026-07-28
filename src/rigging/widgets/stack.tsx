@@ -36,6 +36,13 @@ export interface WidgetItem {
   props: unknown
   /** Who put it here — a widget is always somebody's judgment, so it's named. */
   createdByHandle: string
+  /**
+   * The decision recorded on the row, or null. Almost always null in the shelf,
+   * because answering a STACK widget dismisses it — but a canvas tile that was
+   * answered and then sent back up would otherwise re-draw live buttons the
+   * door can only refuse.
+   */
+  answerValue: string | null
 }
 
 export interface WidgetStackProps {
@@ -172,6 +179,12 @@ function ChatWidget({
     () => resolveWidget(widget.kind, widget.props),
     [widget.kind, widget.props],
   )
+  // What every control on this tile is NAMED after. It used to be the row's
+  // primary key — "Dismiss widget 019fa5b1-f0f1-…" — which is a database column
+  // escaping into the UI, and the only thing a screen reader user would hear
+  // about the tile. A failed resolution has no headline, so it falls back to the
+  // kind, exactly as the canvas grip already did.
+  const label = resolution.ok ? resolution.view.headline : widget.kind
 
   // Bring an opening tile to the top of the band. The shelf is height-capped on
   // purpose (it must never push the thread off a phone), which on a 390px screen
@@ -189,7 +202,7 @@ function ChatWidget({
   const pin = onPin ? (
     <button
       type="button"
-      aria-label={`Keep widget ${widget.id} on the canvas`}
+      aria-label={`Keep ${label} on the canvas`}
       onClick={onPin}
       className={cn(
         'flex shrink-0 items-center justify-center px-2',
@@ -204,7 +217,7 @@ function ChatWidget({
   const dismiss = (
     <button
       type="button"
-      aria-label={`Dismiss widget ${widget.id}`}
+      aria-label={`Dismiss ${label}`}
       onClick={onDismiss}
       className={cn(
         'flex shrink-0 items-center justify-center px-3',
@@ -244,7 +257,7 @@ function ChatWidget({
       <div className="flex items-center gap-1">
         <button
           type="button"
-          aria-label={`Open widget ${widget.id}`}
+          aria-label={`Open ${label}`}
           aria-expanded={expanded}
           onClick={onToggle}
           className={cn(
@@ -279,7 +292,12 @@ function ChatWidget({
       {/* The body mounts only while the tile is open, so a live kind isn't
           reading a service for a tile nobody has looked at. */}
       {expanded && (
-        <Body revision={revision} onAnswer={onAnswer} spent={spent} />
+        <Body
+          revision={revision}
+          onAnswer={onAnswer}
+          spent={spent}
+          answer={widget.answerValue}
+        />
       )}
     </div>
   )

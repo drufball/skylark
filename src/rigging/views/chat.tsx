@@ -166,6 +166,12 @@ export interface ChatViewProps {
     box: Partial<CanvasBox> & { pageId: string },
   ) => void
   onStackWidget?: (widgetId: string) => void
+  /**
+   * Pin a canvas widget onto the viewer's own HOME canvas — a pointer at it,
+   * never a copy, and never a move: the widget goes on living in this chat.
+   * Optional, so a host with no home surface simply doesn't draw the control.
+   */
+  onPinHomeWidget?: (widgetId: string) => void
 }
 
 /** A chat's display name: its title, or the members it's with. */
@@ -396,6 +402,7 @@ function ActiveChat({
   onRemovePage,
   onPlaceWidget,
   onStackWidget,
+  onPinHomeWidget,
 }: ChatViewProps) {
   const memberIds = new Set(members.map((m) => m.userId))
   const addable = crew.filter((c) => !memberIds.has(c.id))
@@ -639,6 +646,7 @@ function ActiveChat({
                 onPlaceWidget={onPlaceWidget}
                 onStackWidget={onStackWidget}
                 onAnswerWidget={onAnswerWidget}
+                onPinHome={onPinHomeWidget}
               />
             </div>
           )}

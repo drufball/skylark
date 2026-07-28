@@ -246,6 +246,20 @@
       "when": 1785186900000,
       "tag": "0034_chat_canvas_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1785194826368,
+      "tag": "0035_nervous_echo",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1785194900000,
+      "tag": "0036_home_canvas_rls",
+      "breakpoints": true
     }
   ]
 }

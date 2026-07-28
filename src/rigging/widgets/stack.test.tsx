@@ -74,6 +74,7 @@ function widget(over: Partial<WidgetItem> = {}): WidgetItem {
     kind: 'choice',
     props: { question: 'Ship the new theme?', options: ['Yes', 'No'] },
     createdByHandle: 'tilde',
+    answerValue: null,
     ...over,
   }
 }
@@ -134,7 +135,7 @@ describe('WidgetStack: rendering through the registry', () => {
     // Only the headline until it's opened — a closed tile reads nothing and
     // (for a live kind) asks no service anything.
     expect(screen.queryByText('Bring the board')).toBeNull()
-    fireEvent.click(screen.getByLabelText('Open widget w2'))
+    fireEvent.click(screen.getByLabelText('Open Standup'))
     expect(await screen.findByText('Bring the board')).toBeTruthy()
   })
 
@@ -143,23 +144,23 @@ describe('WidgetStack: rendering through the registry', () => {
       { id: 'w1', props: { question: 'A?', options: ['Ay'] } },
       { id: 'w2', props: { question: 'B?', options: ['Bee'] } },
     ])
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open A?'))
     expect(screen.getByRole('button', { name: 'Ay' })).toBeTruthy()
-    fireEvent.click(screen.getByLabelText('Open widget w2'))
+    fireEvent.click(screen.getByLabelText('Open B?'))
     expect(screen.queryByRole('button', { name: 'Ay' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Bee' })).toBeTruthy()
   })
 
   it('answers with the tapped option', () => {
     const { onAnswerWidget } = renderStack()
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open Ship the new theme?'))
     fireEvent.click(screen.getByRole('button', { name: 'No' }))
     expect(onAnswerWidget).toHaveBeenCalledWith('w1', 'No')
   })
 
   it('answers only once per tap-through, even on a double tap', () => {
     const { onAnswerWidget } = renderStack()
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open Ship the new theme?'))
     fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
     fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
     expect(onAnswerWidget).toHaveBeenCalledTimes(1)
@@ -167,7 +168,7 @@ describe('WidgetStack: rendering through the registry', () => {
 
   it('dismisses a widget', () => {
     const { onDismissWidget } = renderStack()
-    fireEvent.click(screen.getByLabelText('Dismiss widget w1'))
+    fireEvent.click(screen.getByLabelText('Dismiss Ship the new theme?'))
     expect(onDismissWidget).toHaveBeenCalledWith('w1')
   })
 })
@@ -198,13 +199,13 @@ describe('WidgetStack: a shelf, not a second pane', () => {
   it('gives every control a thumb-sized tap target', () => {
     renderStack()
     // 44px is the floor a thumb needs; min-h-11 is 2.75rem = 44px.
-    expect(screen.getByLabelText('Open widget w1').className).toContain(
-      'min-h-11',
-    )
-    expect(screen.getByLabelText('Dismiss widget w1').className).toContain(
-      'min-h-11',
-    )
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    expect(
+      screen.getByLabelText('Open Ship the new theme?').className,
+    ).toContain('min-h-11')
+    expect(
+      screen.getByLabelText('Dismiss Ship the new theme?').className,
+    ).toContain('min-h-11')
+    fireEvent.click(screen.getByLabelText('Open Ship the new theme?'))
     expect(screen.getByRole('button', { name: 'Yes' }).className).toContain(
       'min-h-11',
     )
@@ -227,7 +228,7 @@ describe('WidgetStack: a shelf, not a second pane', () => {
       )
     }
     const { rerender } = render(paint(false))
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open Ship the new theme?'))
     fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
     expect(onAnswerWidget).toHaveBeenCalledTimes(1)
 
@@ -243,16 +244,20 @@ describe('WidgetStack: a shelf, not a second pane', () => {
   it('brings an opening tile to the top of the band', () => {
     // The shelf is height-capped so it can't push the thread off a phone, which
     // meant tapping the third tile opened a body almost entirely below the fold.
-    renderStack([{ id: 'w1' }, { id: 'w2' }, { id: 'w3' }])
+    renderStack([
+      { id: 'w1', props: { question: 'A?', options: ['Ay'] } },
+      { id: 'w2', props: { question: 'B?', options: ['Bee'] } },
+      { id: 'w3', props: { question: 'C?', options: ['Cee'] } },
+    ])
     scrollIntoView.mockClear()
-    fireEvent.click(screen.getByLabelText('Open widget w3'))
+    fireEvent.click(screen.getByLabelText('Open C?'))
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' })
   })
 
   it('collapses an expanded widget when its header is clicked again', () => {
     renderStack()
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open Ship the new theme?'))
+    fireEvent.click(screen.getByLabelText('Open Ship the new theme?'))
     expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
   })
 })
@@ -274,7 +279,7 @@ describe('WidgetStack: the honest tiles', () => {
     const { onDismissWidget } = renderStack([
       { id: 'w9', kind: 'orrery', props: {} },
     ])
-    fireEvent.click(screen.getByLabelText('Dismiss widget w9'))
+    fireEvent.click(screen.getByLabelText('Dismiss orrery'))
     expect(onDismissWidget).toHaveBeenCalledWith('w9')
   })
 
@@ -313,7 +318,7 @@ describe('WidgetStack: the one live subscription', () => {
       .mockResolvedValueOnce([issue({ title: 'Before' })])
       .mockResolvedValueOnce([issue({ title: 'After' })])
     renderStack([{ id: 'w1', kind: 'issue-list', props: {} }])
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open Issues · all'))
     expect(await screen.findByText('Before')).toBeTruthy()
     act(() => {
       FakeSource.last?.emit()
@@ -342,7 +347,7 @@ describe('WidgetStack: the one live subscription', () => {
       )
     }
     const { rerender } = render(paint(false))
-    fireEvent.click(screen.getByLabelText('Open widget w1'))
+    fireEvent.click(screen.getByLabelText('Open Issues · all'))
     expect(await screen.findByText('Widget catalog')).toBeTruthy()
     expect(vi.mocked(listBoard)).toHaveBeenCalledTimes(1)
 

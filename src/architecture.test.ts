@@ -30,13 +30,19 @@ import { describe, expect, it } from 'vitest'
  *   an agent finds the right conversation itself (see the chat waker). The
  *   night watch keys its OWN memory tables by the issue and the background job
  *   it tracks, cascade-deleting so its memory can't outlive them: watch →
- *   issues, watch → agent.
+ *   issues, watch → agent. The home canvas holds POINTERS at things that live
+ *   in chats, so its tile rows FK the chat and the widget they point at and
+ *   cascade with them — that FK is what makes "a pointer can never dangle" a
+ *   database fact rather than a sweep: home-canvas → chat. It reads chat's DATA
+ *   only by calling chat's own exported functions, under the viewer's RLS
+ *   context, which is what keeps "may this person see it?" living in chat.
  */
 const SCHEMA_FK_ALLOWLIST = new Set([
   'issues -> agent',
   'chat -> agent',
   'watch -> issues',
   'watch -> agent',
+  'home-canvas -> chat',
 ])
 
 const SRC = join(import.meta.dirname)

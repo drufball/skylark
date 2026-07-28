@@ -48,16 +48,31 @@ generated from the same entries.
   write returns, but the answered tile is on screen until the refetch lands — a
   window a thumb double-taps straight through. Shared rather than copied,
   because the two surfaces answer the SAME rows through the same door.
-- **Canvas** (`canvas.tsx`) — the state-shaped surface: a strip of page tabs and
-  the tiles arranged on the open page. Same catalog, same one subscription, same
-  two failure tiles — but a canvas tile's body is **open by default**, because
-  you put it there precisely so you could read it without tapping. Two layouts
-  over one arrangement (below).
+- **Canvas** (`canvas.tsx`) — the state-shaped surface: the tiles a chat
+  arranged on the open page. Same catalog, same one subscription, same two
+  failure tiles — but a canvas tile's body is **open by default**, because you
+  put it there precisely so you could read it without tapping. An **answered**
+  choice stays here and shows what was decided, because on a spatial surface an
+  answered question is state (the rule is the hull's `answerDismisses`; this
+  deck only draws it).
+- **Grid** (`grid.tsx`) — the layout engine BOTH canvases share: the page strip,
+  the desktop `ArrangeableGrid` (drag by the title bar, resize from the corner,
+  arrows to nudge), the phone's `SwipeColumn`, and `TileFrame` (a tile's
+  chrome). Plus the two pure halves of arranging, `cellAt` and `nudge`. It knows
+  nothing of widget kinds, chats or pointers — that's what makes it shareable.
+- **Home canvas** (`home-canvas.tsx`) — your own screen, the one surface that
+  holds POINTERS at widgets living in chats
+  ([`hull/home-canvas/zine.md`](../../hull/home-canvas/zine.md)). Same grid,
+  same catalog; what differs is that a tile draws a `HomeTileTarget` the SERVER
+  resolved, so this component never decides access. Three states a chat tile
+  never has: a chat pointer with nothing raised (an honest resting state), a
+  widget pointer showing its recorded decision, and `lost`.
 - **Arrangement** — a tile's cell rectangle, which the HULL owns
   (`clampCanvasBox`, `freeCanvasBox` in `hull/chat/widgets.ts`) because both the
   door and the browser have to agree on it. This deck contributes `cellAt`
   (which cell is the pointer over, from the grid's own box) and `nudge` (where
-  an arrow key sends a tile) — the two pure halves of arranging.
+  an arrow key sends a tile) — the two pure halves of arranging, now in
+  `grid.tsx` where both canvases reach them.
 - **Revision** — the counter the stack bumps when an event lands on a subscribed
   topic. A live `Body` refetches when it changes; a static one ignores it. One
   `EventSource` for the whole shelf, and no polling anywhere.
@@ -84,6 +99,12 @@ straight to `WidgetStack` → the stack calls `resolveWidget(kind, props)` per r
 → a good blob becomes a compact tile (the `headline`, clamped to two lines) that
 expands into the kind's `Body`; a bad blob or an unknown kind becomes an honest
 tile that says which it is and can still be dismissed.
+
+**Two canvases, one engine.** A chat canvas contains its widgets; a home canvas
+holds pointers at widgets living in chats. They differ entirely in what a tile
+MEANS and not at all in how a page behaves — so `grid.tsx` owns the page
+behaviour and each surface brings its own tile. The alternative was a second
+layout engine "kept in step", which is two engines drifting.
 
 **Two layouts, one arrangement.** On a desktop pane the page is a CSS grid of
 `CANVAS_COLUMNS` columns: drag a tile by its title bar, resize it from its
@@ -115,6 +136,16 @@ place, and the hull still imports nothing from rigging.
 
 ## Decisions
 
+- **A tile is named after its headline, never its row id.** Every control's
+  `aria-label` used to read out a primary key — "Dismiss widget 019fa5b1-f0f1-…"
+  — which is a database column escaping into the UI, and the only thing a screen
+  reader user would hear about the tile. `TileFrame` and the stack both build
+  their labels from the resolved headline, falling back to the kind when the
+  blob doesn't parse (the honest tiles have no headline to use).
+- **The home tile draws access, it never decides it.** `HomeTileTarget` arrives
+  already resolved from the viewer's current chat membership, and `lost` carries
+  no chat name, no question, no id. A component that filtered would be a second
+  opinion about visibility, in the one place an attacker actually controls.
 - **The catalog is in rigging because it must be.** It knows service topics and
   reads service data; in the hull that's a cycle the architecture test rejects.
   The hull keeps only what's true of the ROW: the answer convention
@@ -173,6 +204,13 @@ place, and the hull still imports nothing from rigging.
 
 ## Changelog
 
+- **#cse6 — Two canvases, one engine.** The page strip, the desktop grid, the
+  phone column and the tile chrome move out of `canvas.tsx` into `grid.tsx`, and
+  `home-canvas.tsx` — your personal screen of POINTERS at widgets living in
+  chats — is built on them. A kind's `Body` gains `answer`, the decision
+  recorded on the row, so `choice` shows what was chosen instead of re-offering
+  a settled question on a surface that keeps it. Every tile control is now named
+  after its headline rather than its row id.
 - **#cse5 — One product on a phone.** The double-tap guard the stack has always
   held moves into `answer-guard.ts` and the canvas gains it: answering from the
   canvas was firing twice through the window between the write returning and the

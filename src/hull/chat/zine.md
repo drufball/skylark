@@ -110,11 +110,12 @@ rigging.
   non-empty `options` list of non-empty strings) and **without knowing any kind
   by name**; `answerMessageBody` composes the message an answer posts — the
   question, then the answer marked with `→`, in plain characters, because the
-  thread renders a body verbatim and markdown would arrive as punctuation.
-  Total: every input returns an offer or null, nothing throws. A kind that
-  offers no answers (a `note`, an `issue-list`) simply has no options on its
-  blob, so answering it is refused for free — and so is answering a blob an
-  agent malformed.
+  thread renders a body verbatim and markdown would arrive as punctuation; and
+  `answerDismisses(placement)` says whether answering takes the tile off its
+  surface (see the decision below). Total: every input returns an offer or null,
+  nothing throws. A kind that offers no answers (a `note`, an `issue-list`)
+  simply has no options on its blob, so answering it is refused for free — and
+  so is answering a blob an agent malformed.
 - **Canvas page** — a row in `chat_canvas_pages`: one page of a chat's canvas,
   with a title and a place in the strip. Pages are EXPLICIT rows rather than
   implied by whichever widgets carry a page number, because the two things we
@@ -153,6 +154,11 @@ rigging.
   not two.
 - **Dismissal** — `dismissedAt` set. The widget leaves the stack; the row
   survives as history — what was asked, of whom, and when it stopped being open.
+- **The decision** — `answeredAt` + `answerValue` (migration 0035). Distinct
+  from `dismissedAt` because the two surfaces disagree about what answering
+  DOES: on the stack an answered widget also leaves, on a canvas it stays and
+  shows what was decided. `answered_at is null` is now the guard that serializes
+  a double submit, since a dismissal no longer always follows.
 - **Doors** — three, and each has a body it belongs to. `server.ts` (the **web**
   doors; the front-door route is the chat UI: read the stack, answer, wave away,
   and — because arranging IS a browser move — the canvas reads, the page CRUD,
@@ -238,14 +244,15 @@ for a `note`, a live list for an `issue-list`; a bad blob or an unknown kind
 becomes an honest tile that says which it is and can still be dismissed. A kind
 that reads a service reads it FRESH on render (never off the row) and stays live
 off the topics it declares, on the one subscription the stack holds. Answering
-**posts an ordinary chat message as the answering actor** and sets `dismissedAt`
-— in ONE transaction, the dismissal conditional on `dismissed_at is null` so a
-double submit rolls back instead of posting twice. Then the ordinary reply path
-takes over, with no widget-specific machinery anywhere in it: the answer is just
-a message, so the agent's next turn sees it in its unread tail and answers with
-`chat_post`. **That loop — an agent raises a question, a thumb taps it on a
-phone, the answer arrives as a message, the agent responds — is the whole thesis
-of the project in one interaction.**
+**posts an ordinary chat message as the answering actor** and marks the row
+answered — in ONE transaction, conditional on `answered_at is null` so a double
+submit rolls back instead of posting twice. Whether it ALSO leaves the surface
+is `answerDismisses(placement)`: yes on the stack, no on a canvas. Then the
+ordinary reply path takes over, with no widget-specific machinery anywhere in
+it: the answer is just a message, so the agent's next turn sees it in its unread
+tail and answers with `chat_post`. **That loop — an agent raises a question, a
+thumb taps it on a phone, the answer arrives as a message, the agent responds —
+is the whole thesis of the project in one interaction.**
 
 **A canvas, end to end.** Somebody makes a page (`chat_widget` action
 `new_page`, the `+` in the page strip, or `npm run chat -- page new`) → the row
@@ -453,6 +460,18 @@ agent.
   what the crew chose (which lens, configured how), never a snapshot of what the
   lens was showing. A widget that persisted its contents would be a stale cache
   nobody asked for.
+- **On a canvas, an answered choice STAYS and shows its decision.** The
+  `answer ⇒ dismiss` contract is right for the turn-shaped stack and wrong for
+  the state-shaped canvas: answering a choice somebody had pinned to a page made
+  the tile vanish, punching a hole in an arrangement they made. On a spatial
+  surface an answered question IS state, so the row keeps `answeredAt` +
+  `answerValue` and the tile renders the decision (`Ship it? → Yes`). The
+  distinction lives in the ROW's contract — `answerDismisses(placement)`, total
+  and pure, defaulting an unrecognised surface to turn-shaped — rather than in
+  whichever component draws the tile, because a rendering trick would be a
+  second opinion about what a row means. It also forced the double-submit guard
+  to move from `dismissed_at is null` to `answered_at is null`, which is the
+  honest predicate either way.
 - **Answering posts an ORDINARY chat message — that's the whole feature.** No
   answer table, no answer delivery path. Because the answer is a chat message
   authored by the answering actor, the unseen-message diffing, reply targeting,
@@ -566,6 +585,16 @@ agent.
 
 ## Changelog
 
+- **#cse6 — The home canvas, and two carry-overs.** Widgets still live only in
+  chats; what's new is a personal surface that POINTS at them
+  ([`hull/home-canvas/zine.md`](../home-canvas/zine.md)), resolving each pointer
+  against the viewer's current membership by calling chat's own reads
+  (`listWidgetsByIds`, `listOpenWidgetsForChats`). Answering from home is
+  `answerChatWidget` — the same door, no parallel path. Two carry-overs from the
+  integrated pass land here: an answered choice on a CANVAS now stays put and
+  shows its decision (`answeredAt`/`answerValue`, migration 0035, gated by the
+  new `answerDismisses`), and widget controls stopped reading their `aria-label`
+  off the row's primary key.
 - **#cse5 — One product on a phone.** The integrated pass over #cse1–#cse4,
   driven at 390px: the four slices were each right alone and collided in the
   header, where the title, the Thread/Canvas toggle, Schedules and a chip per

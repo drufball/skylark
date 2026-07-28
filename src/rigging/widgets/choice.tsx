@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react'
+
 import { Button } from '@rigging/components/ui/button'
 import { cn } from '@rigging/lib/utils'
 
@@ -44,23 +46,54 @@ export const choiceKind: WidgetKind = {
       view: {
         headline: record.question,
         topics: [],
-        Body: ({ onAnswer, spent }) => (
-          <div className="flex flex-wrap gap-2 px-3 pb-3">
-            {options.map((option) => (
-              <Button
-                key={option}
-                variant="outline"
-                disabled={spent}
-                onClick={() => {
-                  onAnswer(option)
-                }}
-                className={cn('flex-1 basis-32', TAP_TARGET)}
-              >
-                {option}
-              </Button>
-            ))}
-          </div>
-        ),
+        Body: ({ onAnswer, spent, answer }) =>
+          answer === null ? (
+            <div className="flex flex-wrap gap-2 px-3 pb-3">
+              {options.map((option) => (
+                <Button
+                  key={option}
+                  variant="outline"
+                  disabled={spent}
+                  onClick={() => {
+                    onAnswer(option)
+                  }}
+                  className={cn('flex-1 basis-32', TAP_TARGET)}
+                >
+                  {option}
+                </Button>
+              ))}
+            </div>
+          ) : (
+            /* Answered, and still on screen — so this is a canvas or a home
+               tile, where the decision IS the state.
+               The options stay laid out exactly as they were, with the chosen
+               one marked and the rest struck through: "Yes" on its own doesn't
+               say what it beat, and prose about it ("not Not yet") reads like a
+               riddle. Same shapes, same order, one of them now settled. */
+            <div className="flex flex-wrap gap-2 px-3 pb-3">
+              {options.map((option) => (
+                <span
+                  key={option}
+                  className={cn(
+                    'flex flex-1 basis-32 items-center justify-center gap-1',
+                    'rounded-md border px-3 text-sm',
+                    TAP_TARGET,
+                    option === answer
+                      ? 'border-primary font-medium'
+                      : 'text-muted-foreground line-through',
+                  )}
+                >
+                  {option === answer && (
+                    <Check
+                      className="size-4 shrink-0 text-primary"
+                      aria-hidden
+                    />
+                  )}
+                  {option}
+                </span>
+              ))}
+            </div>
+          ),
       },
     }
   },

@@ -40,6 +40,28 @@ export const STACK_PLACEMENT = 'stack'
 export const CANVAS_PLACEMENT = 'canvas'
 
 /**
+ * Does answering a widget take it OFF the surface it's on?
+ *
+ * The two surfaces disagree, and the disagreement is the design rather than a
+ * rendering detail — which is why it lives here, in the row's contract, rather
+ * than in whichever component happens to draw the tile:
+ *
+ * - **stack** — yes. The shelf is turn-shaped: a question you dealt with is
+ *   done, and leaving it there would mean the shelf only ever grows.
+ * - **canvas** — no. A page is a layout somebody made, and a tile that vanishes
+ *   when you answer it punches a hole in their arrangement. On a spatial
+ *   surface an answered question IS state: the tile stays and shows the
+ *   decision it recorded (`answerValue` on the row).
+ *
+ * Total, like everything else here: an unrecognised placement reads as
+ * turn-shaped, because a tile that clears is recoverable and one that can never
+ * clear is a wart nobody can remove.
+ */
+export function answerDismisses(placement: string): boolean {
+  return placement !== CANVAS_PLACEMENT
+}
+
+/**
  * Anything a props blob may hold. "Opaque" in the row's sense, but spelled out
  * rather than left as `unknown`, because props cross the client/server line: a
  * `createServerFn` door only carries a type it can prove is serializable.

@@ -192,7 +192,7 @@ describe('issue-list: the body', () => {
       issue({ id: 'i1', nano: 'aaaa', title: 'Widget catalog' }),
     ])
     const { Body } = parse({ statuses: ['open'] })
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     expect(await screen.findByText('Widget catalog')).toBeTruthy()
     expect(screen.getByText('aaaa')).toBeTruthy()
   })
@@ -203,26 +203,28 @@ describe('issue-list: the body', () => {
       .mockResolvedValueOnce([issue({ title: 'After' })])
     const { Body } = parse({})
     const { rerender } = render(
-      <Body revision={0} onAnswer={vi.fn()} spent={false} />,
+      <Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />,
     )
     expect(await screen.findByText('Before')).toBeTruthy()
     // The stack bumps `revision` off the ONE subscription it already holds —
     // no second EventSource, no polling.
-    rerender(<Body revision={1} onAnswer={vi.fn()} spent={false} />)
+    rerender(
+      <Body revision={1} onAnswer={vi.fn()} spent={false} answer={null} />,
+    )
     expect(await screen.findByText('After')).toBeTruthy()
   })
 
   it('says the filter matches nothing rather than showing an empty box', async () => {
     vi.mocked(listBoard).mockResolvedValue([issue({ status: 'done' })])
     const { Body } = parse({ statuses: ['building'] })
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     expect(await screen.findByText(/no issues match/i)).toBeTruthy()
   })
 
   it('says so honestly when a pinned issue is gone now', async () => {
     vi.mocked(listBoard).mockResolvedValue([issue({ id: 'i1', nano: 'aaaa' })])
     const { Body } = parse({ issueIds: ['i1', 'zzzz'] })
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     // It still shows the issue that IS there, and names the one that isn't.
     expect(await screen.findByText('aaaa')).toBeTruthy()
     expect(screen.getByText(/gone now/i)).toBeTruthy()
@@ -232,14 +234,14 @@ describe('issue-list: the body', () => {
   it('says every pinned issue is gone rather than rendering nothing at all', async () => {
     vi.mocked(listBoard).mockResolvedValue([])
     const { Body } = parse({ issueIds: ['zzzz'] })
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     expect(await screen.findByText(/gone now/i)).toBeTruthy()
   })
 
   it('degrades to an honest line when the door fails, never a white screen', async () => {
     vi.mocked(listBoard).mockRejectedValue(new Error('database: down'))
     const { Body } = parse({})
-    render(<Body revision={0} onAnswer={vi.fn()} spent={false} />)
+    render(<Body revision={0} onAnswer={vi.fn()} spent={false} answer={null} />)
     await waitFor(() => {
       expect(screen.getByText(/couldn’t read the issues/i)).toBeTruthy()
     })

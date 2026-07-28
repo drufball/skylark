@@ -49,6 +49,12 @@ with Tailwind and shadcn.
   lives in the rigging catalog
   ([`rigging/widgets/zine.md`](rigging/widgets/zine.md)) — hull holds the row,
   rigging holds the meaning.
+- **The home canvas** — your own personal screen of **pointers** at widgets
+  living in chats you're in. A widget instance always lives in exactly one chat;
+  home is the one surface in the ship that points rather than contains, and a
+  pointer is not a grant — what a tile shows is resolved from your CURRENT
+  membership on every read
+  ([`hull/home-canvas/zine.md`](hull/home-canvas/zine.md)).
 - **Notifications** — every user's inbox, fed by watches on ship-log topics; for
   agents, a notification is a wake-up
   ([`hull/notifications/zine.md`](hull/notifications/zine.md)).
@@ -96,6 +102,10 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **A home canvas: pointers, in exactly one place.** Every widget still lives in
+  a chat; your home holds live views onto them, and losing chat membership stops
+  a tile rendering at the read. See
+  [`hull/home-canvas/zine.md`](hull/home-canvas/zine.md).
 - **A chat gets a canvas.** Pages of widgets the crew arranged, beside the
   thread rather than as a destination — and which page you're looking at is
   yours, not the chat's. See [`hull/chat/zine.md`](hull/chat/zine.md).
