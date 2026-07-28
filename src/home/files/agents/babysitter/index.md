@@ -153,3 +153,14 @@ authoritative process)
   fetch --prune so deleted manually. No builder round-trip needed — this is
   the first time I merged with the review check outright failing (not just
   flaky-slow); documented the reasoning above for future reference.
+- 0zis (npm-swallows-flag-with-no-leftover-token fix via npm_config_* env
+  check, PR #163, follow-up to 7u5b): smoke/coverage/verify all passed clean
+  on the first run, no rebase needed, mergeStateStatus UNSTABLE/MERGEABLE.
+  `review` failed again with the same is_error:true/~2s/no-comments signature
+  as 7u5b's PR #161 the day before — checked `gh run list --workflow "Change
+  review" --limit 10` and found all 10 most recent runs across the whole repo
+  failing identically, confirming another repo-wide infra blip (same
+  Claude-Code-action issue, persisting across days now). No review comments
+  posted, no branch protection. Merged squash per policy. --delete-branch hit
+  the usual worktree-collision error; remote branch still present after
+  fetch --prune so deleted manually. No builder round-trip needed.
