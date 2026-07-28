@@ -6,6 +6,23 @@ import type { Database } from '@hull/db/client'
 import { runAsActor } from '@hull/db/with-actor'
 
 /**
+ * Migrations run once per worker process; every `freshDb()` clones the
+ * migrated data directory instead of replaying all the migration SQL. Cloning
+ * a dump is ~10x faster than migrating, and with `freshDb()` sitting in the
+ * `beforeEach` of every DB suite, that difference is most of the suite's
+ * runtime (it was ~90% of CI's verify/coverage wall-clock).
+ */
+let template: Promise<Blob> | undefined
+
+async function migratedTemplate(): Promise<Blob> {
+  const client = new PGlite()
+  await migrate(drizzle(client), { migrationsFolder: 'src/migrations' })
+  const dump = await client.dumpDataDir('none')
+  await client.close()
+  return dump
+}
+
+/**
  * A fresh in-memory Postgres (PGlite) with every migration applied — the same
  * SQL the live ship runs, so tests exercise the real schema. Returns the db and
  * a close() to tear it down. Shared test-only harness for any service's tests.
@@ -14,9 +31,9 @@ export async function freshDb(): Promise<{
   db: Database
   close: () => Promise<void>
 }> {
-  const client = new PGlite()
+  template ??= migratedTemplate()
+  const client = new PGlite({ loadDataDir: await template })
   const db = drizzle(client)
-  await migrate(db, { migrationsFolder: 'src/migrations' })
   return { db: db as unknown as Database, close: () => client.close() }
 }
 

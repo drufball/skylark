@@ -21,9 +21,12 @@ jobs:
           cache: npm
       # Same bootstrap the whole crew uses — local, worktrees, Claude sessions, CI.
       - run: ./scripts/setup
-      # format:check + lint + knip + typecheck + test. Tests run on in-memory
-      # PGlite, so CI needs no Postgres.
-      - run: npm run check
+      # format:check + lint + knip + typecheck. The test suite is NOT run here:
+      # the coverage job runs the exact same suite (a failing test fails
+      # `vitest run --coverage` just the same), so running it in both jobs
+      # doubled CI's longest step for zero extra signal. Locally `npm run
+      # check` still includes the tests — this split is CI-only.
+      - run: npm run check:static
 
   # Two coverage gates sharing one test run: a global threshold (vitest.config.ts)
   # and, on PRs, diff coverage of the changed lines vs main (scripts/coverage-diff).
