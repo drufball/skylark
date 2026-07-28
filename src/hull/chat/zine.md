@@ -1,16 +1,19 @@
 # Chat
 
-_chat zine — issue #cse4_
+_chat zine — issue #cse8_
 
 ## tl;dr
 
-Chat is the ship's front door: conversations between the crew — humans and
-agents. A chat is a set of **members**, and **membership is visibility**: only
-members see a chat, and an added member sees the whole history (no per-message
-ACL). Agents are members too; when one needs to speak, the chat orchestrator
-drives its backing agent session — and **the agent speaks for itself**, by
-calling `chat_post` from inside its own turn. Chat posts nothing on anybody's
-behalf.
+Chat is what the ship is MADE of: conversations between the crew — humans and
+agents. It was the front door from issue #5 until #cse8, when the home canvas
+took `/` and chat moved to `/chat` — a demotion only on paper, since home is
+nothing but pointers at widgets living in these conversations, and three of the
+ship's surfaces are now rooms rather than pages. A chat is a set of **members**,
+and **membership is visibility**: only members see a chat, and an added member
+sees the whole history (no per-message ACL). Agents are members too; when one
+needs to speak, the chat orchestrator drives its backing agent session — and
+**the agent speaks for itself**, by calling `chat_post` from inside its own
+turn. Chat posts nothing on anybody's behalf.
 
 A chat also carries **widgets** — live little views the crew keeps open together
 — on two surfaces. The **stack** above the composer is turn-shaped: ephemeral,
@@ -585,6 +588,12 @@ agent.
 
 ## Changelog
 
+- **#cse8 — Chat stops being the front door and becomes the ship.** Nothing in
+  this service changed: the route moved from `/` to `/chat` (with `/?chat=<id>`
+  redirecting, because agents have been posting those links into these very
+  conversations), Issues/Files/Inbox left the rail for their rooms, and a room's
+  header links through to the view it replaced. `/` is the home canvas — which
+  is only ever pointers at widgets that live in here.
 - **#cse7 — Rooms, seeded from above.** Chat itself is unchanged; what's new is
   that the ship now BOOTS with three chats holding widgets — an Issues, a Files
   and an Inbox room, opened idempotently by `npm run rooms seed` through these

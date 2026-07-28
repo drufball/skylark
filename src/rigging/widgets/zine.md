@@ -1,6 +1,6 @@
 # Widgets
 
-_widgets zine — issue #cse7_
+_widgets zine — issue #cse8_
 
 ## tl;dr
 
@@ -60,13 +60,15 @@ generated from the same entries.
   arrows to nudge), the phone's `SwipeColumn`, and `TileFrame` (a tile's
   chrome). Plus the two pure halves of arranging, `cellAt` and `nudge`. It knows
   nothing of widget kinds, chats or pointers — that's what makes it shareable.
-- **Home canvas** (`home-canvas.tsx`) — your own screen, the one surface that
-  holds POINTERS at widgets living in chats
-  ([`hull/home-canvas/zine.md`](../../hull/home-canvas/zine.md)). Same grid,
-  same catalog; what differs is that a tile draws a `HomeTileTarget` the SERVER
-  resolved, so this component never decides access. Three states a chat tile
-  never has: a chat pointer with nothing raised (an honest resting state), a
-  widget pointer showing its recorded decision, and `lost`.
+- **Home canvas** (`home-canvas.tsx`) — your own screen and, since #cse8, the
+  ship's front door (`/`). The one surface that holds POINTERS at widgets living
+  in chats ([`hull/home-canvas/zine.md`](../../hull/home-canvas/zine.md)). Same
+  grid, same catalog; what differs is that a tile draws a `HomeTileTarget` the
+  SERVER resolved, so this component never decides access. Three states a chat
+  tile never has: a chat pointer with nothing raised (an honest resting state),
+  a widget pointer showing its recorded decision, and `lost`. Its empty states
+  carry more weight than anything else on this deck — they are the first screen
+  a crew member ever sees.
 - **Arrangement** — a tile's cell rectangle, which the HULL owns
   (`clampCanvasBox`, `freeCanvasBox` in `hull/chat/widgets.ts`) because both the
   door and the browser have to agree on it. This deck contributes `cellAt`
@@ -260,6 +262,14 @@ place, and the hull still imports nothing from rigging.
 
 ## Changelog
 
+- **#cse8 — The home canvas becomes the front door.** No new kinds. The empty
+  home says what the surface is for and, for somebody with no conversations yet,
+  points at where conversations are made rather than at a picker that would be
+  empty; a home with no pages no longer draws a page strip holding one lonely
+  `+` above an empty state that already offers the same move. The seeded home
+  pins each default room's READOUT rather than the room, because a chat pointer
+  shows the top of a chat's STACK and a room's tile lives on its canvas — three
+  chat pointers would have been three tiles saying "nothing raised right now".
 - **#cse7 — Two apps get rooms.** Two kinds join the catalog: `files`, a
   read-only window onto the crew's shared documents (browse a folder, tap
   through to a document, or pin one open), and `inbox`, the first PER-VIEWER

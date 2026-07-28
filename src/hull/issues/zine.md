@@ -27,8 +27,10 @@ process whose transition only reaches the server as a durable event +
 and an agent typing `issue done` in a worktree.
 
 The service is hull (load-bearing orchestration). The board and thread are
-rigging views; the routes are thin mounts, framed by the dock (the rigging's
-app-shell nav).
+rigging views; the routes are thin mounts, framed by the rail (the rigging's
+app-shell nav). Since #cse8 the board isn't IN that rail — the Issues **room**
+is how you get to issues now, and it links through to `/issues` for the fuller
+view (see [`rigging/zine.md`](../../rigging/zine.md)).
 
 ## Components
 

@@ -34,7 +34,9 @@ function InboxRoute() {
   const behindOrigin = useBehindOrigin()
   return (
     <Dock
-      active="inbox"
+      // No rail entry: the Inbox ROOM is the way in now, and this view is
+      // where the room links to. Highlighting one of the four would point at
+      // somewhere you aren't.
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}

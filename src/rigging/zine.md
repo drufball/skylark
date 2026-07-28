@@ -1,6 +1,6 @@
 # The Rigging
 
-_rigging zine — issue #cse7_
+_rigging zine — issue #cse8_
 
 ## tl;dr
 
@@ -15,8 +15,14 @@ replaced per ship without breaking anything below it.
   output is **owned code**, not a dependency: edit freely, and add new ones with
   `npx shadcn@latest add <x>`.
 - **Views** (`views/`) — the default surfaces (chat, board, thread, files,
-  inbox, agents, models, the dock). A view is a plain component: no routing, no
+  inbox, agents, models, the rail). A view is a plain component: no routing, no
   data fetching of its own.
+- **The rail** (`views/dock.tsx`) — the ship's permanent navigation: **Home**
+  (`/`, your canvas), **Chats** (`/chat`), **Crew** (`/agents`), **Models**, and
+  a way out. Four hardcoded entries, on every surface, reading no row — see the
+  decision below. A bar across the bottom on a phone and a slim column at the
+  side from `md` up, in CSS rather than a measured breakpoint, because the rail
+  has to be right on the first paint.
 - **Theme** (`styles.css`) — the design tokens, as CSS variables (Tailwind v4).
   Restyling the ship is editing variables, not components.
 - **`useShipLog`** (`lib/use-ship-log.ts`) — the client half of the ship's log:
@@ -29,9 +35,14 @@ replaced per ship without breaking anything below it.
 - **Default rooms** (`rooms/`) — the conversations a fresh ship boots with. A
   **room** is a chat with the crew in it, an agent aboard, and a readout already
   on its canvas: `Issues` (an `issue-list`, @tilde), `Files` (a `files` tile,
-  @dot), `Inbox` (an `inbox` tile, @bix). `rooms.ts` is the specs as data,
-  `seed.ts` the idempotent write, `cli.ts` the door — `npm run rooms seed`,
-  which `scripts/serve` runs on every boot right after `npm run users seed`.
+  @dot), `Inbox` (an `inbox` tile, @bix). Each also names the **view it is the
+  room for** (`/issues`, `/files`, `/inbox`) and links through to it from its
+  own header — those surfaces left the rail, and the room is the way in now.
+  `rooms.ts` is the specs as data, `seed.ts` the idempotent write (rooms, then
+  homes), `cli.ts` the door — `npm run rooms seed`, which `scripts/serve` runs
+  on every boot right after `npm run users seed` — and `server.ts` the one web
+  door, `welcomeAboard`, which the signup route calls so a crew member who joins
+  between restarts doesn't wait for one.
 
 ## Structure
 
@@ -55,6 +66,18 @@ write goes through chat's own exported functions under that person's RLS
 context, so the widgets carry their name — a room is somebody's arrangement,
 never a service's.
 
+**A home, from nothing to arranged.** Then `seedHomes` runs, once per human,
+each pass under THAT person's own actor — a home canvas is gated by
+`owner_id = the acting actor` and there is no door anywhere that takes an
+`ownerId`, so the operator cannot write somebody else's home and this doesn't
+try. It touches a home only if it has **no pages and no tiles**, and pins the
+room's canvas READOUT rather than the room itself: a chat pointer shows the top
+of a chat's stack, and a room's tile lives on its canvas, so three chat pointers
+would give a new crew member three tiles saying "nothing raised right now". A
+widget pointer puts the open issues, the documents and the inbox on the home
+screen on the very first load, and the tile still names its room and links into
+it.
+
 ## Decisions
 
 - **Rigging is rigging because tweaking it is safe.** Load-bearing things (the
@@ -69,6 +92,43 @@ never a service's.
   view meet.
 - **One theme, in variables.** Components reference tokens; ships restyle by
   editing `styles.css`.
+- **The rail is four entries and it is hardcoded.** It's the ship's only
+  navigation that isn't data. Everything else — your chats, your pages, your
+  tiles — is rows the crew can delete, and without a fixed floor somebody can
+  arrange their way into a corner with no path back to a surface they need. So
+  the rail reads nothing, renders identically on an empty home, and is
+  deliberately short: it holds the two things every ship needs (your screen,
+  your conversations) plus the two surfaces that AREN'T conversations.
+  `src/navigation.test.ts` is the enforcement — every route is reachable from
+  the rail or from a default room, or it's named there as not being a
+  destination.
+- **A room keeps the view it replaced, and links to it.** `/issues`, `/files`
+  and `/inbox` did not go away when the rooms arrived: a tile is a readout —
+  eight issues, a folder, the last few notifications — and the board does things
+  a tile doesn't. Deleting a good working view in the same slice that moved the
+  front door would be two irreversible things at once. So the view stays a route
+  and the room carries the link. **Models stays in the rail**, and that's the
+  same argument from the other side: a settings surface is not a conversation,
+  and the thesis is proven by what migrates well rather than by mandating that
+  everything migrate.
+- **The home seed touches only an UNTOUCHED home.** Zero pages and zero tiles is
+  the whole predicate, and it's a stricter promise than the room seed makes (a
+  room converges what's new forever). Unpinning a tile is an ordinary move
+  somebody makes with a thumb, and a seed that undid it on the next boot would
+  be the ship arguing with its crew. The honest cost is the mirror image:
+  somebody who clears their home down to nothing gets the rooms back, because a
+  home with nothing in it is indistinguishable from one nobody has touched —
+  which reads as a reset rather than as damage.
+- **A newcomer is welcomed by a door, not by waiting for a reboot.** The boot
+  seed converges the crew already aboard; somebody who signs up at four in the
+  afternoon would otherwise land on a blank grid until the next restart, and
+  that grid is now the first and only thing they'd see. `welcomeAboard` runs the
+  same idempotent seed at the one moment it matters. It runs the ROOM pass as
+  the ship's operator, because a newcomer cannot add themselves to a chat they
+  aren't in (membership is visibility, and RLS refuses), and only then the home
+  pass as the newcomer. That escalation is narrow and named out loud in the
+  file: a logged-in crew member can cause the ship to perform its own boot seed,
+  with a fixed room list and no input of their own.
 - **The default rooms are rigging, not hull, and not a migration.** They name
   widget KINDS, and a kind's meaning is this deck's (the hull may not know one
   by name — see [`widgets/zine.md`](widgets/zine.md) for the cycle that forces
@@ -96,12 +156,21 @@ never a service's.
 
 ## Changelog
 
+- **#cse8 — The front door moves, and a rail replaces the dock.** The dock's
+  seven entries become four permanent ones (Home, Chats, Crew, Models), a bottom
+  bar on a phone; Issues, Files and Inbox leave for their rooms, and each room
+  now names and links to the view it replaced. `seedHomes` joins the seed, so a
+  crew member's home opens with the three rooms' readouts already on it, and
+  `welcomeAboard` runs the whole thing for somebody who signs up between boots.
+  The chat header's Open-Chats, People, Schedules and Send controls finally
+  reach the 44px floor the widget surfaces have used since #cse4.
 - **#cse7 — The ship's apps get rooms.** `rooms/` opens `Issues`, `Files` and
   `Inbox` as real conversations, each with a crew member's speciality agent in
   it and its readout already on the canvas — the two new tiles are `files` and
   `inbox` ([`widgets/zine.md`](widgets/zine.md)). Idempotent and non-clobbering,
   wired into `scripts/serve`. The old `/issues`, `/files` and `/inbox` routes
-  are untouched; what the front door IS stays the next slice's question.
+  are untouched; what the front door IS stays the next slice's question (#cse8
+  answered it).
 - **#cse3** — The widget catalog joins the deck
   ([`widgets/zine.md`](widgets/zine.md)). It's the one place rigging
   deliberately reads hull services directly (each kind's data comes through that

@@ -1,8 +1,10 @@
+import { withActor } from '@hull/db/client'
 import { isMain, runCli } from '@hull/lib/cli'
+import { listUsers } from '@hull/users/service'
 import { withCliActor } from '@hull/users/actor'
 
 import { DEFAULT_ROOMS } from './rooms'
-import { seedRooms } from './seed'
+import { seedHomes, seedRooms } from './seed'
 
 // The door onto the ship's default rooms, mirroring `npm run users` exactly:
 //   node --env-file=.env --import tsx src/rigging/rooms/cli.ts <command>
@@ -43,6 +45,25 @@ async function cmdSeed(): Promise<void> {
       `✓ ${room.title} ${DIM}${room.id} · ${notes.join(' · ')}${RESET}\n`,
     )
   }
+
+  // Then the homes. A separate pass, outside the operator's transaction, because
+  // each one has to run under its OWNER's RLS context — nobody, operator
+  // included, may write somebody else's home canvas.
+  const crew = await withCliActor((tx) => listUsers(tx))
+  for (const home of await seedHomes({ crew, asActor: withActor })) {
+    if (home.error) {
+      process.stdout.write(
+        `✗ @${home.handle}'s home ${DIM}${home.error}${RESET}\n`,
+      )
+      process.exitCode = 1
+      continue
+    }
+    const note =
+      home.tilesAdded > 0
+        ? `+${String(home.tilesAdded)} tile`
+        : 'already arranged'
+    process.stdout.write(`✓ @${home.handle}'s home ${DIM}${note}${RESET}\n`)
+  }
 }
 
 function cmdList(): void {
@@ -63,7 +84,8 @@ async function main(): Promise<void> {
   }
   process.stdout.write(
     'usage: rooms <seed|list>\n' +
-      '  seed   open the ship’s default rooms (idempotent, never clobbers)\n' +
+      '  seed   open the ship’s default rooms and put them on the crew’s home\n' +
+      '         screens (idempotent, never clobbers)\n' +
       '  list   show the rooms this ship would open\n',
   )
   process.exitCode = command ? 1 : 0

@@ -44,12 +44,7 @@ function BoardRoute() {
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
   return (
-    <Dock
-      active="issues"
-      Link={Link}
-      onLogout={onLogout}
-      behindOrigin={behindOrigin}
-    >
+    <Dock Link={Link} onLogout={onLogout} behindOrigin={behindOrigin}>
       <IssueBoardView
         issues={issues}
         playbooks={playbooks.map((p) => ({

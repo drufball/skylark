@@ -33,6 +33,21 @@ export interface RoomWidgetSpec {
   gridH: number
 }
 
+/**
+ * The richer, non-chat view a room is the room FOR — the board, the browser,
+ * the full notification list. A tile is a readout; this is the whole surface.
+ */
+export interface RoomViewLink {
+  /** A route in `src/routes`. */
+  to: string
+  /**
+   * What the link says in the room's own header. Short: it shares a 390px row
+   * with the chat's name and the surface toggle, and a sentence there wraps the
+   * header to a third line — the exact cost #cse5 spent a whole slice removing.
+   */
+  label: string
+}
+
 /** One default room: a chat the ship boots with, and what's arranged in it. */
 export interface RoomSpec {
   /**
@@ -51,6 +66,15 @@ export interface RoomSpec {
    * (`SEED_AGENTS`) — a room is not the place to invent a persona.
    */
   agentHandle: string
+  /**
+   * The surface this room replaced in the rail, still reachable from inside it.
+   * A room's canvas tile is a READOUT — eight issues, a folder, the last few
+   * notifications — and the board it came from does things a tile doesn't. That
+   * view stays a route; the room is now the way in. Without this link it would
+   * be a page nobody could find, which is how a good working view gets deleted
+   * by accident a slice later.
+   */
+  view: RoomViewLink
   /** What a fresh room is arranged with, on its canvas. */
   widgets: RoomWidgetSpec[]
 }
@@ -71,6 +95,7 @@ export const DEFAULT_ROOMS: readonly RoomSpec[] = [
     title: 'Issues',
     page: 'Board',
     agentHandle: 'tilde',
+    view: { to: '/issues', label: 'Board' },
     widgets: [
       {
         kind: 'issue-list',
@@ -85,6 +110,7 @@ export const DEFAULT_ROOMS: readonly RoomSpec[] = [
     title: 'Files',
     page: 'Documents',
     agentHandle: 'dot',
+    view: { to: '/files', label: 'All files' },
     widgets: [{ kind: 'files', props: {}, gridW: 4, gridH: 3 }],
   },
   {
@@ -92,8 +118,20 @@ export const DEFAULT_ROOMS: readonly RoomSpec[] = [
     title: 'Inbox',
     page: 'Inbox',
     agentHandle: 'bix',
+    view: { to: '/inbox', label: 'Full inbox' },
     // No `unreadOnly`: an inbox room that empties itself as you read looks
     // broken. The tile marks unread and shows the rest.
     widgets: [{ kind: 'inbox', props: {}, gridW: 4, gridH: 3 }],
   },
 ]
+
+/**
+ * The view a chat is the ROOM for, or null for an ordinary conversation —
+ * which is nearly all of them. Keyed on the well-known id, like everything else
+ * about a room, so renaming one doesn't cost it its link.
+ *
+ * Pure and node-free, because the chat route calls it in the browser.
+ */
+export function roomViewLink(chatId: string): RoomViewLink | null {
+  return DEFAULT_ROOMS.find((room) => room.id === chatId)?.view ?? null
+}

@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
 import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from 'react'
+import {
+  ArrowUpRight,
   Bot,
   CalendarClock,
   LayoutGrid,
@@ -172,6 +179,20 @@ export interface ChatViewProps {
    * Optional, so a host with no home surface simply doesn't draw the control.
    */
   onPinHomeWidget?: (widgetId: string) => void
+  /**
+   * The richer view this chat is the ROOM for, if it's one of the ship's
+   * default rooms (`rigging/rooms`) — the board behind the `issue-list` tile,
+   * the browser behind the `files` tile. Those surfaces left the rail when the
+   * rooms arrived; the room is now the way in, and a view nothing links to is a
+   * view that gets deleted by accident. Null for an ordinary chat.
+   */
+  viewLink?: { to: string; label: string } | null
+  /** The router's Link, injected — this view stays router-agnostic. */
+  Link?: ComponentType<{
+    to: string
+    className?: string
+    children: ReactNode
+  }>
 }
 
 /** A chat's display name: its title, or the members it's with. */
@@ -403,6 +424,8 @@ function ActiveChat({
   onPlaceWidget,
   onStackWidget,
   onPinHomeWidget,
+  viewLink,
+  Link,
 }: ChatViewProps) {
   const memberIds = new Set(members.map((m) => m.userId))
   const addable = crew.filter((c) => !memberIds.has(c.id))
@@ -463,6 +486,7 @@ function ActiveChat({
             <Button
               variant="outline"
               size="sm"
+              className={TAP_TARGET}
               aria-label="People"
               aria-pressed={showMembers}
               onClick={() => {
@@ -474,6 +498,23 @@ function ActiveChat({
             </Button>
           )}
         </div>
+        {/* The way through to the surface this room replaced. Beside the name
+            rather than tucked in a menu: it's the answer to "where did the
+            board go?", and the board is a route with nothing else pointing at
+            it. */}
+        {viewLink && Link && (
+          <Link
+            to={viewLink.to}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-1 rounded-md border px-3 text-sm',
+              'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              TAP_TARGET,
+            )}
+          >
+            {viewLink.label}
+            <ArrowUpRight className="size-4" />
+          </Link>
+        )}
         {canvasOn &&
           (isMobile ? (
             // A phone can't show both, so it gets a plain either/or — and the
@@ -529,6 +570,7 @@ function ActiveChat({
           <Button
             variant="outline"
             size="sm"
+            className={cn(isMobile && TAP_TARGET)}
             aria-label="Schedules"
             aria-pressed={showSchedules}
             onClick={() => {

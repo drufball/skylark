@@ -1,16 +1,16 @@
 # The home canvas
 
-_home-canvas zine — issue #cse6_
+_home-canvas zine — issue #cse8_
 
 ## tl;dr
 
-Your **home canvas** is a personal screen of **pointers**. Widget instances
-always live in exactly one chat (`chat_widgets`, owned by the chat service —
-[`hull/chat/zine.md`](../chat/zine.md)); a home tile is a _placement_ pointing
-at one. That's the iOS model: an app has one canonical home, and your home
-screen holds live views onto apps that live somewhere else. **Indirection exists
-in exactly one place — here — instead of everywhere**, which is what lets a chat
-canvas keep containing its widgets directly.
+Your **home canvas** is the ship's **front door** (`/`) and a personal screen of
+**pointers**. Widget instances always live in exactly one chat (`chat_widgets`,
+owned by the chat service — [`hull/chat/zine.md`](../chat/zine.md)); a home tile
+is a _placement_ pointing at one. That's the iOS model: an app has one canonical
+home, and your home screen holds live views onto apps that live somewhere else.
+**Indirection exists in exactly one place — here — instead of everywhere**,
+which is what lets a chat canvas keep containing its widgets directly.
 
 A tile points at either **one specific widget** (stable: always that widget) or
 **a chat** (live: whatever is at the top of that chat's stack right now). The
@@ -92,10 +92,10 @@ toward URL limits and make every raise anywhere invalidate the whole route.
 Neither is a problem at crew scale; if it becomes one, the fix is to page the
 subscription to the tiles on the OPEN page rather than the whole canvas.
 
-**Which page you're looking at is the URL** (`/home?page=…`), not a table. The
-chat canvas needed a per-viewer row (`chat_view_state`) because a page is shared
-and three members can be on three different pages. Home has exactly one viewer,
-so the URL is the honest home for it — and it hands us browser back/forward for
+**Which page you're looking at is the URL** (`/?page=…`), not a table. The chat
+canvas needed a per-viewer row (`chat_view_state`) because a page is shared and
+three members can be on three different pages. Home has exactly one viewer, so
+the URL is the honest home for it — and it hands us browser back/forward for
 free, which is precisely what makes tapping through to a chat and coming back
 land you where you were.
 
@@ -149,14 +149,31 @@ land you where you were.
   useless exactly when it's most wanted.
 - **A page holding tiles can't be removed.** Same rule the chat canvas keeps:
   tidying your tabs must never be the thing that destroys an arrangement.
-- **Home is its own route and dock entry; `/` is unchanged.** What the front
-  door IS remains a question for the next slice, and answering it here would
-  tangle two things. Home sits after Chat in the dock for the same reason.
+- **Home IS `/`.** Slice #cse6 deliberately left the front door alone so that
+  moving it could be one reviewable, revertible change; #cse8 made it. The chat
+  front door moved to `/chat`, `/?chat=<id>` redirects there with the parameter
+  intact (agents posted those links for months), and `/home` forwards to `/` for
+  the one slice's worth of bookmarks that shape earned. Home is first in the
+  rail now, because it's what you land on.
+- **A blank home is the worst possible first screen, so the ship seeds one.**
+  The rooms seed arranges each crew member's home with the default rooms'
+  readouts, under that person's own actor — no door here takes an `ownerId` and
+  the policy wouldn't accept one, so a seed that wrote somebody else's home
+  would have to break this service's one rule first. It writes only a home with
+  zero pages and zero tiles. See [`rigging/zine.md`](../../rigging/zine.md); the
+  seed lives up there because it names widget KINDS, which is rigging's meaning
+  to hold.
 
 ## Changelog
 
+- **#cse8 — Home becomes the front door.** No schema, no doors, no new rules:
+  `/` renders this canvas, `/chat` took the chat route, and the old
+  `/?chat=<id>` shape redirects rather than 404ing. The rooms seed
+  ([`rigging/zine.md`](../../rigging/zine.md)) now arranges a crew member's home
+  for them, and the empty state — the first screen anybody sees — says what this
+  surface is for and points at where conversations come from.
 - **#cse6 — The home canvas.** `home_canvas_pages` + `home_canvas_tiles`
   (migration 0035, RLS 0036), the two pointer modes, `readHomeCanvas` resolving
-  against current membership, `/home` and its dock entry. Answering from home
-  goes through chat's own `answerChatWidget`; the page primitives are shared
-  with the chat canvas (`rigging/widgets/grid.tsx`).
+  against current membership, `/home` (as it then was) and its dock entry.
+  Answering from home goes through chat's own `answerChatWidget`; the page
+  primitives are shared with the chat canvas (`rigging/widgets/grid.tsx`).

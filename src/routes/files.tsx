@@ -76,12 +76,7 @@ function FilesRoute() {
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
   return (
-    <Dock
-      active="files"
-      Link={Link}
-      onLogout={onLogout}
-      behindOrigin={behindOrigin}
-    >
+    <Dock Link={Link} onLogout={onLogout} behindOrigin={behindOrigin}>
       <FilesView
         files={files}
         selected={selected}

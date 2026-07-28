@@ -3,6 +3,8 @@ import { Loader2, Send } from 'lucide-react'
 
 import { Button } from '@rigging/components/ui/button'
 import { Textarea } from '@rigging/components/ui/textarea'
+import { cn } from '@rigging/lib/utils'
+import { TAP_TARGET } from '@rigging/widgets/kind'
 
 /**
  * The shared message composer: textarea + send button + Enter-to-send.
@@ -53,6 +55,10 @@ export function Composer({ busy, placeholder, onSend }: ComposerProps) {
         />
         <Button
           onClick={submit}
+          // Send is the most-tapped control in the ship and it was 36px. The
+          // textarea beside it starts at 40px and grows, so the floor costs
+          // nothing but the last few pixels of a one-line composer.
+          className={cn('px-4', TAP_TARGET)}
           disabled={busy || !text.trim()}
           aria-label="Send message"
         >

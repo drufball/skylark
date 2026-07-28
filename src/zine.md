@@ -1,6 +1,6 @@
 # The Ship
 
-_src zine — issue #6_
+_src zine — issue #cse8_
 
 ## tl;dr
 
@@ -53,12 +53,17 @@ with Tailwind and shadcn.
   each with an agent aboard and its readout already on the canvas. Seeded
   idempotently by `npm run rooms seed`, on the rigging deck with the catalog
   they arrange ([`rigging/zine.md`](rigging/zine.md)).
-- **The home canvas** — your own personal screen of **pointers** at widgets
-  living in chats you're in. A widget instance always lives in exactly one chat;
-  home is the one surface in the ship that points rather than contains, and a
-  pointer is not a grant — what a tile shows is resolved from your CURRENT
-  membership on every read
+- **The home canvas** — **the front door** (`/`): your own personal screen of
+  **pointers** at widgets living in chats you're in. A widget instance always
+  lives in exactly one chat; home is the one surface in the ship that points
+  rather than contains, and a pointer is not a grant — what a tile shows is
+  resolved from your CURRENT membership on every read
   ([`hull/home-canvas/zine.md`](hull/home-canvas/zine.md)).
+- **The rail** — the ship's four permanent, hardcoded navigation entries (Home,
+  Chats, Crew, Models) plus a way out, on every surface
+  ([`rigging/views/dock.tsx`](rigging/views/dock.tsx)). Short and hardcoded
+  because everything else about navigation is now data somebody can delete; see
+  the decision below.
 - **Notifications** — every user's inbox, fed by watches on ship-log topics; for
   agents, a notification is a wake-up
   ([`hull/notifications/zine.md`](hull/notifications/zine.md)).
@@ -69,6 +74,15 @@ with Tailwind and shadcn.
 **Import direction.** `home → rigging → hull`: a deck imports only the decks
 below it. The `src/` serving layer is the one exception — it may import from all
 three, because wiring them together is its job.
+
+**Getting around.** `/` is your home canvas; `/chat` is every conversation;
+`/agents` and `/models` are the two surfaces that aren't conversations. Issues,
+Files and Inbox are reached through their ROOMS (default chats,
+[`rigging/zine.md`](rigging/zine.md)), each of which links through to its own
+richer view — those routes are alive, they just aren't in the rail any more.
+`src/navigation.test.ts` holds the whole claim: every route the ship serves is
+reachable from the rail or from a default room, or is named in that file as
+deliberately not a destination.
 
 **A request, end to end.** A browser hits a route in `src/routes` → the route's
 loader calls a server function → the server function calls a service's pure
@@ -102,10 +116,27 @@ in-memory PGlite — real Postgres, no external database.
 - **The app runs natively; its dependencies run in Docker.** Postgres for a
   pinned, disposable database, and the LiteLLM gateway so every model call goes
   through one OpenAI-compatible endpoint whose providers are config, not code.
+- **Navigation is data, so the rail is not.** Which chats you're in, which pages
+  you made, which tiles you kept — all of it is rows, and rows can be deleted.
+  Without a fixed floor, a crew member can arrange their way into a corner where
+  "where's my inbox?" becomes "which page had the inbox tile?" with no path
+  back. The rail is that floor: four entries, hardcoded, on every screen,
+  consulting no row, identical for somebody whose home is completely empty. It
+  stays SHORT for the same reason it exists — a rail that grew an entry per
+  surface would be the dock again, and the point of the chat-native turn is that
+  most surfaces are conversations.
 - **One npm package, no workspaces.**
 
 ## Changelog
 
+- **#cse8 — Chat became the front door in #5; now it's the ship.** `/` is your
+  home canvas, `/chat` is every conversation, and the old `/?chat=<id>` links
+  agents posted for months redirect there with the parameter intact. The dock
+  becomes a four-entry permanent **rail** (Home, Chats, Crew, Models) — a bottom
+  bar on a phone — and Issues, Files and Inbox leave it for their rooms, each
+  room linking through to the view it replaced. The rooms seed now also arranges
+  every crew member's home with those rooms' readouts, so nobody's first screen
+  is a blank grid ([`rigging/zine.md`](rigging/zine.md)).
 - **The apps were conversations all along: two of them get rooms.** `files` and
   `inbox` join the widget catalog, and the ship boots with an Issues, a Files
   and an Inbox chat holding them ([`rigging/zine.md`](rigging/zine.md)). The
