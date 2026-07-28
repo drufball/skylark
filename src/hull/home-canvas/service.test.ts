@@ -133,6 +133,16 @@ describe('the home canvas', () => {
     expect(await listHomePages(db, dru)).toMatchObject([{ title: 'Deploys' }])
   })
 
+  it('refuses a blank rename, keeping the name the page had', async () => {
+    // The same rule as creation: a page always has a name. A stray clear in
+    // the rename prompt must not leave a nameless tab in the strip.
+    const id = await page('Ops')
+    await expect(
+      renameHomePage(db, { pageId: id, title: '   ' }),
+    ).rejects.toThrow(/needs a name/)
+    expect(await listHomePages(db, dru)).toMatchObject([{ title: 'Ops' }])
+  })
+
   it('removes an EMPTY page and refuses one that still holds tiles', async () => {
     // Same rule as the chat canvas: tidying your tabs must never be the thing
     // that destroys an arrangement you made.
@@ -156,6 +166,79 @@ describe('the home canvas', () => {
     expect(await listHomeTiles(db, dru)).toMatchObject([
       { chatId, widgetId: null, gridX: 0, gridY: 0, gridW: 2, gridH: 2 },
       { chatId: null, widgetId, gridX: 2, gridY: 0 },
+    ])
+  })
+
+  it('makes a landing page for a pin that names none, on a home with no pages', async () => {
+    // "Pin this to my home" is a move you make from somewhere ELSE — a chat's
+    // canvas tile — where you have no page in mind. The very first pin must
+    // not dead-end on "create a page first".
+    await pinHomeTile(db, { id: uuidv7(), ownerId: dru, chatId })
+    const pages = await listHomePages(db, dru)
+    expect(pages).toMatchObject([{ title: 'Home' }])
+    expect(await listHomeTiles(db, dru)).toMatchObject([
+      { pageId: pages[0].id, chatId },
+    ])
+  })
+
+  it('lands a pin that names no page on your FIRST page, never a new one', async () => {
+    const first = await page('Morning')
+    await page('Ops')
+    await pinHomeTile(db, { id: uuidv7(), ownerId: dru, chatId })
+    expect(await listHomeTiles(db, dru)).toMatchObject([{ pageId: first }])
+    // …and the strip is untouched: no page was conjured for the pin.
+    expect((await listHomePages(db, dru)).map((p) => p.title)).toEqual([
+      'Morning',
+      'Ops',
+    ])
+  })
+
+  it('honours a named cell, and reads a half-named corner as the edge', async () => {
+    // The door takes an explicit spot — a drop, or an arrangement being laid
+    // out — and naming only one axis means "at the edge of the other".
+    const pageId = await page()
+    const a = uuidv7()
+    const b = uuidv7()
+    const c = uuidv7()
+    await pinHomeTile(db, {
+      id: a,
+      ownerId: dru,
+      pageId,
+      chatId,
+      gridX: 1,
+      gridY: 2,
+    })
+    await pinHomeTile(db, {
+      id: b,
+      ownerId: dru,
+      pageId,
+      widgetId: await raise(),
+      gridY: 0,
+    })
+    await pinHomeTile(db, { id: c, ownerId: dru, pageId, chatId, gridX: 2 })
+    const tiles = await listHomeTiles(db, dru)
+    const at = (id: string) => defined(tiles.find((t) => t.id === id))
+    expect(at(a)).toMatchObject({ gridX: 1, gridY: 2 })
+    expect(at(b)).toMatchObject({ gridX: 0, gridY: 0 })
+    expect(at(c)).toMatchObject({ gridX: 2, gridY: 0 })
+  })
+
+  it('resizes in place: a move that names no corner keeps the cell it had', async () => {
+    // A resize handle changes the span, not the spot — the tile must not
+    // drift home to 0,0 just because the drag didn't mention a corner.
+    const pageId = await page()
+    const tileId = uuidv7()
+    await pinHomeTile(db, {
+      id: tileId,
+      ownerId: dru,
+      pageId,
+      chatId,
+      gridX: 1,
+      gridY: 1,
+    })
+    await moveHomeTile(db, { tileId, pageId, gridW: 3, gridH: 1 })
+    expect(await listHomeTiles(db, dru)).toMatchObject([
+      { gridX: 1, gridY: 1, gridW: 3, gridH: 1 },
     ])
   })
 

@@ -146,6 +146,22 @@ describe('HomeCanvas: a chat pointer is the whole promise', () => {
     expect(link.getAttribute('href')).toBe('/chat?chat=c1')
   })
 
+  it('calls an untitled chat with nobody else in it “New chat”, like the sidebar', () => {
+    // A conversation you just started, alone: the tile falls back to the same
+    // name the sidebar gives it, so the two surfaces can't disagree about what
+    // a chat is called.
+    renderHome({
+      tiles: [
+        tile({
+          mode: 'chat',
+          chat: { id: 'c3', title: null, memberHandles: [] },
+          widget: null,
+        }),
+      ],
+    })
+    expect(screen.getByLabelText('Open the chat New chat')).toBeTruthy()
+  })
+
   it('names an untitled chat by its members, like the sidebar does', () => {
     renderHome({
       tiles: [
@@ -257,6 +273,17 @@ describe('HomeCanvas: pages and arranging', () => {
     fireEvent.click(screen.getByLabelText('Add a tile'))
     fireEvent.click(screen.getByRole('button', { name: 'Deploys' }))
     expect(onPinChat).toHaveBeenCalledWith('c1')
+  })
+
+  it('closes the picker without pinning anything', () => {
+    // Changing your mind is free: the close control puts the picker away and
+    // no tile appears.
+    const { onPinChat } = renderHome()
+    fireEvent.click(screen.getByLabelText('Add a tile'))
+    expect(screen.getByText(/Put a conversation on this page/)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Close the tile picker'))
+    expect(screen.queryByText(/Put a conversation on this page/)).toBeNull()
+    expect(onPinChat).not.toHaveBeenCalled()
   })
 
   it('says so when there is nothing to pin yet', () => {
