@@ -34,9 +34,8 @@ function InboxRoute() {
   const behindOrigin = useBehindOrigin()
   return (
     <Dock
-      // No rail entry: the Inbox ROOM is the way in now, and this view is
-      // where the room links to. Highlighting one of the four would point at
-      // somewhere you aren't.
+      // No \`active\`: this view left the rail for its ROOM, which is what links
+      // here now — see rigging/views/dock.tsx.
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
