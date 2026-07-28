@@ -91,3 +91,38 @@ describe('parseNewArgs — playbook', () => {
     )
   })
 })
+
+describe('parseNewArgs — unknown flags (#7u5b)', () => {
+  it('rejects a leftover --flag-looking token instead of folding it into the title', () => {
+    // This is what survives when the SEPARATOR (`npm run issue -- new ...`) is
+    // present but the flag itself is just unrecognized.
+    expect(() => parseNewArgs(['Fix', 'it', '--wombat', 'thing'])).toThrow(
+      /Unknown flag: --wombat/,
+    )
+  })
+
+  it('mentions the `--` separator in the unknown-flag error, the actual root cause', () => {
+    expect(() => parseNewArgs(['Fix', 'it', '--wombat'])).toThrow(/--/)
+  })
+})
+
+describe('parseNewArgs — title length backstop (#7u5b)', () => {
+  it('accepts a title right at the limit', () => {
+    const title = 'x'.repeat(200)
+    expect(parseNewArgs([title]).title).toBe(title)
+  })
+
+  it(
+    'rejects a title over the limit — this is what npm silently eating --body\n' +
+      '     looks like: the whole body text ends up joined into the title',
+    () => {
+      // Simulates `npm run issue new "Title" --body "<huge text>"` run WITHOUT
+      // the `--` separator: npm strips the `--body` flag itself before the CLI
+      // ever sees it, leaving only its value as bare words.
+      const hugeBodyWords = 'word '.repeat(50).trim().split(' ')
+      expect(() => parseNewArgs(['Title', ...hugeBodyWords])).toThrow(
+        /over the 200-character limit/,
+      )
+    },
+  )
+})

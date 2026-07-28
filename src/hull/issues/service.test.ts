@@ -145,6 +145,12 @@ describe('validateOpenIssueInput — the web door check', () => {
       validateOpenIssueInput({ title: 'x', body: 9, playbookId: [] }),
     ).toEqual({ title: 'x', body: undefined, playbookId: undefined })
   })
+
+  it('rejects a title over MAX_TITLE_LENGTH — same backstop as the CLI (#7u5b)', () => {
+    expect(() => validateOpenIssueInput({ title: 'x'.repeat(201) })).toThrow(
+      /can't be over 200 characters/,
+    )
+  })
 })
 
 describe('validateCommentInput — the web door check', () => {
@@ -304,6 +310,17 @@ describe('createIssue', () => {
         generateNano: () => 'dupe', // always collides
       }),
     ).rejects.toThrow(/unique issue nano/i)
+  })
+
+  it('rejects a title over MAX_TITLE_LENGTH — fails loudly rather than filing garbage (#7u5b)', async () => {
+    await expect(
+      createIssue(db, { title: 'x'.repeat(201), authorId }),
+    ).rejects.toThrow(/can't be over 200 characters/)
+  })
+
+  it('accepts a title right at MAX_TITLE_LENGTH', async () => {
+    const issue = await createIssue(db, { title: 'x'.repeat(200), authorId })
+    expect(issue.title.length).toBe(200)
   })
 })
 

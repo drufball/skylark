@@ -111,6 +111,13 @@ disabled. The weekly sweeps and their secrets are documented in
   and PR'd.
 - The app degrades to "database: down" when Postgres is asleep rather than
   crashing.
+- **`npm run <issue|chat|agent|files|users> <command> --flag value` needs the
+  `--` separator**: `npm run issue -- new "<title>" --body "<text>"`. Without
+  it, npm parses `--body`/`--flag` as _its own_ flags and silently drops them
+  before the script ever sees them — the CLI then treats the flag's value as
+  more title text. The doors themselves fail loudly on this now (an unknown
+  `--flag` token or an oversized title both error instead of filing garbage —
+  see #7u5b), but the separator is still the right habit.
 - **Home-server provisioning** (macOS-only for now) lives in `scripts/`,
   orchestrated by `hoist`, never by `setup` — `setup` runs on every session
   (worktrees, CI, this one) and has to stay instant and non-interactive:
