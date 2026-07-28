@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { CircleSmall } from 'lucide-react'
 
 import { myInbox, type InboxItem } from '@hull/notifications/server'
@@ -7,7 +6,8 @@ import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { formatLocalTime } from '@rigging/lib/format-local-time'
 import { cn } from '@rigging/lib/utils'
 
-import { asRecord, type WidgetKind, type WidgetParse } from './kind'
+import { asRecord, parseLimit, type WidgetKind, type WidgetParse } from './kind'
+import { useLiveRead, type LiveRead } from './use-live-read'
 
 /**
  * `inbox` — the VIEWER's own notifications, in a tile.
@@ -86,37 +86,21 @@ function parseProps(
     }
   }
 
-  const { unreadOnly, limit } = record
+  const { unreadOnly } = record
   if (unreadOnly !== undefined && typeof unreadOnly !== 'boolean') {
     return { ok: false, detail: 'unreadOnly must be true or false' }
   }
-  if (
-    limit !== undefined &&
-    (typeof limit !== 'number' ||
-      !Number.isInteger(limit) ||
-      limit < 1 ||
-      limit > MAX_INBOX_LIMIT)
-  ) {
-    return {
-      ok: false,
-      detail: `limit must be a whole number from 1 to ${String(MAX_INBOX_LIMIT)}`,
-    }
-  }
+  const limit = parseLimit(record.limit, MAX_INBOX_LIMIT)
+  if (!limit.ok) return limit
 
   // Rebuilt field by field, not spread: an agent's extra keys never become props.
   return {
     ok: true,
     props: {
       ...(unreadOnly === undefined ? {} : { unreadOnly }),
-      ...(limit === undefined ? {} : { limit }),
+      ...(limit.limit === undefined ? {} : { limit: limit.limit }),
     },
   }
-}
-
-/** One read of the inbox door: whose it is, what's in it, whether it failed. */
-interface InboxState {
-  inbox: Awaited<ReturnType<typeof myInbox>> | null
-  failed: boolean
 }
 
 /**
@@ -124,24 +108,10 @@ interface InboxState {
  * moves (the stack telling us something landed on `notify:*`, which for this
  * connection can only ever be the viewer's own).
  */
-function useMyInbox(revision: number): InboxState {
-  const [state, setState] = useState<InboxState>({ inbox: null, failed: false })
-  useEffect(() => {
-    let cancelled = false
-    void myInbox().then(
-      (inbox) => {
-        if (!cancelled) setState({ inbox, failed: false })
-      },
-      () => {
-        // The ship degrades rather than crashing, and so does a tile on it.
-        if (!cancelled) setState((prev) => ({ ...prev, failed: true }))
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [revision])
-  return state
+function useMyInbox(
+  revision: number,
+): LiveRead<Awaited<ReturnType<typeof myInbox>>> {
+  return useLiveRead(() => myInbox(), [revision])
 }
 
 /** One entry: unread dot, what happened, when. */
@@ -184,7 +154,7 @@ function InboxBody({
   props: InboxProps
   revision: number
 }) {
-  const { inbox, failed } = useMyInbox(revision)
+  const { value: inbox, failed } = useMyInbox(revision)
   if (!inbox) {
     return (
       <p className="px-3 pb-3 text-sm text-muted-foreground">

@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, ChevronRight, LayoutGrid, X } from 'lucide-react'
 
 import { TAP_TARGET } from '@rigging/lib/tap-target'
-import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
+import type { EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
 
 import { useAnswerGuard } from './answer-guard'
 import { resolveWidget, type WidgetResolution } from './registry'
+import { ResolvedWidgetBody } from './resolved-widget-body'
+import { useWidgetLiveRevision } from './use-widget-live-revision'
 
 /**
  * The widget stack: the live little views a chat is keeping open, sitting directly
@@ -79,27 +81,9 @@ export function WidgetStack({
   // door would only refuse. Shared with the canvas, which answers the same rows.
   const answers = useAnswerGuard(busy)
 
-  // Every topic any open widget needs, deduped. A shelf of static widgets asks
-  // for none, and `useShipLog` opens no connection at all for an empty set.
-  // Recomputed each render rather than memoised: the hook keys on the JOINED
-  // string, so a fresh array of the same topics never reopens the connection.
-  const topics = [
-    ...new Set(
-      widgets.flatMap((widget) => {
-        const resolution = resolveWidget(widget.kind, widget.props)
-        return resolution.ok ? resolution.view.topics : []
-      }),
-    ),
-  ]
-  // One counter for the whole shelf: a widget refetches when it moves. Coarse on
-  // purpose — the same "something changed, read it again" the chat route already
-  // does with `router.invalidate()`, and far simpler than routing each event to
-  // the widget that asked for it.
-  const [revision, setRevision] = useState(0)
-  const onEvent = useCallback(() => {
-    setRevision((n) => n + 1)
-  }, [])
-  useShipLog(topics, onEvent, eventSourceFactory)
+  // One counter for the whole shelf, fed by the ONE subscription over every
+  // topic any widget here declares: a live widget refetches when it moves.
+  const revision = useWidgetLiveRevision(widgets, eventSourceFactory)
 
   return (
     <div
@@ -166,19 +150,10 @@ function ChatWidget({
   onDismiss: () => void
   onPin?: () => void
 }) {
-  // Memoised, and that's load-bearing rather than an optimisation: `parse`
-  // returns a FRESH `Body` closure every call, and React treats a new component
-  // identity as a different component — so re-resolving on each render would
-  // unmount and remount the body, throwing away a live kind's fetched contents
-  // and re-reading the service every time the shelf re-rendered (an expand, a
-  // `busy` flip, a `revision` bump). Keyed on the row's own fields, so it does
-  // remount when the ROW actually changes, which is right — the route's `props`
-  // come straight off loader data, whose identity moves only when the loader
-  // re-runs (the same assumption the chat route's own `useMemo`s already make).
-  const resolution: WidgetResolution = useMemo(
-    () => resolveWidget(widget.kind, widget.props),
-    [widget.kind, widget.props],
-  )
+  // Resolved here only for the tile's own chrome — the headline and the honest
+  // fault tile below. The body itself is `ResolvedWidgetBody`, which owns the
+  // load-bearing memoisation of the resolve.
+  const resolution: WidgetResolution = resolveWidget(widget.kind, widget.props)
   // What every control on this tile is NAMED after. It used to be the row's
   // primary key — "Dismiss widget 019fa5b1-f0f1-…" — which is a database column
   // escaping into the UI, and the only thing a screen reader user would hear
@@ -251,7 +226,7 @@ function ChatWidget({
     )
   }
 
-  const { headline, Body } = resolution.view
+  const { headline } = resolution.view
   return (
     <div ref={tileRef} className="rounded-lg border bg-background">
       <div className="flex items-center gap-1">
@@ -292,11 +267,11 @@ function ChatWidget({
       {/* The body mounts only while the tile is open, so a live kind isn't
           reading a service for a tile nobody has looked at. */}
       {expanded && (
-        <Body
+        <ResolvedWidgetBody
+          widget={widget}
           revision={revision}
-          onAnswer={onAnswer}
           spent={spent}
-          answer={widget.answerValue}
+          onAnswer={onAnswer}
         />
       )}
     </div>

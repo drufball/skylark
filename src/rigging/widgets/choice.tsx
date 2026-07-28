@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 
+import { offeredAnswer } from '@hull/chat/widgets'
 import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { Button } from '@rigging/components/ui/button'
 import { cn } from '@rigging/lib/utils'
@@ -26,25 +27,28 @@ export const choiceKind: WidgetKind = {
     '{ question: string, options: string[] } — options must be a non-empty list of non-empty strings',
   example: { question: 'Ship the new theme?', options: ['Yes', 'No'] },
   parse: (props): WidgetParse => {
-    const record = asRecord(props)
-    if (!record) return { ok: false, detail: 'expected an object of props' }
-    if (!isFilledString(record.question))
-      return { ok: false, detail: 'question must be a non-empty string' }
-    const { options } = record
-    if (
-      !Array.isArray(options) ||
-      options.length === 0 ||
-      !options.every(isFilledString)
-    ) {
+    // The structural rule is the HULL's (`offeredAnswer` — the whitelist the
+    // answer door checks a tap against), delegated to rather than re-spelled,
+    // so the buttons this kind draws and the answers the door accepts can't
+    // drift apart. What stays here is the finer-grained refusal: the door only
+    // says "no offer", and an agent that got the blob wrong deserves to hear
+    // WHICH field, one honest fault at a time, in field order.
+    const offer = offeredAnswer(props)
+    if (!offer) {
+      const record = asRecord(props)
+      if (!record) return { ok: false, detail: 'expected an object of props' }
+      if (!isFilledString(record.question))
+        return { ok: false, detail: 'question must be a non-empty string' }
       return {
         ok: false,
         detail: 'options must be a non-empty array of non-empty strings',
       }
     }
+    const { question, options } = offer
     return {
       ok: true,
       view: {
-        headline: record.question,
+        headline: question,
         topics: [],
         Body: ({ onAnswer, spent, answer }) =>
           answer === null ? (

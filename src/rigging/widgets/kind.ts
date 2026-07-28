@@ -98,3 +98,45 @@ export function asRecord(json: unknown): Record<string, unknown> | null {
 export function isFilledString(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
 }
+
+/** An optional list of non-empty strings: absent, or genuinely a list. */
+export function parseStringList(
+  value: unknown,
+  field: string,
+): { ok: true; list?: string[] } | { ok: false; detail: string } {
+  if (value === undefined) return { ok: true }
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every(isFilledString)
+  )
+    return {
+      ok: false,
+      detail: `${field} must be a non-empty array of non-empty strings`,
+    }
+  return { ok: true, list: value }
+}
+
+/**
+ * An optional `limit`: absent (the kind falls back to its own default), or a
+ * whole number from 1 to `max` — every list-shaped kind bounds it, because
+ * above a tile-sized cap it stops being a tile. The refusal spells the bounds,
+ * so an agent that wrote `5000` learns the real ceiling on the spot.
+ */
+export function parseLimit(
+  value: unknown,
+  max: number,
+): { ok: true; limit?: number } | { ok: false; detail: string } {
+  if (value === undefined) return { ok: true }
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > max
+  )
+    return {
+      ok: false,
+      detail: `limit must be a whole number from 1 to ${String(max)}`,
+    }
+  return { ok: true, limit: value }
+}
