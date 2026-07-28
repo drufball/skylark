@@ -1,3 +1,9 @@
+# ⚠ DISABLED (gh workflow disable, 2026-07-28, #pykd): both auth paths are dead —
+# OAuth setup-tokens from the operator's account get 401 "OAuth access token is
+# invalid" (even freshly minted), and the ANTHROPIC_API_KEY secret is invalid.
+# To re-enable: set a working ANTHROPIC_API_KEY secret, then
+# `gh workflow enable change-review.yml` (same for architecture-review-global,
+# mutation-scan, coverage-boost).
 name: change review
 
 # Agentic, advisory PR change review via claude-code-action. NOT a gate: an
@@ -61,8 +67,6 @@ jobs:
           # (401 "OAuth access token is invalid" even freshly minted — #pykd);
           # use the metered API key instead.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # TEMPORARY (#pykd diagnosis): surface the hidden SDK error; revert once diagnosed.
-          show_full_output: true
           # Pin a real, versioned model id — NOT the floating `opus` alias.
           # The action resolves that alias on its own, and got it wrong once
           # already (resolved to the nonexistent `claude-opus-5`), which
