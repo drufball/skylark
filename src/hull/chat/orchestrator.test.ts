@@ -1034,6 +1034,23 @@ describe('chat orchestrator', () => {
     expect(prompt).toContain('@dru: plan?')
   })
 
+  it('tells the agent where this chat’s OWN docs folder is, and how to put it on the canvas', async () => {
+    // #wkh8: a chat's working docs live under chats/<id>/ in the shared
+    // files, and an agent should be able to point a `files` widget at
+    // exactly that folder without hand-typing the path.
+    const chatId = uuidv7()
+    await createChat(db, { id: chatId, memberIds: [dru, tilde] })
+    await addMessage(db, { id: uuidv7(), chatId, authorId: dru, body: 'hi' })
+
+    const runtime = promptRecordingRuntime('hello')
+    const orch = createChatOrchestrator({ db, runtime })
+    await orch.respond({ chatId, authorId: dru, body: 'hi' })
+
+    const [prompt] = runtime.prompts
+    expect(prompt).toContain(`chats/${chatId}`)
+    expect(prompt).toContain(`"folder": "chats/${chatId}"`)
+  })
+
   it('tells the agent which canvas page EACH person is looking at', async () => {
     // "What's this?" is answerable only if the agent knows what's in front of
     // the person who asked — and that's per person: two members of one chat can
