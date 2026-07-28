@@ -3,6 +3,43 @@
 
 ## Recent Work
 
+### Issue #wkh8: Per-chat files subfolder + turnContext shortcut (PR #166) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (1712 tests), both coverage
+  gates pass (100% diff coverage on `orchestrator.ts`). Handed off.
+- **What**: subfolder-per-chat convention the issue asked for — a chat's own
+  working docs live at `chats/<chatId>/` in the one shared files library
+  (still one repo/branch/sweep, nothing siloed). New `src/hull/chat/docs.ts`:
+  `chatDocsDir(chatId)` is PURE and DERIVED from the chat id alone — no new
+  `chats` column, no migration, nothing provisioned ahead of time (a folder
+  needs nothing created up front; it exists the moment something is written
+  under it, same as any other shared-file path). Exactly the same
+  node-free-leaf shape as `topic.ts` and the agent service's own
+  `agents/<handle>/` convention (`agent/memory-paths.ts`) — worth reaching for
+  that pattern (derive-from-a-stable-id, no schema change) whenever a "give
+  X its own folder" ask shows up and X already has a stable id.
+- **The shortcut half**: `turnContext` (`hull/chat/orchestrator.ts`) now tells
+  every agent, every turn, its own chat's docs folder and the exact
+  `chat_widget` call to scope a `files` widget to it (kind `"files"`, props
+  `{ folder: chatDocsDir(chatId) }`). Framed explicitly as a shortcut
+  ALONGSIDE, never instead of, pointing that widget at any other path or the
+  whole tree — the issue was emphatic that the widget's existing flexibility
+  must not regress, so the turnContext prose says so out loud too.
+- **Left out on purpose** (per the issue's own "nice-to-have, not required"):
+  the Files route/view surfacing which chat a `chats/<slug>/` folder belongs
+  to, and any change to the Files room's own default widget (still
+  unfiltered `props: {}` — it's the "everything" room, correctly untouched).
+- **Red-green**: `docs.test.ts` (new file, pins the derivation) and a new
+  `orchestrator.test.ts` case asserting `turnContext` mentions the chat's own
+  folder and a `files`-widget props blob scoped to it — confirmed both failed
+  before the implementation existed (no `docs.ts`; `turnContext` said nothing
+  about a folder) and passed after.
+- **Pattern reinforced**: when an issue offers "a real column vs. a derived
+  mapping" as an explicit either/or, and the thing being keyed already has a
+  stable, unique id (a chat's own id, an agent's handle), derive rather than
+  migrate — it's simpler, needs no provisioning/backfill step, and can't drift
+  out of sync with the row it's supposedly describing.
+
+
 ### Issue #souf: change-review CI floating-model alias (PR #164) — handed to babysitter
 - **Status**: PR open, `npm run check` clean (1697 tests). Handed off.
 - **What**: `.github/workflows/change-review.yml` and its two weekly
