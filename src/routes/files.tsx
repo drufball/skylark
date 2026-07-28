@@ -77,7 +77,8 @@ function FilesRoute() {
   const behindOrigin = useBehindOrigin()
   return (
     <Dock
-      active="files"
+      // No `active`: this view left the rail for its ROOM, which is what links
+      // here now — see rigging/views/dock.tsx.
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}

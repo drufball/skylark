@@ -51,12 +51,7 @@ function ThreadRoute() {
 
   if (!thread) {
     return (
-      <Dock
-        active="issues"
-        Link={Link}
-        onLogout={onLogout}
-        behindOrigin={behindOrigin}
-      >
+      <Dock Link={Link} onLogout={onLogout} behindOrigin={behindOrigin}>
         <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
           <div>
             <p>That issue doesn&apos;t exist.</p>
@@ -71,7 +66,8 @@ function ThreadRoute() {
 
   return (
     <Dock
-      active="issues"
+      // No `active`: this view left the rail for its ROOM, which is what links
+      // here now — see rigging/views/dock.tsx.
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}

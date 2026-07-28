@@ -200,7 +200,7 @@ function AgentsRoute() {
   const behindOrigin = useBehindOrigin()
   return (
     <Dock
-      active="agents"
+      active="crew"
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { SEED_AGENTS } from '@hull/users/service'
 import { resolveWidget } from '@rigging/widgets/registry'
 
-import { DEFAULT_ROOMS } from './rooms'
+import { DEFAULT_ROOMS, roomViewLink } from './rooms'
 
 // The default rooms are DATA — a title, an agent, and widget blobs. Nothing
 // checks them at runtime (the seed just writes rows), so this file is the
@@ -35,6 +35,25 @@ describe('the default rooms', () => {
         ).toBe(true)
       }
     }
+  })
+
+  /**
+   * Issues, Files and Inbox left the rail when they got rooms. Their routes are
+   * deliberately still alive — a widget tile is a readout, not the whole board
+   * — so each room has to carry the way through to its own richer view, or the
+   * view becomes a page nobody can find.
+   */
+  it('links every room through to the view it is the room for', () => {
+    for (const room of DEFAULT_ROOMS) {
+      const link = roomViewLink(room.id)
+      expect(link, room.title).not.toBeNull()
+      expect(link?.to.startsWith('/')).toBe(true)
+      expect(link?.label.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('gives an ordinary chat no view link at all', () => {
+    expect(roomViewLink('019fa5b1-f0f1-7000-8000-000000000000')).toBeNull()
   })
 
   it('puts an agent from the standard crew in every room', () => {

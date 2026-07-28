@@ -1,8 +1,9 @@
 import { uuidv7 } from '@earendil-works/pi-agent-core'
+import { sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Database } from '@hull/db/client'
-import { asActor, freshDb } from '@hull/db/test-db'
+import { asActor, defined, freshDb } from '@hull/db/test-db'
 import { createUser } from '@hull/users/service'
 import {
   getChat,
@@ -10,6 +11,7 @@ import {
   listCanvasWidgets,
   listMembers,
   listWidgets,
+  listWidgetsByIds,
   createCanvasPage,
   dismissWidget,
   placeWidget,
@@ -17,8 +19,10 @@ import {
   setTitle,
 } from '@hull/chat/service'
 
+import { listHomePages, listHomeTiles } from '@hull/home-canvas/service'
+
 import type { RoomSpec } from './rooms'
-import { seedRooms } from './seed'
+import { seedHomes, seedRooms } from './seed'
 
 // The default rooms, seeded. Everything here is about the SECOND run: a seed
 // that duplicates rooms, widgets or memberships is worse than no seed at all,
@@ -31,6 +35,7 @@ const ROOMS: readonly RoomSpec[] = [
     title: 'Issues',
     page: 'Board',
     agentHandle: 'tilde',
+    view: { to: '/issues', label: 'Board' },
     widgets: [{ kind: 'issue-list', props: { limit: 5 }, gridW: 4, gridH: 3 }],
   },
   {
@@ -38,6 +43,7 @@ const ROOMS: readonly RoomSpec[] = [
     title: 'Files',
     page: 'Documents',
     agentHandle: 'dot',
+    view: { to: '/files', label: 'All files' },
     widgets: [{ kind: 'files', props: {}, gridW: 4, gridH: 3 }],
   },
 ]
@@ -269,5 +275,133 @@ describe('seedRooms', () => {
     expect(
       (await listMembers(db, 'room-test-issues')).map((m) => m.handle),
     ).toEqual(['captain', 'mate'])
+  })
+
+  /**
+   * A blank grid is the worst possible first screen now that home IS the front
+   * door — it reads as a ship that failed to load rather than one waiting for
+   * you. So the seed arranges the rooms it just made onto every crew member's
+   * home, under that person's own RLS context (a home is personal; nobody,
+   * including the operator, may write somebody else's).
+   *
+   * The non-clobbering rule is one predicate: a home with **no pages and no
+   * tiles** is one nobody has touched. The instant you make a page, pin
+   * anything, or unpin one of these, the seed never comes near your home again.
+   */
+  describe('seedHomes', () => {
+    const seedTheHomes = async () => {
+      const crew = [
+        { id: captain, handle: 'captain', type: 'human' },
+        { id: mate, handle: 'mate', type: 'human' },
+        { id: tilde, handle: 'tilde', type: 'agent' },
+      ]
+      return seedHomes({
+        crew,
+        rooms: ROOMS,
+        asActor: (userId, fn) => asActor(db, userId, fn),
+      })
+    }
+
+    it('arranges every crew member’s home with the rooms they’re in', async () => {
+      await seed()
+      const report = await seedTheHomes()
+      expect(report.map((r) => r.tilesAdded)).toEqual([2, 2])
+
+      // Pointers at the rooms' READOUTS, so the very first load shows the
+      // ship working rather than three tiles saying "nothing raised right now"
+      // (a room's tile lives on its canvas, never on its stack).
+      const tiles = await listHomeTiles(db, mate)
+      const pinned = await listWidgetsByIds(
+        db,
+        tiles.flatMap((t) => (t.widgetId ? [t.widgetId] : [])),
+      )
+      expect(pinned.map((w) => w.kind).sort()).toEqual(['files', 'issue-list'])
+      // Pointers, never copies: the widgets still live in their own chats.
+      expect(pinned.map((w) => w.chatId).sort()).toEqual([
+        'room-test-files',
+        'room-test-issues',
+      ])
+      // One page, made for them, not three.
+      expect((await listHomePages(db, mate)).map((p) => p.title)).toEqual([
+        'Home',
+      ])
+    })
+
+    it('falls back to a live chat pointer for a room with no readout left', async () => {
+      // Somebody waved the room's tile away (the room seed won't re-raise it,
+      // by design). A pointer at the ROOM is worse than one at its readout, and
+      // far better than a home missing a room the crew is in.
+      await seed()
+      const [widget] = await listWidgets(db, 'room-test-issues')
+      await dismissWidget(db, { widgetId: widget.id, actorId: captain })
+      await seedTheHomes()
+      const [tile] = await listHomeTiles(db, captain)
+      expect(tile.widgetId).toBeNull()
+      expect(tile.chatId).toBe('room-test-issues')
+    })
+
+    it('skips the agents — a home screen is for somebody with a thumb', async () => {
+      await seed()
+      const report = await seedTheHomes()
+      expect(report.map((r) => r.handle)).toEqual(['captain', 'mate'])
+      expect(await listHomeTiles(db, tilde)).toEqual([])
+    })
+
+    it('adds nothing at all on a second run', async () => {
+      await seed()
+      await seedTheHomes()
+      const again = await seedTheHomes()
+      expect(again.every((r) => r.tilesAdded === 0)).toBe(true)
+      expect(await listHomeTiles(db, captain)).toHaveLength(2)
+    })
+
+    it('never touches a home somebody has already arranged', async () => {
+      // The one that matters: unpinning a seeded tile is a DECISION, and the
+      // next boot must not undo it. Their page survives, so their home is no
+      // longer untouched, so the seed leaves it alone forever after.
+      await seed()
+      await seedTheHomes()
+      const [first] = await listHomeTiles(db, captain)
+      await asActor(db, captain, (tx) =>
+        tx.execute(sql`delete from home_canvas_tiles where id = ${first.id}`),
+      )
+      const again = await seedTheHomes()
+      expect(again[0].tilesAdded).toBe(0)
+      expect(await listHomeTiles(db, captain)).toHaveLength(1)
+    })
+
+    it('resolves each room under the viewer’s own membership', async () => {
+      // A room the operator was removed from is not on the operator's home —
+      // the seed asks chat, as them, rather than assuming the spec list.
+      await seed()
+      await asActor(db, captain, (tx) =>
+        removeMember(tx, 'room-test-issues', captain),
+      )
+      const report = await seedTheHomes()
+      expect(report[0].tilesAdded).toBe(1)
+      const [tile] = await listHomeTiles(db, captain)
+      const [pinned] = await listWidgetsByIds(db, [defined(tile.widgetId)])
+      expect(pinned.chatId).toBe('room-test-files')
+    })
+
+    it('reports a crew member it cannot seed and still seeds the rest', async () => {
+      // Every boot runs this, so one crew member's bad home must not cost the
+      // ship the people after them in the list.
+      await seed()
+      const report = await seedHomes({
+        crew: [
+          { id: captain, handle: 'captain', type: 'human' },
+          { id: mate, handle: 'mate', type: 'human' },
+        ],
+        rooms: ROOMS,
+        asActor: (userId, fn) =>
+          userId === captain
+            ? Promise.reject(new Error('connection went away'))
+            : asActor(db, userId, fn),
+      })
+      expect(report[0].error).toMatch(/./)
+      expect(report[1].error).toBeNull()
+      expect(await listHomeTiles(db, mate)).toHaveLength(2)
+    })
   })
 })

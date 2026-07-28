@@ -1024,3 +1024,76 @@ describe('ChatView: moving a widget between the two surfaces', () => {
     expect(screen.queryByLabelText(/on the canvas/)).toBeNull()
   })
 })
+
+/**
+ * A default room is the way in to the surface it replaced in the rail. Without
+ * this link `/issues`, `/files` and `/inbox` are routes with nothing pointing
+ * at them — alive, and unfindable.
+ */
+describe('ChatView: the room’s link to its own view', () => {
+  const FakeLink: NonNullable<ChatViewProps['Link']> = ({
+    to,
+    className,
+    children,
+    ...rest
+  }) => (
+    <a href={to} className={className} {...rest}>
+      {children}
+    </a>
+  )
+
+  it('links a room through to the view it is the room for', () => {
+    renderView({
+      activeId: 'room-issues',
+      title: 'Issues',
+      viewLink: { to: '/issues', label: 'Board' },
+      Link: FakeLink,
+    })
+    const link = screen.getByText('Board').closest('a')
+    expect(link?.getAttribute('href')).toBe('/issues')
+  })
+
+  it('draws nothing for an ordinary chat', () => {
+    renderView({ activeId: 'c1', viewLink: null, Link: FakeLink })
+    expect(screen.queryByText('Board')).toBeNull()
+  })
+
+  it('keeps the link a thumb target on a phone', () => {
+    setWidth(390)
+    renderView({
+      activeId: 'room-files',
+      title: 'Files',
+      viewLink: { to: '/files', label: 'All files' },
+      Link: FakeLink,
+    })
+    expect(classTokensOf('All files', 'a')).toContain('min-h-11')
+  })
+})
+
+/**
+ * The chat chrome slice #cse7 flagged as "slice 7 territory": four controls a
+ * thumb has to hit that were 32–36px tall. Every one of them is now on the
+ * 44px floor the widget surfaces have used since #cse4.
+ */
+describe('ChatView: thumb targets on a phone', () => {
+  it('gives the header controls and the composer a 44px floor', () => {
+    setWidth(390)
+    renderView({
+      activeId: 'c1',
+      members: [
+        { userId: 'a', handle: 'tilde', type: 'agent' },
+        { userId: 'b', handle: 'dru', type: 'human' },
+      ],
+      schedules: [],
+      onCreateSchedule: vi.fn(),
+      onToggleSchedule: vi.fn(),
+      onDeleteSchedule: vi.fn(),
+    })
+    const target = (label: string) =>
+      screen.getByLabelText(label).className.split(/\s+/)
+    expect(target('Open Chats')).toContain('min-h-11')
+    expect(target('People')).toContain('min-h-11')
+    expect(target('Schedules')).toContain('min-h-11')
+    expect(target('Send message')).toContain('min-h-11')
+  })
+})

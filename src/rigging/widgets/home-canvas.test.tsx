@@ -88,7 +88,8 @@ function renderHome(over: { tiles?: HomeTileItem[]; pages?: unknown } = {}) {
       activePageId="p1"
       busy={false}
       chats={[CHAT]}
-      chatHref={(chatId) => `/?chat=${chatId}`}
+      chatHref={(chatId) => `/chat?chat=${chatId}`}
+      chatsHref="/chat"
       Link={Link}
       eventSourceFactory={factory}
       {...handlers}
@@ -142,7 +143,7 @@ describe('HomeCanvas: a chat pointer is the whole promise', () => {
     // screen makes people ask constantly, so every tile answers it in place.
     renderHome()
     const link = screen.getByLabelText('Open the chat Deploys')
-    expect(link.getAttribute('href')).toBe('/?chat=c1')
+    expect(link.getAttribute('href')).toBe('/chat?chat=c1')
   })
 
   it('names an untitled chat by its members, like the sidebar does', () => {
@@ -266,7 +267,8 @@ describe('HomeCanvas: pages and arranging', () => {
         activePageId="p1"
         busy={false}
         chats={[]}
-        chatHref={(chatId) => `/?chat=${chatId}`}
+        chatHref={(chatId) => `/chat?chat=${chatId}`}
+        chatsHref="/chat"
         Link={Link}
         eventSourceFactory={factory}
         onSelectPage={vi.fn()}
@@ -292,7 +294,8 @@ describe('HomeCanvas: pages and arranging', () => {
         activePageId={null}
         busy={false}
         chats={[CHAT]}
-        chatHref={(chatId) => `/?chat=${chatId}`}
+        chatHref={(chatId) => `/chat?chat=${chatId}`}
+        chatsHref="/chat"
         Link={Link}
         eventSourceFactory={factory}
         onSelectPage={vi.fn()}
@@ -305,10 +308,109 @@ describe('HomeCanvas: pages and arranging', () => {
         onPinChat={vi.fn()}
       />,
     )
-    expect(screen.getByText('Your home is empty')).toBeTruthy()
+    expect(screen.getByText('Your home screen is empty')).toBeTruthy()
     vi.spyOn(window, 'prompt').mockReturnValue('Morning')
-    fireEvent.click(screen.getByRole('button', { name: /New page/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Make a page/ }))
     expect(onNewPage).toHaveBeenCalledWith('Morning')
+  })
+
+  /**
+   * The first screen a brand-new crew member sees, before the rooms seed has
+   * given them anything. "Make a page" would be a dead end — a page you then
+   * have nothing to put on — so the empty home points at where conversations
+   * come from instead.
+   */
+  it('points a crew member with no conversations at the chats surface', () => {
+    render(
+      <HomeCanvas
+        pages={[]}
+        tiles={[]}
+        activePageId={null}
+        busy={false}
+        chats={[]}
+        chatHref={(chatId) => `/chat?chat=${chatId}`}
+        chatsHref="/chat"
+        Link={Link}
+        eventSourceFactory={factory}
+        onSelectPage={vi.fn()}
+        onNewPage={vi.fn()}
+        onRenamePage={vi.fn()}
+        onRemovePage={vi.fn()}
+        onMoveTile={vi.fn()}
+        onUnpinTile={vi.fn()}
+        onAnswerWidget={vi.fn()}
+        onPinChat={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /Make a page/ })).toBeNull()
+    const out = screen.getByText('Start a conversation').closest('a')
+    expect(out?.getAttribute('href')).toBe('/chat')
+    // …and no page strip above it holding a lone `+`: two ways to make a page
+    // on the one screen that has to read as welcoming rather than unfinished.
+    expect(screen.queryByLabelText('Add a page')).toBeNull()
+  })
+
+  /**
+   * A page you made with nothing on it. Same job as the empty home, one step
+   * in: it must not read as a broken page, and it must not point at a picker
+   * that would be empty.
+   */
+  it('says what to do on a page with no tiles yet, on both layouts', () => {
+    for (const width of [PHONE, DESKTOP]) {
+      act(() => {
+        setWidth(width)
+      })
+      const { unmount } = render(
+        <HomeCanvas
+          pages={[{ id: 'p1', title: 'Home' }]}
+          tiles={[]}
+          activePageId="p1"
+          busy={false}
+          chats={[CHAT]}
+          chatHref={(chatId) => `/chat?chat=${chatId}`}
+          chatsHref="/chat"
+          Link={Link}
+          eventSourceFactory={factory}
+          onSelectPage={vi.fn()}
+          onNewPage={vi.fn()}
+          onRenamePage={vi.fn()}
+          onRemovePage={vi.fn()}
+          onMoveTile={vi.fn()}
+          onUnpinTile={vi.fn()}
+          onAnswerWidget={vi.fn()}
+          onPinChat={vi.fn()}
+        />,
+      )
+      expect(screen.getByText(/Nothing on this page yet/)).toBeTruthy()
+      unmount()
+    }
+    // …and with no conversations at all, it points at where they're made
+    // rather than at the Tile button, which would open an empty picker.
+    act(() => {
+      setWidth(PHONE)
+    })
+    render(
+      <HomeCanvas
+        pages={[{ id: 'p1', title: 'Home' }]}
+        tiles={[]}
+        activePageId="p1"
+        busy={false}
+        chats={[]}
+        chatHref={(chatId) => `/chat?chat=${chatId}`}
+        chatsHref="/chat"
+        Link={Link}
+        eventSourceFactory={factory}
+        onSelectPage={vi.fn()}
+        onNewPage={vi.fn()}
+        onRenamePage={vi.fn()}
+        onRemovePage={vi.fn()}
+        onMoveTile={vi.fn()}
+        onUnpinTile={vi.fn()}
+        onAnswerWidget={vi.fn()}
+        onPinChat={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('start one').getAttribute('href')).toBe('/chat')
   })
 
   it('names every control after the tile, never after its row id', () => {

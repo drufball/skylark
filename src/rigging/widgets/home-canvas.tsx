@@ -92,6 +92,12 @@ export interface HomeCanvasProps {
   onPinChat: (chatId: string) => void
   /** Where a tile's "open the chat" link goes. */
   chatHref: (chatId: string) => string
+  /**
+   * Where "go and find a conversation" goes. The empty home is the first screen
+   * anybody sees, and telling somebody to pin a chat when they have none is a
+   * dead end — so the empty states link out to where chats are made.
+   */
+  chatsHref: string
   Link: HomeLink
   eventSourceFactory?: EventSourceFactory
 }
@@ -133,6 +139,7 @@ export function HomeCanvas({
   chats,
   onPinChat,
   chatHref,
+  chatsHref,
   Link,
   eventSourceFactory,
 }: HomeCanvasProps) {
@@ -199,31 +206,37 @@ export function HomeCanvas({
       data-testid="home-canvas"
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
     >
-      <PageStrip
-        pages={pages}
-        activeId={activePage?.id}
-        busy={busy}
-        onSelectPage={onSelectPage}
-        onNewPage={onNewPage}
-        onRenamePage={onRenamePage}
-        onRemovePage={onRemovePage}
-      >
-        {activePage && (
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn('shrink-0', TAP_TARGET)}
-            disabled={busy}
-            aria-label="Add a tile"
-            onClick={() => {
-              setPicking((open) => !open)
-            }}
-          >
-            <Plus className="size-4" />
-            Tile
-          </Button>
-        )}
-      </PageStrip>
+      {/* No pages means the very first screen a crew member ever sees, and a
+          bare strip holding one lonely `+` above an empty state that already
+          says "Make a page" is two ways to do the same thing, on the one screen
+          that has to read as welcoming rather than unfinished. */}
+      {pages.length > 0 && (
+        <PageStrip
+          pages={pages}
+          activeId={activePage?.id}
+          busy={busy}
+          onSelectPage={onSelectPage}
+          onNewPage={onNewPage}
+          onRenamePage={onRenamePage}
+          onRemovePage={onRemovePage}
+        >
+          {activePage && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn('shrink-0', TAP_TARGET)}
+              disabled={busy}
+              aria-label="Add a tile"
+              onClick={() => {
+                setPicking((open) => !open)
+              }}
+            >
+              <Plus className="size-4" />
+              Tile
+            </Button>
+          )}
+        </PageStrip>
+      )}
       {picking && activePage && (
         <ChatPicker
           chats={chats}
@@ -238,10 +251,22 @@ export function HomeCanvas({
         />
       )}
       {!activePage ? (
-        <Empty onNewPage={onNewPage} busy={busy} />
+        <Empty
+          onNewPage={onNewPage}
+          busy={busy}
+          hasChats={chats.length > 0}
+          chatsHref={chatsHref}
+          Link={Link}
+        />
       ) : isMobile ? (
         <SwipeColumn testId="home-column" onSwipe={step}>
-          {onPage.length === 0 && <PageEmpty />}
+          {onPage.length === 0 && (
+            <PageEmpty
+              hasChats={chats.length > 0}
+              chatsHref={chatsHref}
+              Link={Link}
+            />
+          )}
           {onPage.map((item) => (
             <div key={item.id}>{tile(item)}</div>
           ))}
@@ -250,7 +275,13 @@ export function HomeCanvas({
         <ArrangeableGrid
           items={onPage}
           testId="home-grid"
-          empty={<PageEmpty />}
+          empty={
+            <PageEmpty
+              hasChats={chats.length > 0}
+              chatsHref={chatsHref}
+              Link={Link}
+            />
+          }
           onPlace={(tileId, box) => {
             onMoveTile(tileId, { pageId: activePage.id, ...box })
           }}
@@ -300,7 +331,7 @@ function ChatPicker({
       <div className="flex max-h-48 flex-col gap-1 overflow-y-auto">
         {chats.length === 0 && (
           <p className="px-1 py-2 text-xs text-muted-foreground">
-            No conversations yet. Start one from Chat and it can live here.
+            No conversations yet. Start one from Chats and it can live here.
           </p>
         )}
         {chats.map((chat) => (
@@ -324,42 +355,94 @@ function ChatPicker({
   )
 }
 
+/**
+ * A home with no pages at all — which, since this became the front door, is the
+ * **first screen a crew member ever sees**. It has one job above all others: to
+ * read as a ship waiting for you rather than a ship that failed to load. So it
+ * says what this surface is for in one sentence, gives the single next move a
+ * button, and — when you have no conversations to put here yet — points at
+ * where conversations are made instead of at a picker that would be empty.
+ *
+ * The rail is on screen the whole time, so nothing here is a dead end.
+ */
 function Empty({
   onNewPage,
   busy,
+  hasChats,
+  chatsHref,
+  Link,
 }: {
   onNewPage: (title: string) => void
   busy: boolean
+  hasChats: boolean
+  chatsHref: string
+  Link: HomeLink
 }) {
   return (
     <div className="flex flex-1 items-center justify-center p-6 text-center">
       <div className="max-w-xs">
-        <p className="text-sm font-medium">Your home is empty</p>
+        <p className="text-sm font-medium">Your home screen is empty</p>
         <p className="mb-3 text-xs text-muted-foreground">
-          Make a page, then put your conversations on it. Whatever they need
-          from you turns up here — you answer with a thumb, and it lands in the
-          chat as an ordinary message.
+          This is where your conversations keep their live views. Whatever the
+          crew needs from you turns up here — you answer with a thumb, and it
+          lands in the chat as an ordinary message.
         </p>
-        <Button
-          size="sm"
-          disabled={busy}
-          onClick={() => {
-            askForPage(onNewPage, 'Home')
-          }}
-        >
-          <Plus className="size-4" />
-          New page
-        </Button>
+        {hasChats ? (
+          <Button
+            className={TAP_TARGET}
+            disabled={busy}
+            onClick={() => {
+              askForPage(onNewPage, 'Home')
+            }}
+          >
+            <Plus className="size-4" />
+            Make a page
+          </Button>
+        ) : (
+          <Link
+            to={chatsHref}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground',
+              TAP_TARGET,
+            )}
+          >
+            <ArrowUpRight className="size-4" />
+            Start a conversation
+          </Link>
+        )}
       </div>
     </div>
   )
 }
 
-function PageEmpty() {
+/** A page you made with nothing on it yet — the same job, one step further in. */
+function PageEmpty({
+  hasChats,
+  chatsHref,
+  Link,
+}: {
+  hasChats: boolean
+  chatsHref: string
+  Link: HomeLink
+}) {
   return (
-    <p className="p-4 text-center text-xs text-muted-foreground">
-      Nothing on this page yet. Add a conversation with the Tile button above.
-    </p>
+    <div className="p-4 text-center text-xs text-muted-foreground">
+      {hasChats ? (
+        <p>
+          Nothing on this page yet. Put a conversation on it with the{' '}
+          <span className="font-medium text-foreground">Tile</span> button
+          above.
+        </p>
+      ) : (
+        <p>
+          Nothing on this page yet, and no conversations to put on it —{' '}
+          <Link to={chatsHref} className="font-medium underline">
+            start one
+          </Link>{' '}
+          and it can live here.
+        </p>
+      )}
+    </div>
   )
 }
 

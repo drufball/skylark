@@ -1,36 +1,37 @@
 import type { ComponentType, ReactNode } from 'react'
 import {
   Anchor,
-  Bell,
-  Bot,
   Boxes,
-  FolderOpen,
-  Hammer,
   House,
   LogOut,
   MessageSquare,
+  Users,
 } from 'lucide-react'
 
 import { cn } from '@rigging/lib/utils'
 
-// The dock: the ship's persistent app-shell nav. It switches between the ship's
-// surfaces — Chat (the front door), Home (your own canvas of pointers at the
-// widgets living in your chats), Issues (the board), Files (shared docs), Inbox
-// (notifications), Agents (profiles + the session monitor), and Models (local +
-// hosted models). Presentational and router-agnostic: the link element is
-// injected so the dock is testable without a router and reusable across routes.
+// The rail: the ship's permanent, hardcoded navigation. Four entries — Home
+// (your canvas), Chats (every conversation), Crew (people and agents), Models —
+// and a way out.
 //
-// Home sits AFTER Chat deliberately: `/` is still the chat front door, and
-// putting Home first would imply a change to that which this slice hasn't made.
+// **It is short and it is hardcoded on purpose.** Once the front door became
+// your home canvas, navigation became DATA: which chats you're in, which pages
+// you made, which tiles you kept. Data can be deleted, and a crew member can
+// arrange their way into a corner where "where's my inbox?" turns into "which
+// page had the inbox tile?" with no way back. The rail is the answer to that:
+// it consults no row, it renders identically for a brand-new crew member with
+// an empty home, and every other surface hangs off one of its four entries.
+//
+// Issues, Files and Inbox are NOT here any more — each has a room now
+// (`rigging/rooms`), and the room links through to its richer view. That's the
+// thesis: the apps were conversations. Models stays, because a settings surface
+// is not a conversation and the thesis is proven by what migrates well.
+//
+// Presentational and router-agnostic: the link element is injected so the rail
+// is testable without a router and reusable across routes.
 
-export type DockSection =
-  | 'chat'
-  | 'home'
-  | 'issues'
-  | 'files'
-  | 'inbox'
-  | 'agents'
-  | 'models'
+/** A surface with a place in the rail. A route without one highlights nothing. */
+export type DockSection = 'home' | 'chats' | 'crew' | 'models'
 
 /** A navigation link, injected so the dock doesn't depend on a router. */
 export type DockLink = ComponentType<{
@@ -46,18 +47,25 @@ interface DockItem {
   Icon: typeof Anchor
 }
 
-const ITEMS: DockItem[] = [
-  { section: 'chat', to: '/', label: 'Chat', Icon: MessageSquare },
-  { section: 'home', to: '/home', label: 'Home', Icon: House },
-  { section: 'issues', to: '/issues', label: 'Issues', Icon: Hammer },
-  { section: 'files', to: '/files', label: 'Files', Icon: FolderOpen },
-  { section: 'inbox', to: '/inbox', label: 'Inbox', Icon: Bell },
-  { section: 'agents', to: '/agents', label: 'Agents', Icon: Bot },
+/**
+ * The rail, exported because it's a claim other tests check: `navigation.test.ts`
+ * holds that every route in the ship is reachable from here or from a default
+ * room, so no view can quietly become an orphan.
+ */
+export const RAIL: readonly DockItem[] = [
+  { section: 'home', to: '/', label: 'Home', Icon: House },
+  { section: 'chats', to: '/chat', label: 'Chats', Icon: MessageSquare },
+  { section: 'crew', to: '/agents', label: 'Crew', Icon: Users },
   { section: 'models', to: '/models', label: 'Models', Icon: Boxes },
 ]
 
 export interface DockProps {
-  active: DockSection
+  /**
+   * The rail entry to highlight. Optional: `/issues`, `/files` and `/inbox` are
+   * still real surfaces you can be standing on, and none of the four is where
+   * you are, so they highlight nothing rather than lying.
+   */
+  active?: DockSection
   /** The router's Link component (or a stand-in in tests). */
   Link: DockLink
   /** Ends the session and returns to /login. */
@@ -71,7 +79,18 @@ export interface DockProps {
   children: ReactNode
 }
 
-/** The app shell: a slim left rail of sections, with the active surface beside it. */
+/** A rail target: thumb-sized on a phone, dense enough for a 64px column. */
+const RAIL_TARGET =
+  'flex min-h-14 flex-1 flex-col items-center justify-center gap-1 rounded-md px-1 text-[10px] font-medium md:w-14 md:flex-none'
+
+/**
+ * The app shell: the permanent rail plus the active surface. On a phone the
+ * rail is a bar across the bottom, where a thumb already is and where it costs
+ * height rather than a sixth of a 390px screen's width; from `md` up it's the
+ * slim left column. One element, two layouts, decided in CSS rather than by
+ * `useIsMobile` — the rail has to be right on the very first paint, and a
+ * measured breakpoint isn't known until after mount.
+ */
 export function Dock({
   active,
   Link,
@@ -90,13 +109,15 @@ export function Dock({
           </span>
         </div>
       )}
-      <div className="flex min-h-0 flex-1">
-        <nav className="flex w-16 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r bg-muted/30 py-3">
+      {/* `flex-col-reverse` puts the nav (first in the DOM, so first in the tab
+          order) visually last on a phone. */}
+      <div className="flex min-h-0 flex-1 flex-col-reverse md:flex-row">
+        <nav className="flex shrink-0 flex-row items-center gap-1 border-t bg-muted/30 px-1 py-1 md:w-16 md:flex-col md:items-center md:justify-start md:overflow-y-auto md:border-t-0 md:border-r md:px-0 md:py-3">
           <Anchor
-            className="mb-3 size-6 text-muted-foreground"
+            className="mb-3 hidden size-6 text-muted-foreground md:block"
             aria-label="Skylark"
           />
-          {ITEMS.map((item) => (
+          {RAIL.map((item) => (
             <DockButton
               key={item.section}
               item={item}
@@ -107,7 +128,11 @@ export function Dock({
           <button
             type="button"
             onClick={onLogout}
-            className="mt-auto flex w-14 flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            className={cn(
+              RAIL_TARGET,
+              'md:mt-auto',
+              'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+            )}
           >
             <LogOut className="size-5" />
             Log out
@@ -133,14 +158,12 @@ function DockButton({
   Link: DockLink
 }) {
   const { Icon, label } = item
-  const base =
-    'flex w-14 flex-col items-center gap-1 rounded-md py-2 text-[10px] font-medium'
 
   return (
     <Link
       to={item.to}
       className={cn(
-        base,
+        RAIL_TARGET,
         'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
         active && 'bg-accent text-accent-foreground',
       )}

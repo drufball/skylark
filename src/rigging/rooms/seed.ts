@@ -9,10 +9,17 @@ import {
   createChat,
   getChat,
   listCanvasPages,
+  listCanvasWidgets,
+  listChatSummaries,
   listMembers,
   listWidgets,
   placeWidget,
 } from '@hull/chat/service'
+import {
+  listHomePages,
+  listHomeTiles,
+  pinHomeTile,
+} from '@hull/home-canvas/service'
 import { listUsers } from '@hull/users/service'
 
 import { DEFAULT_ROOMS, type RoomSpec } from './rooms'
@@ -85,7 +92,7 @@ export async function seedRooms(
 }
 
 /** The crew, as this module needs them: who's human, and who answers to a handle. */
-type Crew = { id: string; handle: string; type: string }[]
+export type Crew = { id: string; handle: string; type: string }[]
 
 async function seedRoom(
   db: Database,
@@ -187,4 +194,119 @@ async function seedRoom(
     room.error = errorMessage(err)
   }
   return room
+}
+
+// --- Homes ------------------------------------------------------------------
+
+/**
+ * How much page a seeded room tile takes. Half-width, so the three rooms read
+ * as an arrangement on a desktop grid rather than one very tall column; a phone
+ * shows one column whatever this says.
+ */
+const HOME_TILE = { gridW: 2, gridH: 3 }
+
+/** What one person's home pass did — what the CLI prints and the tests assert on. */
+export interface SeededHome {
+  userId: string
+  handle: string
+  /** Rooms put on this person's home (0 if they'd already arranged it). */
+  tilesAdded: number
+  /** Why this home couldn't be seeded, if it couldn't. Never thrown. */
+  error: string | null
+}
+
+/**
+ * Put the ship's rooms on the crew's home screens.
+ *
+ * Since the home canvas became the front door, an empty grid is the FIRST thing
+ * a new crew member sees, and a blank screen reads as a ship that failed to
+ * load rather than one waiting for you. So the rooms the seed just opened get
+ * arranged onto each person's home: three pointers at three conversations, and
+ * the ship is visibly working before anybody has arranged anything.
+ *
+ * Two rules, both load-bearing:
+ *
+ * - **A home is personal, so each pass runs as its OWNER.** `home_canvas_*` is
+ *   gated by `owner_id = the acting actor` (migration 0036) and there is no
+ *   door anywhere that takes an `ownerId` — deliberately. The operator running
+ *   `npm run rooms seed` cannot write somebody else's home and this function
+ *   does not try: it's handed an `asActor` and opens one RLS context per
+ *   person. That also means each pin resolves the rooms through the CHAT
+ *   service under THAT person's membership, so a room they aren't in simply
+ *   doesn't land on their home.
+ * - **An untouched home is the only one it writes.** Zero pages and zero tiles
+ *   is the whole predicate. The moment somebody makes a page, pins something,
+ *   or unpins one of these, their home stops being the ship's and becomes
+ *   theirs — for good. That's a stricter promise than the room seed makes (a
+ *   room converges what's new forever), and deliberately so: unpinning a tile
+ *   is an ordinary move somebody makes with a thumb, and a seed that undid it
+ *   on the next boot would be the ship arguing with its crew. The honest cost
+ *   is the mirror image: somebody who clears their home down to nothing gets
+ *   the rooms back, because a home with nothing in it is indistinguishable from
+ *   one nobody has touched.
+ */
+export async function seedHomes(input: {
+  /** Everybody aboard. Agents are skipped — a home screen needs a thumb. */
+  crew: Crew
+  rooms?: readonly RoomSpec[]
+  /** Run a unit of work under one crew member's own RLS context. */
+  asActor: <T>(userId: string, fn: (db: Database) => Promise<T>) => Promise<T>
+}): Promise<SeededHome[]> {
+  const rooms = input.rooms ?? DEFAULT_ROOMS
+  const report: SeededHome[] = []
+  for (const user of input.crew) {
+    if (user.type !== 'human') continue
+    const home: SeededHome = {
+      userId: user.id,
+      handle: user.handle,
+      tilesAdded: 0,
+      error: null,
+    }
+    try {
+      await input.asActor(user.id, async (tx) => {
+        const [pages, tiles] = await Promise.all([
+          listHomePages(tx, user.id),
+          listHomeTiles(tx, user.id),
+        ])
+        // Anything at all here is somebody's arrangement. Leave it.
+        if (pages.length > 0 || tiles.length > 0) return
+        // Their membership, read as them — never the spec list, which says
+        // nothing about whether this person is actually in the room.
+        const mine = new Set(
+          (await listChatSummaries(tx, user.id)).map((chat) => chat.id),
+        )
+        for (const room of rooms) {
+          if (!mine.has(room.id)) continue
+          // Point at the room's READOUT, not just at the room. A chat pointer
+          // shows whatever is on top of that chat's stack, and a room's tile
+          // lives on its CANVAS — so three chat pointers would give a brand-new
+          // crew member three tiles all saying "nothing raised right now",
+          // which is a blank screen with extra steps. Pinning the widget puts
+          // the open issues, the documents and the inbox on the home screen on
+          // the very first load: the ship, visibly working. The tile still
+          // names its room and links into it, so the conversation is one tap
+          // away either way.
+          const readout = (await listCanvasWidgets(tx, room.id)).at(0)
+          // No readout (somebody waved it away) — fall back to a live chat
+          // pointer rather than skipping the room entirely.
+          await pinHomeTile(tx, {
+            id: uuidv7(),
+            ownerId: user.id,
+            ...(readout ? { widgetId: readout.id } : { chatId: room.id }),
+            // No page named: the first pin makes their landing page, and the
+            // rest find their own free slot on it.
+            ...HOME_TILE,
+          })
+          home.tilesAdded++
+        }
+      })
+    } catch (err) {
+      // Reported, never thrown — the same rule the room pass keeps, for the
+      // same reason: this runs on every boot, and one odd home must not cost
+      // the ship the crew after it in the list.
+      home.error = errorMessage(err)
+    }
+    report.push(home)
+  }
+  return report
 }

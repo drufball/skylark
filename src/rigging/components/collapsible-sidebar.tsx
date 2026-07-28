@@ -4,6 +4,7 @@ import { PanelLeft } from 'lucide-react'
 import { useIsMobile } from '@rigging/lib/use-is-mobile'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
+import { TAP_TARGET } from '@rigging/widgets/kind'
 import {
   Sheet,
   SheetContent,
@@ -58,7 +59,9 @@ export function CollapsibleSidebar({
       <Button
         variant="outline"
         size="sm"
-        className="m-2 self-start"
+        // The ONLY way back to the list on a phone, so it gets the thumb floor
+        // the widget surfaces have used since #cse4 — it was 32px.
+        className={cn('m-2 self-start px-3', TAP_TARGET)}
         aria-label={`Open ${label}`}
         onClick={() => {
           onOpenChange(true)
