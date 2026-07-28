@@ -2,6 +2,43 @@
 
 ## Recent Work
 
+### Issue #7u5b: Issue CLI silently swallows --body / files garbage titles (PR #161) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (1649 tests), both coverage
+  gates pass (100% diff coverage on `service.ts`; `cli.ts` is excluded from
+  the coverage gate like other CLI entrypoints), no schema drift.
+- **What**: `npm run issue new "Title" --body "text"` run WITHOUT the `--`
+  separator lets npm's own arg parser eat `--body` before node ever sees it —
+  the value survives as a bare word, gets joined into the title, and the
+  result is a 1000+ character title with an empty body. Bit the night watch
+  twice; 8 issues were hand-repaired via direct DB update on 2026-07-18.
+- **Fix, two parts** (matching the issue's own two-halves ask):
+  1. **Fail loudly.** `parseNewArgs` (`hull/issues/cli.ts`) now rejects any
+     leftover `--flag`-looking token as an unknown-flag usage error instead
+     of silently joining it into the title. New `MAX_TITLE_LENGTH` (200)
+     backstop enforced in the ONE place both doors actually go through —
+     `createIssue` and `validateOpenIssueInput` in `service.ts` — since npm
+     eating `--body` *entirely* means the CLI never even sees a `--body`
+     token to catch; only its value survives as title text, and the length
+     cap is what catches that case. `parseNewArgs` also checks the cap
+     itself first, for a CLI-flavored error message.
+  2. **Normalize the invocation.** Every usage/help string and thrown error
+     in `cli.ts` now prints the canonical `npm run issue -- <command> ...`
+     form (with the separator) instead of the separator-less form that
+     caused the whole incident; the top-level usage banner spells out *why*
+     the separator matters. `CLAUDE.md`'s Working notes and
+     `hull/issues/zine.md` document both the separator requirement and the
+     new guardrails.
+- **Red-green**: `git stash` on just the two implementation files
+  (`cli.ts`/`service.ts`) with the new tests present confirmed all 5 new
+  tests failed for the right reasons (unknown-flag/title-length checks
+  simply didn't exist yet) before popping the stash back and turning green.
+- **Pattern reinforced**: when a validation rule needs enforcing at more than
+  one door (CLI + web `createServerFn`), put the actual enforcement in the
+  shared service function every door funnels through (here: `createIssue`),
+  and let the CLI's own pre-check exist ONLY for a friendlier, CLI-specific
+  error message — not as a second source of truth for the limit itself
+  (both import the same exported `MAX_TITLE_LENGTH` constant).
+
 ### Issue #4mna: Stalled-vs-busy build status (PR #129) — handed to babysitter
 - **Status**: PR open, `npm run check` clean (867 tests), both coverage gates
   pass, no migration drift. Handed off.
