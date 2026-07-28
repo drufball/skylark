@@ -83,6 +83,15 @@ rather than patching, because "what does this tile show?" is a membership
 question and membership is only answered on the server. No new transport, no
 polling.
 
+**The subscription set.** A home may point into many chats, so the set is worth
+watching: it's deduped server-side and rides ONE `EventSource`, the same one the
+chat route opens for a single chat (measured live: seven pinned chats → one
+connection, a 359-character `?topics=` query). The honest limit is that nothing
+caps it — a home pointing at a few hundred conversations would push the query
+toward URL limits and make every raise anywhere invalidate the whole route.
+Neither is a problem at crew scale; if it becomes one, the fix is to page the
+subscription to the tiles on the OPEN page rather than the whole canvas.
+
 **Which page you're looking at is the URL** (`/home?page=…`), not a table. The
 chat canvas needed a per-viewer row (`chat_view_state`) because a page is shared
 and three members can be on three different pages. Home has exactly one viewer,

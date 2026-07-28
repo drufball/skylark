@@ -129,8 +129,9 @@ describe('choice: the body', () => {
     const onAnswer = vi.fn()
     render(<Body revision={0} onAnswer={onAnswer} spent={false} answer="Yes" />)
     expect(screen.getByText('Yes')).toBeTruthy()
-    // The alternatives stay legible — "Yes" alone doesn't say what it beat.
-    expect(screen.getByText('not No')).toBeTruthy()
+    // The alternatives stay laid out, struck through — "Yes" on its own
+    // doesn't say what it beat.
+    expect(screen.getByText('No').className).toContain('line-through')
     // And there is nothing left to tap, so a stray thumb can't reach a door
     // that would only refuse it.
     expect(screen.queryAllByRole('button')).toEqual([])

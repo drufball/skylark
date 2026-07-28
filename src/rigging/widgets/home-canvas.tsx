@@ -212,7 +212,7 @@ export function HomeCanvas({
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0"
+            className={cn('shrink-0', TAP_TARGET)}
             disabled={busy}
             aria-label="Add a tile"
             onClick={() => {

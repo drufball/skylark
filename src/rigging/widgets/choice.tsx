@@ -65,20 +65,33 @@ export const choiceKind: WidgetKind = {
             </div>
           ) : (
             /* Answered, and still on screen — so this is a canvas or a home
-               tile, where the decision IS the state. The options stay visible
-               with the chosen one marked, because "Yes" alone doesn't tell you
-               what the alternatives were. */
-            <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
-              <span className="flex items-center gap-1 text-sm font-medium">
-                <Check className="size-4 text-primary" aria-hidden />
-                {answer}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {options
-                  .filter((option) => option !== answer)
-                  .map((option) => `not ${option}`)
-                  .join(' · ')}
-              </span>
+               tile, where the decision IS the state.
+               The options stay laid out exactly as they were, with the chosen
+               one marked and the rest struck through: "Yes" on its own doesn't
+               say what it beat, and prose about it ("not Not yet") reads like a
+               riddle. Same shapes, same order, one of them now settled. */
+            <div className="flex flex-wrap gap-2 px-3 pb-3">
+              {options.map((option) => (
+                <span
+                  key={option}
+                  className={cn(
+                    'flex flex-1 basis-32 items-center justify-center gap-1',
+                    'rounded-md border px-3 text-sm',
+                    TAP_TARGET,
+                    option === answer
+                      ? 'border-primary font-medium'
+                      : 'text-muted-foreground line-through',
+                  )}
+                >
+                  {option === answer && (
+                    <Check
+                      className="size-4 shrink-0 text-primary"
+                      aria-hidden
+                    />
+                  )}
+                  {option}
+                </span>
+              ))}
             </div>
           ),
       },

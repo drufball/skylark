@@ -189,10 +189,13 @@ export function PageStrip({
         </>
       )}
       {children}
+      {/* `size="sm"` is a 32px button, which is under the thumb floor — the
+          strip is the one row a phone drives this surface from, so it keeps
+          the dense look and gains the height. */}
       <Button
         variant="outline"
         size="sm"
-        className="shrink-0"
+        className={cn('shrink-0', TAP_TARGET)}
         disabled={busy}
         aria-label="Add a page"
         onClick={() => {
