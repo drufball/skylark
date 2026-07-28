@@ -164,3 +164,19 @@ authoritative process)
   posted, no branch protection. Merged squash per policy. --delete-branch hit
   the usual worktree-collision error; remote branch still present after
   fetch --prune so deleted manually. No builder round-trip needed.
+- souf (Fix change-review CI perma-red: pin --model to claude-opus-4-8 instead
+  of floating 'opus' alias, PR #164): builder's fix pinned a real model ID in
+  change-review.yml/architecture-review-global.yml/mutation-scan.yml (the
+  'opus' alias was resolving to nonexistent claude-opus-5, breaking the
+  advisory review check on every PR — this explains the repeated
+  is_error:true/no-comments review failures seen on 7u5b/0zis). Added
+  src/workflows.test.ts regression test scanning workflow claude_args for
+  bare floating aliases. This was the rare case where the PR's own
+  change-review run *was* the verification the issue asked for: watched it go
+  green (12s pass) alongside smoke/verify/coverage, confirming the fix works
+  live. mergeStateStatus CLEAN/MERGEABLE, no review comments, squash-merged
+  in one round, no builder round-trip needed. Usual --delete-branch
+  worktree-collision error (merge succeeded per mergedAt); remote branch
+  still present so deleted manually. Going forward, don't assume every red
+  `review` check is infra noise — check if there's an open fix PR like this
+  one first.
