@@ -17,6 +17,9 @@ authoritative process)
    (e.g. 600-900s); it blocks until checks settle, which is fine. Sometimes it
    returns "no checks reported" right after a push before GH has registered
    the new run — wait ~20s and retry rather than treating that as an error.
+   UPDATE 2026-07-28: a real `background` tool IS available now (job-based,
+   auto-resumes you with output, plus periodic night-watch health-check
+   pings) — use it instead of foreground-blocking on long watches.
 2. Once checks are green, confirm `gh pr view <pr> --json
    mergeStateStatus,mergeable` — only merge on CLEAN/UNSTABLE+MERGEABLE.
    BEHIND -> rebase+push. DIRTY/CONFLICTING -> rebase, resolve, re-check.
@@ -69,6 +72,18 @@ authoritative process)
   it's a real regression — resource contention in a big parallel vitest run
   can produce spurious timeouts unrelated to the change; if isolated runs pass
   and a second full `npm run check` run is clean, treat the first as flake.
+- The `review` (change review) check can fail for reasons that have nothing to
+  do with your PR: it's an agentic Claude-Code-action review that itself can
+  hit infra errors (e.g. `is_error:true` after ~2s with no real output, no
+  actual review content posted). Before treating a review-check failure as a
+  real finding to fix, check `gh run list --workflow <name> --limit 10` — if
+  many/most recent runs across *other* PRs are also failing the same way, it's
+  a repo-wide infra blip, not something raised about your diff. Confirm no
+  review comment was actually posted (`gh pr view <pr> --comments`), then
+  treat `review` as the advisory check it's documented to be and proceed to
+  merge on smoke/coverage/verify passing + mergeStateStatus
+  CLEAN/UNSTABLE+MERGEABLE. Rerunning the job once (`gh run rerun <run-id>
+  --job <job-id>`) is worth trying but don't block on it repeating cleanly.
 
 ## History
 - osy7 (Mobile-friendly responsive layout, PR #124): builder's audit was
@@ -114,13 +129,6 @@ authoritative process)
   fetched --prune — gh apparently deletes the remote branch before the local
   checkout step fails, so no manual `git push origin --delete` was needed
   this time. Cleanest, fastest babysit yet.
-
-To read or update your memory, use bash (writes attribute to you):
-  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- read agents/babysitter/<file>
-  SKYLARK_ACTOR=019f565b-64c7-704e-b63b-8acc433d0d53 npm run files -- write agents/babysitter/<file> --stdin
-
-Keep agents/babysitter/index.md current: it is loaded into your system prompt at the start
-of every session, so it should orient a fresh you.
 - jgdb (agent show <session-id> CLI, PR #130): builder's PR was clean going in
   (881 tests, 100% diff coverage on both changed service files, no schema
   drift, manually smoke-tested prefix-match/no-match/ambiguous-prefix cases
@@ -131,3 +139,17 @@ of every session, so it should orient a fresh you.
   (merge itself succeeded, mergedAt confirmed) — this time the remote branch
   was still present after fetch --prune, so had to `git push origin --delete`
   manually (unlike zo3a where gh had already deleted it).
+- 7u5b (Issue CLI --body/oversized-title silent-swallow fix, PR #161):
+  smoke/coverage/verify all passed clean, no rebase needed. The `review`
+  check failed repeatedly (tried once via `gh run rerun --job`, failed again)
+  with `is_error:true` after ~2s and zero posted comments — checked
+  `gh run list --workflow` and found the *last ~10* change-review runs across
+  the whole repo (other PRs too) were failing identically, confirming a
+  repo-wide Claude-Code-action infra blip that day, not a finding about this
+  diff. No review comments posted, no branch protection (404 on branch
+  protection API), mergeStateStatus UNSTABLE/MERGEABLE (UNSTABLE = only the
+  advisory review is red) → merged squash per policy. --delete-branch hit the
+  usual worktree-collision error; remote branch was still present after
+  fetch --prune so deleted manually. No builder round-trip needed — this is
+  the first time I merged with the review check outright failing (not just
+  flaky-slow); documented the reasoning above for future reference.
