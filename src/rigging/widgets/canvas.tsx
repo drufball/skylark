@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowUpToLine, Home, Plus } from 'lucide-react'
 
 import type { CanvasBox } from '@hull/chat/widgets'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { useIsMobile } from '@rigging/lib/use-is-mobile'
 import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
@@ -12,11 +13,11 @@ import {
   ArrangeableGrid,
   askForPage,
   PageStrip,
+  phoneTileCapPx,
   SwipeColumn,
   TileFrame,
   type GridHandles,
 } from './grid'
-import { TAP_TARGET } from './kind'
 import { resolveWidget } from './registry'
 import type { WidgetItem } from './stack'
 
@@ -278,6 +279,10 @@ function CanvasTile({
     <TileFrame
       headline={headline}
       handles={handles}
+      // No grip means the phone column, which bounds nothing of its own — so the
+      // tile takes the height its arrangement asked for. A desktop grid cell
+      // already does that job.
+      capPx={handles ? undefined : phoneTileCapPx(widget.gridH)}
       actions={
         <>
           {onPinHome && (

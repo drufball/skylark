@@ -19,6 +19,7 @@ import type { Database } from '@hull/db/client'
 
 import {
   homeCanvasPages,
+  homeCanvasSeeds,
   homeCanvasTiles,
   type HomeCanvasPageRow,
   type HomeCanvasTileRow,
@@ -311,6 +312,46 @@ export async function unpinHomeTile(
   input: { tileId: string },
 ): Promise<void> {
   await db.delete(homeCanvasTiles).where(eq(homeCanvasTiles.id, input.tileId))
+}
+
+// --- The seeded marker ------------------------------------------------------
+
+/**
+ * Has the ship already arranged this person's home?
+ *
+ * The rooms seed's old predicate was "no pages and no tiles", which cannot tell
+ * *empty because untouched* from *empty because I cleared it out* — so a crew
+ * member who unpinned their tiles and removed their last page got the whole
+ * default arrangement back on the next boot, and on every boot after that. This
+ * is the fact the emptiness couldn't carry.
+ *
+ * Run it as the owner: the policy is `owner_id = the acting actor`, so somebody
+ * else's marker reads as absent, exactly like every other row on this deck.
+ */
+export async function wasHomeSeeded(
+  db: Database,
+  ownerId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ ownerId: homeCanvasSeeds.ownerId })
+    .from(homeCanvasSeeds)
+    .where(eq(homeCanvasSeeds.ownerId, ownerId))
+  return rows.length > 0
+}
+
+/**
+ * Record that the seed has had its one go at this home. Idempotent, because it
+ * runs on every boot and a duplicate-key error there would cost the ship the
+ * crew after it in the list.
+ */
+export async function markHomeSeeded(
+  db: Database,
+  ownerId: string,
+): Promise<void> {
+  await db
+    .insert(homeCanvasSeeds)
+    .values({ ownerId })
+    .onConflictDoNothing({ target: homeCanvasSeeds.ownerId })
 }
 
 // --- Reading: resolving pointers under the viewer's own membership ---------

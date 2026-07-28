@@ -5,12 +5,12 @@ import ReactMarkdown from 'react-markdown'
 import { listFiles, readFile } from '@hull/files/server'
 import { isValidFilePath } from '@hull/files/path'
 import { FILE_TOPIC_PATTERN, fileTopic } from '@hull/files/topic'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { cn } from '@rigging/lib/utils'
 
 import {
   asRecord,
   isFilledString,
-  TAP_TARGET,
   type WidgetKind,
   type WidgetParse,
 } from './kind'
@@ -199,11 +199,20 @@ function useDocument(path: string, revision: number): Read<string> {
   return { value: loaded === path ? state.value : null, failed: state.failed }
 }
 
-/** A document's body. Markdown gets rendered; anything else stays verbatim. */
+/**
+ * A document's body. Markdown gets rendered; anything else stays verbatim.
+ *
+ * It caps NOTHING of its own any more. It used to stop at `max-h-64` and scroll,
+ * which was a scroll inside a tile inside a page — and on the phone column,
+ * where the tile itself wasn't bounded, that inner box was the only thing giving
+ * a long document an end. The frame owns the cap now (`phoneTileCapPx` in
+ * `grid.tsx`) and says out loud when it's hiding something, so a kind that
+ * capped itself as well would just be the second scroll back again.
+ */
 function DocumentBody({ path, text }: { path: string; text: string }) {
   if (!path.endsWith('.md')) {
     return (
-      <pre className="max-h-64 overflow-auto rounded-md border bg-muted/30 p-2 text-xs whitespace-pre-wrap">
+      <pre className="rounded-md border bg-muted/30 p-2 text-xs whitespace-pre-wrap">
         {text}
       </pre>
     )
@@ -213,7 +222,7 @@ function DocumentBody({ path, text }: { path: string; text: string }) {
     // the markdown gives it structure rather than page-scale type.
     <article
       className={cn(
-        'prose prose-sm dark:prose-invert max-h-64 max-w-none overflow-y-auto break-words',
+        'prose prose-sm dark:prose-invert max-w-none break-words',
         'prose-headings:my-1 prose-headings:text-sm prose-headings:font-semibold',
         'prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-pre:my-1',
       )}

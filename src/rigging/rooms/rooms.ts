@@ -135,3 +135,29 @@ export const DEFAULT_ROOMS: readonly RoomSpec[] = [
 export function roomViewLink(chatId: string): RoomViewLink | null {
   return DEFAULT_ROOMS.find((room) => room.id === chatId)?.view ?? null
 }
+
+/**
+ * The way BACK: given one of the richer views, the room it belongs to — or null
+ * for a surface that is nobody's room, which is most of them.
+ *
+ * `roomViewLink` is the door out of a room and this is the door back in. It
+ * exists because for one slice there wasn't one: `/issues`, `/files` and
+ * `/inbox` left the rail, gained a link IN from their rooms, and offered nothing
+ * out, so the only way back was the browser's own back button — which is a
+ * rescue, not navigation, and which strands anybody who arrived by typing the
+ * URL or following a link an agent posted.
+ *
+ * The label is built from the SEEDED title, not the chat's current one: this is
+ * a pure, node-free function the browser calls with no database in reach, for
+ * the same reason the rail is hardcoded. A crew that renames the Issues room
+ * gets a link that still lands them in the right conversation and calls it by
+ * the name the ship shipped with — the small honest cost of a link that cannot
+ * fail to render.
+ *
+ * Pure and node-free, so a route can call it during render.
+ */
+export function roomForView(to: string): RoomViewLink | null {
+  const room = DEFAULT_ROOMS.find((spec) => spec.view.to === to)
+  if (!room) return null
+  return { to: `/chat?chat=${room.id}`, label: `${room.title} room` }
+}

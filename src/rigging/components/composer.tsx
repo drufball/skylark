@@ -4,7 +4,7 @@ import { Loader2, Send } from 'lucide-react'
 import { Button } from '@rigging/components/ui/button'
 import { Textarea } from '@rigging/components/ui/textarea'
 import { cn } from '@rigging/lib/utils'
-import { TAP_TARGET } from '@rigging/widgets/kind'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 
 /**
  * The shared message composer: textarea + send button + Enter-to-send.

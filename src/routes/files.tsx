@@ -13,6 +13,7 @@ import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
+import { roomForView } from '@rigging/rooms/rooms'
 
 // The files route: a thin mount binding /files to the shared-documents view and
 // the files service. `?path=` selects the open file (deep-linkable). Live
@@ -77,9 +78,10 @@ function FilesRoute() {
   const behindOrigin = useBehindOrigin()
   return (
     <Dock
-      // No `active`: this view left the rail for its ROOM, which is what links
-      // here now — see rigging/views/dock.tsx.
+      // No `active`: this view left the rail for its ROOM. That room is what
+      // links here — and `room` is the way back, so the trip isn't one-way.
       Link={Link}
+      room={roomForView('/files') ?? undefined}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
     >

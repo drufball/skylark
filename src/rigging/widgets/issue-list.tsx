@@ -8,12 +8,12 @@ import {
   ISSUE_STATUS_META,
   ISSUE_STATUS_ORDER,
 } from '@rigging/lib/issue-status-meta'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { cn } from '@rigging/lib/utils'
 
 import {
   asRecord,
   isFilledString,
-  TAP_TARGET,
   type WidgetKind,
   type WidgetParse,
 } from './kind'

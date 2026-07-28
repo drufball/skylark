@@ -16,7 +16,13 @@ import { listUsers } from '../src/hull/users/service'
 // the login form, so a test can call `await loginAs(page, userId)` and then
 // `page.goto(...)` as that user.
 
-function smokeSystemDb(): { db: Database; close: () => Promise<void> } {
+/**
+ * A superuser handle on the SMOKE database — the one the app under test is
+ * using. Exported because planting a fixture (a chat an old link points at) is
+ * the same move as planting a session, and a second connection helper would be
+ * a second place for the smoke/real database switch to be got wrong.
+ */
+export function smokeSystemDb(): { db: Database; close: () => Promise<void> } {
   const sql = postgres(
     resolveDatabaseUrl({ ...process.env, [FAKE_RUNTIME_ENV]: '1' }),
     { max: 1 },

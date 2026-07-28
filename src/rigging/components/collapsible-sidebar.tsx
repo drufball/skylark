@@ -4,7 +4,7 @@ import { PanelLeft } from 'lucide-react'
 import { useIsMobile } from '@rigging/lib/use-is-mobile'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
-import { TAP_TARGET } from '@rigging/widgets/kind'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import {
   Sheet,
   SheetContent,

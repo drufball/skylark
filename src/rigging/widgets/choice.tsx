@@ -1,12 +1,12 @@
 import { Check } from 'lucide-react'
 
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { Button } from '@rigging/components/ui/button'
 import { cn } from '@rigging/lib/utils'
 
 import {
   asRecord,
   isFilledString,
-  TAP_TARGET,
   type WidgetKind,
   type WidgetParse,
 } from './kind'

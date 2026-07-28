@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -27,6 +27,13 @@ import { RAIL } from '@rigging/views/dock'
  * A route that is neither is a page nobody can find, which is how a good
  * working view gets quietly deleted a slice later. Adding one to this file's
  * exemption list is a decision, not a formality — the diff on it is the review.
+ *
+ * **Reachable is half a claim; the other half is a way back.** #cse7 linked a
+ * room OUT to its view and gave the view nothing in return, so `/issues`,
+ * `/files` and `/inbox` were one-way doors: the browser's back button was the
+ * only exit, which is a rescue rather than navigation, and it strands anybody
+ * who arrived by typing the URL or following a link an agent posted months ago.
+ * So this file now pins the round trip too.
  */
 
 /**
@@ -51,22 +58,28 @@ const NOT_DESTINATIONS = new Set([
   '/issues/$id',
 ])
 
-/** Every route path `src/routes` serves, in TanStack's file-route notation. */
-function routePaths(): string[] {
-  const dir = join(import.meta.dirname, 'routes')
-  return readdirSync(dir, { withFileTypes: true })
+const ROUTES_DIR = join(import.meta.dirname, 'routes')
+
+/** Every route the ship serves: its path in TanStack notation, and its file. */
+function routeFiles(): { path: string; file: string }[] {
+  return readdirSync(ROUTES_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.tsx'))
-    .map((entry) => entry.name.replace(/\.tsx$/, ''))
-    .filter((name) => name !== '__root')
-    .map((name) => {
+    .filter((entry) => entry.name !== '__root.tsx')
+    .map((entry) => {
       // `index.tsx` is `/`; `issues.index.tsx` is `/issues`; `issues.$id.tsx`
       // is `/issues/$id`.
-      const path = name
+      const path = entry.name
+        .replace(/\.tsx$/, '')
         .replace(/(^|\.)index$/, '')
         .split('.')
         .join('/')
-      return `/${path}`
+      return { path: `/${path}`, file: entry.name }
     })
+}
+
+/** Every route path `src/routes` serves, in TanStack's file-route notation. */
+function routePaths(): string[] {
+  return routeFiles().map((route) => route.path)
 }
 
 describe('navigation: nothing the ship serves is unreachable', () => {
@@ -95,6 +108,20 @@ describe('navigation: nothing the ship serves is unreachable', () => {
     const served = new Set(routePaths())
     for (const room of DEFAULT_ROOMS) {
       expect(served.has(room.view.to), room.view.to).toBe(true)
+    }
+  })
+
+  it('gives every one of those surfaces a way back to its room', () => {
+    // The route is where the two halves meet, so the route is what this checks:
+    // each of the three mounts the shell with the room `roomForView` resolves.
+    // A view that quietly dropped it would still render, still be reachable,
+    // and still be a one-way door — which is exactly how it shipped last time.
+    const byPath = new Map(routeFiles().map((r) => [r.path, r.file]))
+    for (const room of DEFAULT_ROOMS) {
+      const file = byPath.get(room.view.to)
+      expect(file, room.view.to).toBeDefined()
+      const source = readFileSync(join(ROUTES_DIR, file ?? ''), 'utf8')
+      expect(source, room.view.to).toContain(`roomForView('${room.view.to}')`)
     }
   })
 

@@ -13,9 +13,6 @@ import type { JsonValue } from '@hull/chat/widgets'
  * stored on the row (see the chat zine), so `props` only ever hold the question.
  */
 
-/** The tap-target floor a thumb needs — 2.75rem is 44px. */
-export const TAP_TARGET = 'min-h-11'
-
 /** What the stack hands a kind's body every time it renders it. */
 export interface WidgetBodyProps {
   /**

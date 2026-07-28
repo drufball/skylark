@@ -10,12 +10,14 @@ import {
   createHomePage,
   listHomePages,
   listHomeTiles,
+  markHomeSeeded,
   moveHomeTile,
   pinHomeTile,
   readHomeCanvas,
   removeHomePage,
   renameHomePage,
   unpinHomeTile,
+  wasHomeSeeded,
 } from './service'
 
 // Proves migration 0036 actually holds the two lines home rests on.
@@ -203,5 +205,20 @@ describe('home canvas access (RLS)', () => {
     const after = await asActor(db, alice, (tx) => readHomeCanvas(tx, alice))
     expect(after.tiles[0].target.mode).toBe('widget')
     expect(after.topics).toHaveLength(1)
+  })
+
+  /** Migration 0038: the seeded marker keeps the same one line the rest does. */
+  it('refuses to mark somebody else’s home as seeded', async () => {
+    await expect(
+      asActor(db, bob, (tx) => markHomeSeeded(tx, alice)),
+    ).rejects.toThrow()
+  })
+
+  it('keeps a seeded marker unreadable to anyone but its owner', async () => {
+    await asActor(db, alice, (tx) => markHomeSeeded(tx, alice))
+    expect(await asActor(db, alice, (tx) => wasHomeSeeded(tx, alice))).toBe(
+      true,
+    )
+    expect(await asActor(db, bob, (tx) => wasHomeSeeded(tx, alice))).toBe(false)
   })
 })

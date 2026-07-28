@@ -2,6 +2,7 @@ import { BellOff, Check, CircleSmall } from 'lucide-react'
 
 import type { InboxItem } from '@hull/notifications/server'
 import { formatLocalTime } from '@rigging/lib/format-local-time'
+import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 import { ScrollArea } from '@rigging/components/ui/scroll-area'
@@ -42,6 +43,7 @@ export function InboxView({
         <Button
           variant="outline"
           size="sm"
+          className={cn('shrink-0', TAP_TARGET)}
           disabled={busy || unread === 0}
           onClick={onMarkAllRead}
         >
@@ -106,7 +108,9 @@ function EntryRow({
   const { issueId } = entry
   if (issueId === null) {
     return (
-      <div className="flex items-center gap-2 rounded-md px-2 py-1.5">
+      <div
+        className={cn('flex items-center gap-2 rounded-md px-2', TAP_TARGET)}
+      >
         {body}
       </div>
     )
@@ -117,7 +121,15 @@ function EntryRow({
       onClick={() => {
         onOpenIssue(issueId)
       }}
-      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+      // A whole inbox of 32px rows is fifteen near-misses in a column, which is
+      // the worst shape a too-small tap target comes in. The unread rows keep
+      // the same density as the read ones so the list doesn't jump as you clear
+      // it.
+      className={cn(
+        'flex items-center gap-2 rounded-md px-2 text-left',
+        'hover:bg-accent hover:text-accent-foreground',
+        TAP_TARGET,
+      )}
     >
       {body}
     </button>
