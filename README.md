@@ -154,3 +154,5 @@ that wake agents back into the conversation. This README is still the charter;
 if any of the above made your heart beat faster — welcome aboard.
 
 Fair winds and following seas. ☀️⛵
+
+<!-- review canary 3: validates ANTHROPIC_API_KEY auth for change-review (#pykd). Safe to close. -->
