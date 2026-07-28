@@ -41,7 +41,7 @@ export function AuthForm({ mode, busy, error, onSubmit, Link }: AuthFormProps) {
   const [inviteCode, setInviteCode] = useState('')
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background p-4">
+    <div className="flex h-dvh items-center justify-center bg-background p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <div className="mb-1 flex items-center gap-2">

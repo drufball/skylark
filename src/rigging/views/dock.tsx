@@ -115,7 +115,9 @@ export function Dock({
   children,
 }: DockProps) {
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+    // h-dvh, not h-screen: 100vh is the LARGE viewport on a phone, which
+    // would put the bottom rail behind the browser toolbar when visible.
+    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       {typeof behindOrigin === 'number' && behindOrigin > 0 && (
         <div className="flex shrink-0 items-center justify-center gap-1.5 border-b bg-amber-500/10 px-3 py-1 text-center text-xs text-amber-700 dark:text-amber-400">
           <span aria-hidden>⚓</span>
@@ -128,7 +130,12 @@ export function Dock({
       {/* `flex-col-reverse` puts the nav (first in the DOM, so first in the tab
           order) visually last on a phone. */}
       <div className="flex min-h-0 flex-1 flex-col-reverse md:flex-row">
-        <nav className="flex shrink-0 flex-row items-center gap-1 border-t bg-muted/30 px-1 py-1 md:w-16 md:flex-col md:items-center md:justify-start md:overflow-y-auto md:border-t-0 md:border-r md:px-0 md:py-3">
+        {/* The bottom padding is the safe-area inset when there is one (a phone
+            installed to the home screen, viewport-fit=cover) so the rail's tap
+            targets sit above the home indicator — never less than the normal
+            gap. Explicit pt/pb rather than py so the md: override is
+            unambiguous. */}
+        <nav className="flex shrink-0 flex-row items-center gap-1 border-t bg-muted/30 px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] md:w-16 md:flex-col md:items-center md:justify-start md:overflow-y-auto md:border-t-0 md:border-r md:px-0 md:pt-3 md:pb-3">
           <Anchor
             className="mb-3 hidden size-6 text-muted-foreground md:block"
             aria-label="Skylark"

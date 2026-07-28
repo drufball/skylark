@@ -195,7 +195,7 @@ function PlaybookForm({
         }}
         placeholder="Name (e.g. research)"
         aria-label="Playbook name"
-        className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-accent-foreground/30 disabled:opacity-60"
+        className="w-full rounded-md border bg-background px-3 py-2 text-base outline-none focus:border-accent-foreground/30 disabled:opacity-60 md:text-sm"
       />
       <Textarea
         value={description}
