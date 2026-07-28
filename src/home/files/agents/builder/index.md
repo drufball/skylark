@@ -1,6 +1,39 @@
+
 # Builder Memory Index
 
 ## Recent Work
+
+### Issue #souf: change-review CI floating-model alias (PR #164) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (1697 tests). Handed off.
+- **What**: `.github/workflows/change-review.yml` and its two weekly
+  siblings (`architecture-review-global.yml`, `mutation-scan.yml`) all
+  passed `--model opus` to `anthropics/claude-code-action@v1`. The action
+  resolves that alias itself, and got it wrong — `opus` resolved to the
+  nonexistent `claude-opus-5`, killing the run in ~45s with `is_error:true`
+  and leaving the advisory `review` check permanently red on every PR (seen
+  on #161, #163). Pinned `--model claude-opus-4-8` (a real id) in all three;
+  `coverage-boost.yml` already pinned a real id (`claude-sonnet-4-6`) and
+  was untouched — now all four workflows are consistent.
+- **Red-green**: new `src/workflows.test.ts` regexes every
+  `.github/workflows/*.yml` file's `claude_args` for a bare floating alias
+  (`opus`/`sonnet`/`haiku`/`default`) — confirmed it failed listing all 3
+  offenders before the fix, passed after. Cheap, no yaml-parsing dependency
+  needed (plain string scan of `--model <token>`), lives alongside the
+  other top-level `src/*.test.ts` structural guards (`navigation.test.ts`,
+  `architecture.test.ts`, `boot.test.ts`).
+- **Pattern reinforced**: a CI workflow with a `--model <alias>` flag that
+  a THIRD-PARTY ACTION resolves internally (not our own `models.ts`
+  resolution) is invisible to every existing model-resolution test in
+  `src/hull/agent/` — those only cover the app's own gateway-facing model
+  refs. When an external tool has its own alias table that can silently
+  drift/break, a plain textual regression test over the workflow YAML
+  (no new yaml-parsing dependency needed) is the cheapest guard; a full
+  yaml parse would be overkill for one flag on one line.
+- **Verification note left for babysitter**: the issue's own suggested
+  verification (push a PR / comment `@change-review`, confirm the `review`
+  check goes green against the real Anthropic backend) is exactly what
+  landing this PR does — flagged that as the thing to watch for while
+  shepherding, since I can't observe a live GitHub Actions run from here.
 
 ### Issue #0zis: CLI still swallows --body when the -- separator is missing (PR #163) — handed to babysitter
 - **Status**: PR open, `npm run check` clean (1696 tests), coverage:check
