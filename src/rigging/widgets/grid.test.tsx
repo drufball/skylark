@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CANVAS_COLUMNS } from '@hull/chat/widgets'
 
@@ -171,5 +171,87 @@ describe('TileFrame', () => {
     expect(
       screen.getByTestId('tile-body').contains(screen.getByRole('link')),
     ).toBe(false)
+  })
+
+  /**
+   * The measurement has to survive the body filling itself in LATER, which is
+   * the normal case rather than the edge one: a `files` tile reads the shelf
+   * after it mounts and an `issue-list` reads its issues, both in their own
+   * state, which never re-runs an effect up in the frame. So the frame watches
+   * what's inside the body.
+   *
+   * jsdom has no `ResizeObserver`, so the test brings one — a stand-in for a
+   * missing platform API, the same shape as the `scrollHeight` stubs above,
+   * rather than a stand-in for a collaborator.
+   */
+  describe('when the body fills itself in after mount', () => {
+    class FakeResizeObserver {
+      static live: FakeResizeObserver[] = []
+      readonly observed: Element[] = []
+      disconnected = false
+      constructor(readonly onResize: () => void) {
+        FakeResizeObserver.live.push(this)
+      }
+      observe(el: Element) {
+        this.observed.push(el)
+      }
+      disconnect() {
+        this.disconnected = true
+      }
+    }
+    /** The observer the frame is currently watching with. */
+    const latest = () => FakeResizeObserver.live.at(-1)
+
+    beforeEach(() => {
+      FakeResizeObserver.live = []
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        configurable: true,
+        writable: true,
+        value: FakeResizeObserver,
+      })
+    })
+    afterEach(() => {
+      Reflect.deleteProperty(globalThis, 'ResizeObserver')
+    })
+
+    it('watches what is inside the body, not the body itself', () => {
+      // The container is capped, so it never resizes — its CONTENTS do.
+      stubHeights(120, 320)
+      render(
+        <TileFrame headline="Files · all" capPx={320}>
+          <ul data-testid="the-list" />
+        </TileFrame>,
+      )
+      expect(latest()?.observed).toEqual([screen.getByTestId('the-list')])
+    })
+
+    it('says “more below” once the contents outgrow the cap', () => {
+      stubHeights(120, 320)
+      render(
+        <TileFrame headline="Files · all" capPx={320}>
+          <ul data-testid="the-list" />
+        </TileFrame>,
+      )
+      expect(screen.queryByTestId('tile-clipped')).toBeNull()
+
+      // Eighteen documents land.
+      stubHeights(900, 320)
+      act(() => {
+        latest()?.onResize()
+      })
+      expect(screen.getByTestId('tile-clipped')).toBeTruthy()
+    })
+
+    it('stops watching when the tile goes', () => {
+      stubHeights(120, 320)
+      const { unmount } = render(
+        <TileFrame headline="Files · all" capPx={320}>
+          <ul />
+        </TileFrame>,
+      )
+      const observer = latest()
+      unmount()
+      expect(observer?.disconnected).toBe(true)
+    })
   })
 })

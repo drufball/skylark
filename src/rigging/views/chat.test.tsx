@@ -1214,6 +1214,40 @@ describe('ChatView: the phone header', () => {
     expect(screen.queryByLabelText('Schedules')).toBeNull()
   })
 
+  it('opens the schedules panel from inside the overflow', () => {
+    // The control moved behind the overflow, so the path from a thumb to the
+    // panel is a new one — and a control you can reach but can't use would be
+    // the worse half of folding it away.
+    loadedRoom()
+    fireEvent.click(screen.getByLabelText('More'))
+    expect(screen.queryByPlaceholderText('Message to schedule…')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Schedules'))
+    expect(screen.getByPlaceholderText('Message to schedule…')).toBeTruthy()
+  })
+
+  /**
+   * `schedules` is a separate optional prop from the three callbacks that turn
+   * the affordance on, so "the host has wired scheduling but hasn't loaded (or
+   * has no) schedules" is a real state — the first render of every chat, in
+   * fact. The control shows itself without a count rather than "(0)" or
+   * "(undefined)", on both layouts.
+   */
+  it('shows the control with no count before any schedules have loaded', () => {
+    for (const width of [390, 1280]) {
+      setWidth(width)
+      const { unmount } = renderView({
+        activeId: 'c1',
+        schedules: undefined,
+        onCreateSchedule: vi.fn(),
+        onToggleSchedule: vi.fn(),
+        onDeleteSchedule: vi.fn(),
+      })
+      if (width === 390) fireEvent.click(screen.getByLabelText('More'))
+      expect(screen.getByLabelText('Schedules').textContent).toBe('Schedules')
+      unmount()
+    }
+  })
+
   it('leaves a desktop pane exactly as it was — one row, everything on it', () => {
     setWidth(1280)
     loadedRoom()
