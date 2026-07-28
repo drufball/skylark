@@ -91,6 +91,63 @@ describe('sessions', () => {
     await deleteSession(db, token)
     expect(await getSessionUser(db, token)).toBeUndefined()
   })
+
+  it('slides expiresAt forward once a session is more than a day old — an active user never silently expires', async () => {
+    const captain = defined(await getUserByHandle(db, 'captain'))
+    const { token, expiresAt: originalExpiry } = await createSession(
+      db,
+      captain.id,
+    )
+    vi.useFakeTimers()
+    // 29 days in: still unexpired (30-day TTL), but well past the one-day
+    // renewal threshold — using it now should push expiresAt out again.
+    vi.setSystemTime(Date.now() + 1000 * 60 * 60 * 24 * 29)
+    await getSessionUser(db, token)
+    const [row] = await db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.userId, captain.id))
+    expect(defined(row).expiresAt.getTime()).toBeGreaterThan(
+      originalExpiry.getTime(),
+    )
+    vi.useRealTimers()
+  })
+
+  it('leaves a freshly-issued session untouched — no write on every request', async () => {
+    const captain = defined(await getUserByHandle(db, 'captain'))
+    const { token, expiresAt: originalExpiry } = await createSession(
+      db,
+      captain.id,
+    )
+    vi.useFakeTimers()
+    // An hour later is nowhere near the one-day renewal threshold.
+    vi.setSystemTime(Date.now() + 1000 * 60 * 60)
+    await getSessionUser(db, token)
+    const [row] = await db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.userId, captain.id))
+    expect(defined(row).expiresAt.getTime()).toBe(originalExpiry.getTime())
+    vi.useRealTimers()
+  })
+
+  it('a session renewed just shy of its old expiry still resolves after it — the whole point of sliding renewal', async () => {
+    const captain = defined(await getUserByHandle(db, 'captain'))
+    const { token, expiresAt: originalExpiry } = await createSession(
+      db,
+      captain.id,
+    )
+    vi.useFakeTimers()
+    // A day before the original 30-day expiry: due for renewal, so this use
+    // should slide expiresAt out another 30 days from now.
+    vi.setSystemTime(originalExpiry.getTime() - 1000 * 60 * 60 * 24)
+    await getSessionUser(db, token)
+    // Jump to just past the ORIGINAL expiry — a session without sliding
+    // renewal would be dead by now.
+    vi.setSystemTime(originalExpiry.getTime() + 1000 * 60 * 60)
+    expect(await getSessionUser(db, token)).toMatchObject({ id: captain.id })
+    vi.useRealTimers()
+  })
 })
 
 describe('verifyLogin', () => {

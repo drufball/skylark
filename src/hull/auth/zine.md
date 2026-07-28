@@ -21,12 +21,22 @@ an actor (and the RLS context that comes with one) exists — see Decisions.
   never get one.
 - **Sessions** (`schema.ts`) — one row per logged-in browser: `id`, `userId`, a
   `tokenHash` (the raw token lives only in the cookie — see Decisions),
-  `createdAt`, `expiresAt` (a fixed 30-day TTL, no sliding renewal yet).
+  `createdAt`, `expiresAt` (a 30-day TTL, slid forward on use — see
+  `touchSession` below).
 - **Password hashing** (`service.ts`) — `hashPassword`/`verifyPassword`, Node's
   own `scrypt` (`node:crypto`) — no dependency to pull in.
   `<salt-hex>:<hash-hex>`, constant-time compared.
 - **Sessions** (`service.ts`) — `createSession`, `getSessionUser` (resolves a
-  raw token to its user, undefined if unknown/expired), `deleteSession`.
+  raw token to its user, undefined if unknown/expired — and slides `expiresAt`
+  forward via `touchSession` when the session is more than a day old, so an
+  actively-used session never silently expires mid-use, #q6xm), `deleteSession`.
+- **Canonical origin** (`origin.ts`) — `canonicalOriginRedirect`: the pure
+  decision behind closing the tunnel/LAN split (#q6xm below) — whether a
+  request's `Host` header names somewhere other than `SKYLARK_PUBLIC_HOST` (and
+  isn't plain local dev), and if so, the absolute URL to send it to instead.
+  `server.ts`'s `canonicalRedirectUrl` door supplies the ambient inputs; the
+  root route's `beforeLoad` throws the redirect before `currentSession` ever
+  runs, so a session cookie is never set or read against the wrong origin.
 - **Signup** (`service.ts`) — `signup(db, input, expectedInviteCode)`: the one
   business rule with real branches (invite code, handle validity, password
   length, claim-vs-create) — see Decisions for what each guards.
@@ -86,9 +96,43 @@ at once, with no per-door changes.
 - **No email, no forgot-password flow.** A two-person home server doesn't need
   one; `npm run auth -- reset-password <handle> <password>` is the recovery
   path, using the shell access you'd already need for any other server-side fix.
+- **Sliding renewal touches the row, not every read.** `touchSession` only
+  writes when less than a day of the 30-day TTL is left — recomputed from
+  `expiresAt` itself (`expiresAt - (TTL - renewAfter)`), no extra column. Most
+  calls to `getSessionUser` (most requests) are a plain read; only a session
+  actually nearing expiry costs a write. Without this, a session died exactly 30
+  days after login no matter how often it was used in between (#q6xm).
+- **The canonical-origin redirect is `SKYLARK_PUBLIC_HOST`-gated, not
+  automatic.** A ship with no public tunnel configured yet (fresh clone, CI,
+  local dev) has no public hostname to redirect toward, so
+  `canonicalOriginRedirect` is a no-op until `scripts/setup-tunnel` sets one.
+  Localhost/127.0.0.1/::1 are always exempt regardless — otherwise ordinary
+  `npm run dev` traffic on a box that HAS set `SKYLARK_PUBLIC_HOST` (true of
+  every real deployment) would bounce itself to the public hostname.
+- **Why a redirect, not just documentation.** The issue that surfaced this
+  (#q6xm) asked for either a redirect to one canonical origin or documenting
+  that two hostnames mean two unrelated sessions. A silent, permanent workaround
+  ("never use the LAN address") is worse than a server that fixes it for you: a
+  phone that auto-connects to home Wi-Fi and had once bookmarked the LAN address
+  would keep tripping this without ever knowing why. Verified against a real
+  `cloudflared` tunnel (not just h3's source) that it reliably sets
+  `x-forwarded-proto: https` end to end — see the #q6xm changelog entry.
 
 ## Changelog
 
 - **#1** — Real accounts land: credentials + sessions, invite-gated signup,
   login/logout, the RLS lockdown (migration 0022), and `currentActor()` rewired
   onto sessions in place of the `skylark_actor` dev cookie.
+- **#q6xm** — Two fixes for crew logged out more often than expected, especially
+  on mobile: (1) sliding session renewal — `getSessionUser` now extends
+  `expiresAt` when a session is more than a day old, so an actively- used
+  session no longer dies on a fixed 30-day clock regardless of use; (2) a
+  canonical-origin redirect (`origin.ts` + `__root.tsx`'s `beforeLoad`) sends
+  any request that arrives on something other than `SKYLARK_PUBLIC_HOST` (a LAN
+  address, an old bookmark) to the public hostname before a session cookie can
+  be set or read against the wrong origin — closing the tunnel-vs-LAN split that
+  looks exactly like a random logout on a phone that roams between home Wi-Fi
+  and cellular. Confirmed empirically (a real `cloudflared` quick tunnel) that
+  `x-forwarded-proto: https` is reliably set end to end, so the existing
+  `Secure`-flag detection in `setSessionCookie` was already sound; the missing
+  piece was the second-origin case, not the header.
