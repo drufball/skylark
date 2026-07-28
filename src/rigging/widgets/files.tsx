@@ -147,13 +147,12 @@ interface Read<T> {
  * The shared-document list, read fresh — on mount and again whenever `revision`
  * moves (the stack telling us a `file:*` event landed). Never stored on the row.
  */
-function useFileList(revision: number, enabled: boolean): Read<string[]> {
+function useFileList(revision: number): Read<string[]> {
   const [state, setState] = useState<Read<string[]>>({
     value: null,
     failed: false,
   })
   useEffect(() => {
-    if (!enabled) return
     let cancelled = false
     void listFiles().then(
       (paths) => {
@@ -168,19 +167,18 @@ function useFileList(revision: number, enabled: boolean): Read<string[]> {
     return () => {
       cancelled = true
     }
-  }, [revision, enabled])
+  }, [revision])
   return state
 }
 
 /** One document's contents, read fresh. `null` content means it isn't there. */
-function useDocument(path: string | null, revision: number): Read<string> {
+function useDocument(path: string, revision: number): Read<string> {
   const [state, setState] = useState<Read<string>>({
     value: null,
     failed: false,
   })
   const [loaded, setLoaded] = useState<string | null>(null)
   useEffect(() => {
-    if (path === null) return
     let cancelled = false
     void readFile({ data: path }).then(
       (content) => {
@@ -284,7 +282,7 @@ function DocumentList({
   revision: number
   onOpen: (path: string) => void
 }) {
-  const { value, failed } = useFileList(revision, true)
+  const { value, failed } = useFileList(revision)
   if (!value) {
     return (
       <p className="text-sm text-muted-foreground">
