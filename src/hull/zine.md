@@ -53,7 +53,13 @@ notifications, and the access gate that says who may see what.
 - **watch service** (`watch/`) — the night watch: a ~60s sweep that nudges a
   build gone silent and health-checks a long background wait, escalating to the
   owner when a stall won't clear. Drives its interventions through the issues
-  orchestrator's own runtime and surfaces every one on the ship's log. See
+  orchestrator's own runtime and surfaces every one on the ship's log. **A
+  DEPENDENT service, not a template of loose coupling**: it is the issues
+  board's outrigger — it imports issues' exported functions (including
+  mutators), keys its memory tables to issues' rows, and cannot exist without
+  it. That's the deepest function-level coupling between two hull services,
+  accepted deliberately (interventions must go through the orchestrator's own
+  serialized runtime); copy any OTHER service's shape when adding one. See
   [`watch/zine.md`](watch/zine.md).
 - **access gate** (`access/`) — `canSeeTopic` (`access/visibility.ts`), the one
   entitlement gate for "may this actor see X?". It probes the parent resource

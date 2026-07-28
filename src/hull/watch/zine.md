@@ -90,6 +90,15 @@ is what falls silent — and pings the issue author if they're a distinct human.
 
 ## Decisions
 
+- **The watch is a DEPENDENT service of issues — by design, and don't copy it.**
+  It imports issues' exported functions (including mutators like
+  `transitionIssue`/`setBatonHolder`), keys both of its memory tables to issues'
+  and agent's rows by FK, and cannot be rebuilt without reading the issues zine.
+  That is the deepest coupling between any two hull services, and it's the price
+  of the decision below (interventions must ride the issues orchestrator's own
+  serialized runtime — a decoupled watch would double-drive sessions). Every
+  other service pair talks through the ship's log or a question-shaped export; a
+  new service should imitate THEM, not this.
 - **Drives go through the issues orchestrator's OWN runtime, never a fresh
   one.** An issue-backed session is owned by the runtime the issues orchestrator
   boots; only that instance's single-flight/queue can fold a nudge into a
