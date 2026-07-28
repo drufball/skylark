@@ -129,34 +129,118 @@ function buildGraph(): Map<string, string[]> {
   return graph
 }
 
+/**
+ * Schema-import violations in one file. Two rules share the walk:
+ *
+ * - Inside the hull, a service touches only its own tables; cross-service
+ *   schema imports must be on the FK allowlist. Matched on the RESOLVED module
+ *   path, not the specifier — `../issues/schema` is the same import as
+ *   `@hull/issues/schema` and must not slide past on spelling.
+ * - Above the hull (rigging, home), a VALUE import of any hull schema is a
+ *   deck reading another service's tables directly. Decks ask a service
+ *   questions through its exported functions; `import type` is fine (erased at
+ *   runtime) and is already invisible to `importSpecifiers`. The serving layer
+ *   (src root, routes/) is exempt — wiring the decks together is its job.
+ */
+function schemaImportViolations(file: string, source: string): string[] {
+  const violations: string[] = []
+  const service = /^hull\/([a-z-]+)\//.exec(file)?.[1] ?? null
+  const aboveDeck = /^(?:rigging|home)\//.test(file)
+  if (!service && !aboveDeck) return violations
+  for (const spec of importSpecifiers(source)) {
+    const resolved = resolveToSrcPath(spec, file)
+    if (!resolved) continue
+    const m = /^hull\/([a-z-]+)\/schema$/.exec(resolved)
+    if (!m) continue
+    const target = m[1]
+    if (service) {
+      if (target === service) continue
+      // Identity joins on the crew primitive are the design, not a leak.
+      if (target === 'users') continue
+      const isOwnSchemaFile = file === `hull/${service}/schema.ts`
+      if (isOwnSchemaFile && SCHEMA_FK_ALLOWLIST.has(`${service} -> ${target}`))
+        continue
+      violations.push(
+        `${file} imports @hull/${target}/schema — a service reads only its own tables; ` +
+          `ask the ${target} service a question (export a function) or emit/subscribe on the ship's log. ` +
+          `A genuine new FK belongs in ${service}/schema.ts plus the allowlist in architecture.test.ts.`,
+      )
+    } else {
+      violations.push(
+        `${file} value-imports @hull/${target}/schema — a deck above the hull reads a service ` +
+          `through its exported functions, never its tables. \`import type\` is fine.`,
+      )
+    }
+  }
+  return violations
+}
+
 describe('architecture: service decoupling', () => {
   it('cross-service schema imports stay on the named allowlist', () => {
     const violations: string[] = []
     for (const file of sourceFiles()) {
       if (file.includes('.test.')) continue
-      const svcMatch = /^hull\/([a-z-]+)\//.exec(file)
-      if (!svcMatch) continue
-      const service = svcMatch[1]
-      const source = readFileSync(join(SRC, file), 'utf8')
-      for (const spec of importSpecifiers(source)) {
-        const m = /^@hull\/([a-z-]+)\/schema$/.exec(spec)
-        if (!m || m[1] === service) continue
-        const target = m[1]
-        // Identity joins on the crew primitive are the design, not a leak.
-        if (target === 'users') continue
-        const isOwnSchemaFile = file === `hull/${service}/schema.ts`
-        const allowed =
-          isOwnSchemaFile && SCHEMA_FK_ALLOWLIST.has(`${service} -> ${target}`)
-        if (!allowed) {
-          violations.push(
-            `${file} imports @hull/${target}/schema — a service reads only its own tables; ` +
-              `ask the ${target} service a question (export a function) or emit/subscribe on the ship's log. ` +
-              `A genuine new FK belongs in ${service}/schema.ts plus the allowlist in architecture.test.ts.`,
-          )
-        }
-      }
+      violations.push(
+        ...schemaImportViolations(file, readFileSync(join(SRC, file), 'utf8')),
+      )
     }
     expect(violations).toEqual([])
+  })
+
+  // The rule's own edge cases, pinned so the check can't quietly regress to
+  // matching specifier SPELLING or to binding only inside the hull — the two
+  // evasions the 2026-07-28 review found open.
+  it('catches a cross-service schema import spelled relatively', () => {
+    expect(
+      schemaImportViolations(
+        'hull/chat/sneaky.ts',
+        `import { issues } from '../issues/schema'\n`,
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('catches a rigging value-import of a hull schema (users included)', () => {
+    expect(
+      schemaImportViolations(
+        'rigging/widgets/sneaky.tsx',
+        `import { issues } from '@hull/issues/schema'\n`,
+      ),
+    ).toHaveLength(1)
+    expect(
+      schemaImportViolations(
+        'rigging/rooms/sneaky.ts',
+        `import { users } from '@hull/users/schema'\n`,
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('leaves type-only imports, own schemas, and allowlisted FKs alone', () => {
+    expect(
+      schemaImportViolations(
+        'rigging/widgets/fine.tsx',
+        `import type { IssueStatus } from '@hull/issues/schema'\n`,
+      ),
+    ).toEqual([])
+    expect(
+      schemaImportViolations(
+        'hull/chat/service.ts',
+        `import { chats } from './schema'\n`,
+      ),
+    ).toEqual([])
+    expect(
+      schemaImportViolations(
+        'hull/watch/schema.ts',
+        `import { issues } from '@hull/issues/schema'\n`,
+      ),
+    ).toEqual([])
+    // ...but the same FK import from a NON-schema file of the service is not
+    // covered by the allowlist.
+    expect(
+      schemaImportViolations(
+        'hull/watch/service.ts',
+        `import { issues } from '@hull/issues/schema'\n`,
+      ),
+    ).toHaveLength(1)
   })
 })
 
