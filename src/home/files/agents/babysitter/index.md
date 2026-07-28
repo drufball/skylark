@@ -180,3 +180,34 @@ authoritative process)
   still present so deleted manually. Going forward, don't assume every red
   `review` check is infra noise — check if there's an open fix PR like this
   one first.
+- q6xm (Sliding session renewal + canonical-origin redirect, PR #165):
+  smoke/verify/coverage all passed clean, no rebase needed,
+  mergeStateStatus UNSTABLE/MERGEABLE. `review` failed with the usual
+  is_error:true/~2s/no-comments signature. This time I actually checked
+  whether souf's model-pin fix (#164, merged ~2.5h earlier) had fixed it: it
+  hadn't fully — souf's own PR *skipped* the review job entirely (GitHub
+  "workflow validation failed... will begin working once you merge your PR"
+  — a workflow-file-editing PR can't get its own new workflow content
+  exercised on itself), so the fix was never actually live-verified before
+  merging, and post-merge the review job is still failing identically on
+  every PR since (confirmed via `gh run list --workflow "Change review"
+  --limit 100`, checking `"model"` in each run's SDK-options log line — every
+  post-souf run still shows `"model": "opus"` un-pinned, not
+  `claude-opus-4-8`; only souf's own skipped run and q6xm's manual rerun ever
+  saw the pinned id, and even the pinned id run still failed with the same
+  is_error:true 2s-later — so pinning the model was NOT the actual root
+  cause, or at least isn't sufficient). Tried `gh run rerun --job` once on
+  q6xm's review job — failed again identically even with the model pin
+  applied. No review comments ever posted across dozens of runs going back
+  weeks. No branch protection (404). Treated `review` as advisory per policy
+  and merged squash on smoke/verify/coverage green +
+  UNSTABLE/MERGEABLE. --delete-branch hit the usual worktree-collision
+  error; remote branch still present after fetch --prune so deleted
+  manually. No builder round-trip needed for q6xm's own diff.
+  IMPORTANT FOR NEXT TIME: souf's fix (PR #164) does NOT appear to have
+  actually resolved the change-review perma-red — worth flagging to OWNER
+  or @builder next time this comes up, since is_error:true persists even
+  with `--model claude-opus-4-8` pinned (e.g. q6xm's rerun at 16:17:49 UTC
+  used the pinned id and still failed in ~2s). The real cause may be
+  something else entirely (auth/quota/action-version issue), not the opus
+  alias.
