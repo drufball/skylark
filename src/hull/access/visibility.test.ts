@@ -50,6 +50,23 @@ describe('canSeeTopic', () => {
     expect(await canSeeTopic(db, bob, 'issue:123')).toBe(true)
   })
 
+  it('allows file topics and the files-service ops topics (crew-public)', async () => {
+    expect(await canSeeTopic(db, bob, 'file:notes/plan.md')).toBe(true)
+    expect(await canSeeTopic(db, bob, 'files:sweep')).toBe(true)
+    expect(await canSeeTopic(db, bob, 'files:staging')).toBe(true)
+  })
+
+  /**
+   * The gate fails CLOSED on a topic no grammar claims. The day a service
+   * mints a private topic and forgets to register it here, the failure is
+   * "the new tiles don't go live" — a bug somebody sees — not "its events
+   * stream to the whole crew" — a leak nobody does.
+   */
+  it('denies a topic no grammar claims, including the topicless empty string', async () => {
+    expect(await canSeeTopic(db, alice, 'sonar:ping')).toBe(false)
+    expect(await canSeeTopic(db, alice, '')).toBe(false)
+  })
+
   it('admits exactly the owner to a notification topic', async () => {
     expect(await canSeeTopic(db, alice, `notify:${alice}`)).toBe(true)
     expect(await canSeeTopic(db, bob, `notify:${alice}`)).toBe(false)
