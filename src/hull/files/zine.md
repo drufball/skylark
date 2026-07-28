@@ -1,6 +1,6 @@
 # Files
 
-_files zine — issue #1_
+_files zine — issue #cse7_
 
 ## tl;dr
 
@@ -27,6 +27,10 @@ docs are plain files on disk again — the interop surface for every other tool.
 - **Doors** — web (`server.ts`, behind the Files surface) and CLI
   (`npm run files -- list|read|write|rm`), both attributing writes to the acting
   user (the staged commit's author).
+- **The path rule** (`path.ts`) — `isValidFilePath` / `validateFilePath`: a
+  node-free leaf like `topic.ts`, so the BROWSER can apply the same rule. The
+  rigging's read-only `files` widget validates a pinned path when it parses its
+  props, and one rule in one place is the point — see the decision below.
 - **Events** — every change announces `file.changed` on topic `file:<path>`
   (audience public); a merge announces `files.staging_merged`, and a sweep that
   has given up retrying announces `files.sweep_wedged` on `files:sweep`. The
@@ -145,6 +149,20 @@ would be no bound at all.
   consecutive failures stop the hammering, and the wedge announces itself on the
   ship's log. An out-of-band edit blocking a sweep is accepted behaviour — that
   state is undefined and wants a human — but it must fail loudly, not silently.
+- **Auto-merge without a PR is why nothing outside this service may WRITE a
+  path.** Three facts compose into a real hazard: the sweep merges to `main`
+  with no review, `validateFilePath` restricts traversal but **not extensions**,
+  and a merge auto-deploys the serving checkout (#f70a) on a ship published
+  through a Cloudflare Tunnel. So a write door reached from anywhere a model can
+  reach — a chat message, a widget's props — is a path from a conversation to
+  unreviewed executable code in the running ship. The rigging's `files` widget
+  is read-only for exactly this reason
+  ([`rigging/widgets/zine.md`](../../rigging/widgets/zine.md)), and any future
+  surface that wants to write must answer this paragraph rather than route
+  around it. The pure path rule lives in `path.ts` so a reader can apply the
+  ship's own rule instead of writing a second one — two path policies agree
+  until they don't, and here "don't" means a path this service would have
+  refused.
 - **The write path refuses captured command output.** An agent that pipes
   `npm run files -- read` output back into a write buries npm's two-line script
   banner in the document; #q2zi repaired that data and it recurred, because
@@ -154,6 +172,10 @@ would be no bound at all.
 
 ## Changelog
 
+- **#cse7** — The path rule moves to a node-free leaf (`path.ts`, with a total
+  `isValidFilePath` beside the throwing form) so the rigging's read-only `files`
+  widget refuses a bad path with this service's own rule rather than a copy of
+  it. Nothing about staging, the sweep or the doors changed.
 - **#1** — The files service and the Files surface land.
 - **#fssz** — The sweep syncs `main` with origin and pushes after merging, so
   local `main` stops diverging from origin.

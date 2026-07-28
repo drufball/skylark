@@ -1,6 +1,6 @@
 # Widgets
 
-_widgets zine — issue #cse4_
+_widgets zine — issue #cse7_
 
 ## tl;dr
 
@@ -87,6 +87,21 @@ generated from the same entries.
   itself. Props are a filter (`statuses`, `issueIds`, `limit`); the issues are
   read fresh through the issues service's own `listBoard` door, and the tile
   goes live off `issue:*`.
+- **`files`** (`files.tsx`) — the crew's shared documents, **read-only**. Props
+  pick what you're looking at (`path` pins one document, `folder` browses one,
+  `limit` caps the list); names come from `listFiles`, contents from `readFile`,
+  and the tile goes live off `file:<path>` for a pinned document or `file:*` for
+  a list. It draws no control that writes, and that's a security boundary — see
+  the decision below.
+- **`inbox`** (`inbox.tsx`) — the VIEWER's own notifications. Props say how much
+  (`unreadOnly`, `limit`) and can never say whose; the read is `myInbox`, which
+  resolves the actor server-side, and the tile goes live off `notify:*`. The
+  first per-viewer kind: one row on a shared canvas shows each member their own
+  inbox (see the decision below).
+- **Default rooms** (`../rooms/`) — the conversations a fresh ship boots with,
+  and the widgets arranged in them. Also on this deck, and for the same reason
+  the catalog is: a room names widget KINDS, which is meaning, not rows. See
+  [`rigging/zine.md`](../zine.md).
 - **Vocabulary** (`widgetKindSpecs`) — the catalog with the components and
   topics stripped off, which is exactly what the hull's `chat_widget` tool needs
   to describe a kind. Handed to the hull by `src/boot.ts`.
@@ -196,6 +211,47 @@ place, and the hull still imports nothing from rigging.
   never gives.
 - **A body mounts only while its tile is open.** A closed tile costs one line of
   text and asks no service anything, which is what lets the shelf stay a shelf.
+- **`files` is READ-ONLY, and that is a security boundary rather than a scope
+  decision.** The files service auto-merges every write to `main` with **no PR**
+  on purpose — "these are documents, not code" — its path rule restricts
+  traversal but **not file extensions**, and a merge **auto-deploys the serving
+  checkout**. Chain those and a widget that could write an arbitrary path is a
+  path from a chat message — something an agent, or anyone talking to one, can
+  produce — to unreviewed executable code running in a ship that is publicly
+  exposed through a Cloudflare Tunnel. So the kind imports exactly two doors
+  (`listFiles`, `readFile`) and draws nothing that writes; editing a document
+  stays on the Files surface, where a human is doing it deliberately. A future
+  slice that wants an editable tile has to answer this paragraph first, not
+  quietly add a save button. The pinned `path` is validated at PARSE time with
+  the files service's OWN rule (`isValidFilePath`, the node-free leaf
+  `hull/files/path.ts`), imported rather than re-spelled — a second copy of a
+  path policy is two policies that agree until they don't, and this is the one
+  where "don't" means a path the service would have refused.
+- **A tile that reads a person's data is per-VIEWER, and the row must not be
+  able to name the person.** `inbox` is the first, and the shape is the one
+  `chat_view_state` set (#cse4): the DATA comes from a door that resolves
+  `currentActor()` and runs under RLS, so there is no door that takes a user id
+  at all; the props are refused **loudly** if they carry one (`userId`,
+  `handle`, …), because silently dropping the key would leave the agent that
+  wrote it believing it had aimed the tile at somebody. The tile also says whose
+  inbox it is out loud, so a member can SEE it's theirs. The live half asks for
+  the `notify:*` wildcard — the props can't name the viewer, so the instance
+  can't name a topic — and that leaks nothing by construction: the stream gates
+  every event through `canSeeTopic`, and `notify:<userId>` admits exactly that
+  user. Pinned by both a unit test (one parsed row, two viewers) and the browser
+  pass (two logged-in members, one row, neither sees the other's).
+- **A capped list says how much it is hiding.** A `files` tile headlined "Files
+  · all" showing the first eight of eighteen documents is the same dishonesty as
+  an `issue-list` quietly dropping a pin — you cannot tell a small shelf from a
+  capped one. Same rule as "a kind that pins a referent must SAY when it's
+  gone".
+- **Inside a tile, the label goes over the timestamp, not beside it.** Observed
+  live at 390px: `YYYY-MM-DD HH:MM` held a third of an inbox row and cut "@mate
+  commented on #a1b2" down to "@mate c…". A tile is far narrower than the
+  surface it mirrors, so a row that reads fine on `/inbox` doesn't transplant —
+  the thing that IS the notification takes the width, and the secondary fact
+  goes underneath. Same call the stack's headline made in #cse5, and the same
+  one `files` makes for a document's own name.
 - **The buttons a kind draws and the answers the hull accepts must agree.**
   `choice` renders its options verbatim from the row and never normalises them,
   because the hull's whitelist reads the same row — a parser that trimmed would
@@ -204,6 +260,15 @@ place, and the hull still imports nothing from rigging.
 
 ## Changelog
 
+- **#cse7 — Two apps get rooms.** Two kinds join the catalog: `files`, a
+  read-only window onto the crew's shared documents (browse a folder, tap
+  through to a document, or pin one open), and `inbox`, the first PER-VIEWER
+  kind — one row, and each member of a chat sees their own notifications. Both
+  declare their own topics, so both go live over the existing SSE with no new
+  transport. The default rooms that hold them live beside this catalog in
+  [`rigging/rooms/`](../rooms). Two things the phone pass found and fixed: a
+  capped `files` list now says how many documents it isn't showing, and an inbox
+  row puts the label over the timestamp instead of beside it.
 - **#cse6 — Two canvases, one engine.** The page strip, the desktop grid, the
   phone column and the tile chrome move out of `canvas.tsx` into `grid.tsx`, and
   `home-canvas.tsx` — your personal screen of POINTERS at widgets living in

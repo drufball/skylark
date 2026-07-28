@@ -25,6 +25,12 @@ if ./scripts/gateway-up; then
   # and best-effort: a hiccup here never blocks `npm run dev`.
   npm run db:migrate || echo "⚠ couldn't apply migrations — continuing anyway"
   npm run users seed || echo "⚠ couldn't seed the crew — continuing anyway"
+  # The ship's default rooms — Issues, Files, Inbox — each a chat with the crew
+  # in it, an agent aboard, and its readout already on the canvas. AFTER the
+  # crew seed, which it takes its membership from. Idempotent and
+  # non-clobbering: a room the crew renamed, rearranged or added to is theirs
+  # from the first boot onward, so this is safe to run every time.
+  npm run rooms seed || echo "⚠ couldn't seed the default rooms — continuing anyway"
 else
   echo "⚠ couldn't start Postgres + gateway — is Docker running? continuing anyway"
 fi

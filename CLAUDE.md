@@ -35,6 +35,7 @@ npm run agent            the agent service CLI (sessions, seed, extensions)
 npm run users            the users service CLI (seed, list, whoami)
 npm run issue            the issues service CLI (new, list, show, comment, handoff, …)
 npm run files            the files service CLI (list, read, write, rm)
+npm run rooms            the ship's default rooms (seed, list) — idempotent, run by scripts/serve
 npm run check            format:check + lint + knip + typecheck + test — "is the ship sound"
 npm test                 vitest — runs on PGlite, needs no database
 npm run smoke            playwright — boots the REAL server on the fake runtime + smoke db

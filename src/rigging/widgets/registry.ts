@@ -1,6 +1,8 @@
 import type { WidgetKindSpec } from '@hull/chat/widget-catalog'
 
 import { choiceKind } from './choice'
+import { filesKind } from './files'
+import { inboxKind } from './inbox'
 import { issueListKind } from './issue-list'
 import { noteKind } from './note'
 import type { WidgetKind, WidgetView } from './kind'
@@ -32,6 +34,8 @@ export const WIDGET_REGISTRY = {
   choice: choiceKind,
   note: noteKind,
   'issue-list': issueListKind,
+  files: filesKind,
+  inbox: inboxKind,
 } satisfies Record<string, WidgetKind>
 
 /**

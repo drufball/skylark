@@ -50,7 +50,7 @@ describe('resolveWidget', () => {
   })
 
   it('never throws, whatever the props are', () => {
-    for (const kind of ['choice', 'note', 'issue-list', 'orrery']) {
+    for (const kind of [...Object.keys(WIDGET_REGISTRY), 'orrery']) {
       for (const props of [null, undefined, 7, 'x', [], {}, { a: { b: 1 } }]) {
         expect(() => resolveWidget(kind, props)).not.toThrow()
       }
@@ -60,6 +60,8 @@ describe('resolveWidget', () => {
   it('carries the kinds this slice promised', () => {
     expect(Object.keys(WIDGET_REGISTRY).sort()).toEqual([
       'choice',
+      'files',
+      'inbox',
       'issue-list',
       'note',
     ])
