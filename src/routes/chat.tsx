@@ -418,51 +418,61 @@ function ChatRoute() {
         onRemoveMember={(userId) => {
           void changeMembers({ removeMemberId: userId })
         }}
-        schedules={scheduleItems}
-        onCreateSchedule={(input) => {
-          void addSchedule(input)
+        schedules={{
+          items: scheduleItems,
+          onCreate: (input) => {
+            void addSchedule(input)
+          },
+          onToggle: (id, enabled) => {
+            void toggleSchedule(id, enabled)
+          },
+          onDelete: (id) => {
+            void removeSchedule(id)
+          },
         }}
-        onToggleSchedule={(id, enabled) => {
-          void toggleSchedule(id, enabled)
+        stack={{
+          widgets: widgetItems,
+          onAnswerWidget: (widgetId, value) => {
+            void answerWidget(widgetId, value)
+          },
+          onDismissWidget: (widgetId) => {
+            void dismissWidget(widgetId)
+          },
         }}
-        onDeleteSchedule={(id) => {
-          void removeSchedule(id)
-        }}
-        widgets={widgetItems}
-        onAnswerWidget={(widgetId, value) => {
-          void answerWidget(widgetId, value)
-        }}
-        onDismissWidget={(widgetId) => {
-          void dismissWidget(widgetId)
-        }}
-        canvasPages={canvas.pages}
-        canvasWidgets={canvasItems}
-        activePageId={
-          viewPage && viewPage.chatId === activeId ? viewPage.pageId : null
-        }
-        onSelectPage={(pageId) => {
-          void selectPage(pageId)
-        }}
-        onNewPage={(title) => {
-          void newPage(title)
-        }}
-        onRenamePage={(pageId, title) => {
-          void renamePage(pageId, title)
-        }}
-        onRemovePage={(pageId) => {
-          void removePage(pageId)
-        }}
-        onPlaceWidget={(widgetId, box) => {
-          void placeWidget(widgetId, box)
-        }}
-        onStackWidget={(widgetId) => {
-          void stackWidget(widgetId)
-        }}
-        onPinHomeWidget={(widgetId) => {
-          // A POINTER on your own home, not a move: the widget stays right
-          // here. No page named — the door lands it on your first one (and
-          // makes you one if this is your first pin).
-          void act(() => pinHomeCanvasTile({ data: { widgetId } }))
+        canvas={{
+          pages: canvas.pages,
+          widgets: canvasItems,
+          activePageId:
+            viewPage && viewPage.chatId === activeId ? viewPage.pageId : null,
+          onSelectPage: (pageId) => {
+            void selectPage(pageId)
+          },
+          onNewPage: (title) => {
+            void newPage(title)
+          },
+          onRenamePage: (pageId, title) => {
+            void renamePage(pageId, title)
+          },
+          onRemovePage: (pageId) => {
+            void removePage(pageId)
+          },
+          onPlaceWidget: (widgetId, box) => {
+            void placeWidget(widgetId, box)
+          },
+          onStackWidget: (widgetId) => {
+            void stackWidget(widgetId)
+          },
+          // The same door the stack answers through — an answerable tile stays
+          // answerable once it's pinned.
+          onAnswerWidget: (widgetId, value) => {
+            void answerWidget(widgetId, value)
+          },
+          onPinHome: (widgetId) => {
+            // A POINTER on your own home, not a move: the widget stays right
+            // here. No page named — the door lands it on your first one (and
+            // makes you one if this is your first pin).
+            void act(() => pinHomeCanvasTile({ data: { widgetId } }))
+          },
         }}
       />
     </Dock>
