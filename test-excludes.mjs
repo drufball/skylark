@@ -24,6 +24,7 @@ export const SHARED_EXCLUDES = [
   'src/**/cli.ts',
   'src/**/test-db.ts',
   'src/**/test-support.ts',
+  'src/**/*.test-support.{ts,tsx}',
   'src/hull/db/client.ts',
   'src/router.tsx',
   'src/routes/**',
