@@ -14,6 +14,7 @@ import { getUserById } from '@hull/users/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
 import { chatProgressLine } from '@hull/agent/progress'
 
+import { chatDocsDir } from './docs'
 import {
   formatTranscript,
   getMessage,
@@ -110,6 +111,7 @@ export function turnContext(input: {
     '--body',
     '"<details>"',
   )
+  const docsDir = chatDocsDir(input.chatId)
   return `[You are @${input.handle} in chat ${input.chatId}.
 
 HOW TO SPEAK: call the \`chat_post\` tool. That is the ONLY way anything reaches
@@ -125,6 +127,15 @@ gets tappable options above the composer and their answer arrives as an ordinary
 message. Better than "yes or no?" on a phone. There are other kinds too (a
 pinned note, a live list of issues); \`chat_widget\`'s own description lists
 every kind this ship can render and the props each one takes.
+
+THIS CHAT'S OWN DOCS FOLDER is ${docsDir} in the shared files (same library as
+everything else, nothing siloed — just a place to keep this chat's own working
+docs grouped). Read or write it with bash, e.g.
+  ${actorCmd(input.userId, 'files', 'write', `${docsDir}/<file>`, '--stdin')}
+and put it in front of the crew with \`chat_widget\` (kind "files", props
+{ "folder": "${docsDir}" }) — or point that same widget at any other path or
+folder in the shared library; this is a shortcut for this chat's own folder,
+not the only place a files widget may look.
 
 ${canvasContext(input.viewers ?? [])}To file work for the ship, use bash:
   ${cmd}

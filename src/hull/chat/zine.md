@@ -63,14 +63,27 @@ rigging.
 - **turnContext** — the situational header every reply turn opens with: who the
   agent is, which chat this is, **how to speak** (`chat_post` is the only way
   anything reaches the crew; silence is allowed), the structured alternative
-  (`chat_widget`), and the concrete `npm run issue -- new … --body …` command
-  for filing work. Repeated per turn — cheap, and it survives session
-  compaction. This header is the only thing standing between a resident agent
-  and total silence, so it is load-bearing prose, not decoration.
-  `inboxTurnContext` is its counterpart for a wake turn: it opens instead with
-  "this is your inbox, not a chat" and the chat-CLI commands
-  (`list`/`show`/`post`) for finding and updating the right conversation — an
-  inbox session has no chat, so it has no `chat_post` either.
+  (`chat_widget`), **this chat's own docs folder** (`docs.ts`'s `chatDocsDir`,
+  and how to point a `files` widget at it), and the concrete
+  `npm run issue -- new … --body …` command for filing work. Repeated per turn —
+  cheap, and it survives session compaction. This header is the only thing
+  standing between a resident agent and total silence, so it is load-bearing
+  prose, not decoration. `inboxTurnContext` is its counterpart for a wake turn:
+  it opens instead with "this is your inbox, not a chat" and the chat-CLI
+  commands (`list`/`show`/`post`) for finding and updating the right
+  conversation — an inbox session has no chat, so it has no `chat_post` either.
+- **A chat's own docs folder** (`docs.ts`'s `chatDocsDir`) — `chats/<chatId>/`
+  in the ship's shared files (`hull/files/zine.md`), the subfolder-per-chat
+  convention #wkh8 asked for: a place to keep one conversation's working docs
+  visually grouped. Pure and DERIVED from the chat id alone — no new column, no
+  migration, no provisioning step, the same node-free-leaf shape as `topic.ts`
+  and the agent service's own `agents/<handle>/` (`agent/memory-paths.ts`). A
+  folder needs nothing created ahead of time: it exists the moment something is
+  written under it, exactly like any other shared-file path. `turnContext` tells
+  every agent its own chat's folder and how to raise a `files` widget pointed at
+  it — a SHORTCUT, never a restriction: that widget's `folder`/`path` props
+  still take any path in the one shared library, and files itself stays one
+  repo, one staging branch, one sweep, with nothing siloed per chat.
 - **The waker** (`waker.ts`) — the bridge from notifications to a sleeping
   agent: debounces a flurry (10s) into ONE wake per agent (not per chat — the
   waker knows nothing about chat), and drives the orchestrator's `wake` with the
@@ -588,6 +601,12 @@ agent.
 
 ## Changelog
 
+- **#wkh8 — A per-chat docs folder.** `docs.ts`'s `chatDocsDir` gives every chat
+  a derived, stable folder (`chats/<chatId>/`) in the shared files — no schema
+  change, nothing provisioned ahead of time. `turnContext` tells every agent its
+  own chat's folder and how to raise a `files` widget scoped to it, a shortcut
+  alongside (never instead of) pointing that widget anywhere else in the one
+  shared library.
 - **#cse8 — Chat stops being the front door and becomes the ship.** Nothing in
   this service changed: the route moved from `/` to `/chat` (with `/?chat=<id>`
   redirecting, because agents have been posting those links into these very
