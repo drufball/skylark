@@ -5,6 +5,7 @@
     "src/server.ts",
     "src/routes/**/*.{ts,tsx}",
     "src/hull/**/cli.ts",
+    "src/rigging/**/cli.ts",
     "src/hull/agent/extensions/build-gates/index.ts",
     "e2e/**/*.ts",
     "test-excludes.mjs",

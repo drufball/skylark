@@ -1,6 +1,6 @@
 # Notifications
 
-_notifications zine — issue #2_
+_notifications zine — issue #cse7_
 
 ## tl;dr
 
@@ -27,7 +27,13 @@ to review, update the right conversation, and file the next piece).
   chat-finding judgment to the agent. Its mechanics live in the
   [chat zine](../chat/zine.md).
 - **Doors** — `myInbox`, `markInboxRead`, `watchState`, `setWatch`; all run
-  under the current actor so RLS is the gate.
+  under the current actor so RLS is the gate. **None of them takes a user id**,
+  which is what lets a shared surface hold one inbox view safely.
+- **Topics** (`topic.ts`) — `notify:<userId>`, private to its owner, plus
+  `NOTIFY_TOPIC_PATTERN` (`notify:*`) for a subscriber that can't name the
+  viewer. Asking for the wildcard is not asking to see everyone's inbox: a
+  pattern says what the client ASKED for, `canSeeTopic` says what it's allowed,
+  and for a notify topic the topic IS the entitlement (see the decision below).
 
 ## Structure
 
@@ -75,8 +81,23 @@ own judgment, not the queue's.
   top would double-drive it). Watchers other than the target hear both kinds.
   Both event types live in the [issues zine](../issues/zine.md).
 
+- **An inbox may be shown on a SHARED surface, because no door and no topic can
+  name somebody else's.** The rigging's `inbox` widget puts one row on a chat's
+  canvas and shows each member their own news
+  ([`rigging/widgets/zine.md`](../../rigging/widgets/zine.md)). That's safe for
+  two reasons this service owns and must keep: the read door resolves
+  `currentActor()` and takes no user id, so a caller cannot ask for another's
+  rows even by mistake; and `notify:<userId>` is admitted by `canSeeTopic` to
+  exactly that user, so a subscriber may ask for `notify:*` without hearing
+  anyone else. **A door that took a user id would break the first half** — if
+  one is ever needed, it belongs beside a fresh look at every surface that shows
+  an inbox.
+
 ## Changelog
 
+- **#cse7** — `NOTIFY_TOPIC_PATTERN` joins the topic leaf, so a surface that
+  can't name its viewer can still go live; the rigging's per-viewer `inbox`
+  widget is the first caller. No table, door or reactor change.
 - **Decouple issues from chat** — A wake now always fires (no more "no route
   home" orphan case): it lands on the agent's own inbox session, and the agent
   finds the chat to update itself via the new chat CLI.

@@ -5,6 +5,7 @@ import { PUBLIC_AUDIENCE } from '@hull/events/service'
 import type { FilesRepo } from './git'
 
 export type { FilesRepo }
+import { validateFilePath } from './path'
 import { fileTopic } from './topic'
 
 /**
@@ -53,25 +54,12 @@ export const SWEEP_WEDGED_PROBE_EVERY = 20
 export const SWEEP_LOG_REPEAT_EVERY = 10
 
 /**
- * Validate and normalize a file path: relative, no traversal, no empty
- * segments, no `:` (it would break the `file:<path>` topic grammar), no
- * control characters. Returns the path unchanged when valid — the service
- * stores exactly what the crew named.
+ * What a shared document may be called — the rule itself lives in the node-free
+ * leaf `path.ts`, so the BROWSER can apply it too (the rigging's `files` widget
+ * refuses a bad path when it parses its props). Re-exported here because every
+ * door of this service already looks for it on the service.
  */
-export function validateFilePath(path: string): string {
-  if (path === '' || path.startsWith('/') || path.endsWith('/')) {
-    throw new Error(`Invalid file path: "${path}"`)
-  }
-  // eslint-disable-next-line no-control-regex
-  if (/[:\u0000-\u001f]/.test(path)) {
-    throw new Error(`Invalid file path: "${path}"`)
-  }
-  const segments = path.split('/')
-  if (segments.some((s) => s === '' || s === '.' || s === '..')) {
-    throw new Error(`Invalid file path: "${path}"`)
-  }
-  return path
-}
+export { validateFilePath }
 
 /**
  * npm's two-line script banner, as `npm run files -- read x` prints it:

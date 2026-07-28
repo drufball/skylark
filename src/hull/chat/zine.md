@@ -585,6 +585,13 @@ agent.
 
 ## Changelog
 
+- **#cse7 — Rooms, seeded from above.** Chat itself is unchanged; what's new is
+  that the ship now BOOTS with three chats holding widgets — an Issues, a Files
+  and an Inbox room, opened idempotently by `npm run rooms seed` through these
+  same exported functions, under the operator's own actor
+  ([`rigging/zine.md`](../../rigging/zine.md)). The rule below holds exactly as
+  written: the seed is a person's move made through a door, so every widget it
+  raises has that person's name on it, and no hull service raises one.
 - **#cse6 — The home canvas, and two carry-overs.** Widgets still live only in
   chats; what's new is a personal surface that POINTS at them
   ([`hull/home-canvas/zine.md`](../home-canvas/zine.md)), resolving each pointer

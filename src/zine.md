@@ -49,6 +49,10 @@ with Tailwind and shadcn.
   lives in the rigging catalog
   ([`rigging/widgets/zine.md`](rigging/widgets/zine.md)) — hull holds the row,
   rigging holds the meaning.
+- **Rooms** — the conversations a fresh ship boots with (Issues, Files, Inbox),
+  each with an agent aboard and its readout already on the canvas. Seeded
+  idempotently by `npm run rooms seed`, on the rigging deck with the catalog
+  they arrange ([`rigging/zine.md`](rigging/zine.md)).
 - **The home canvas** — your own personal screen of **pointers** at widgets
   living in chats you're in. A widget instance always lives in exactly one chat;
   home is the one surface in the ship that points rather than contains, and a
@@ -102,6 +106,11 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **The apps were conversations all along: two of them get rooms.** `files` and
+  `inbox` join the widget catalog, and the ship boots with an Issues, a Files
+  and an Inbox chat holding them ([`rigging/zine.md`](rigging/zine.md)). The
+  `/issues`, `/files` and `/inbox` routes are untouched — what the front door IS
+  is a separate question.
 - **A home canvas: pointers, in exactly one place.** Every widget still lives in
   a chat; your home holds live views onto them, and losing chat membership stops
   a tile rendering at the read. See
