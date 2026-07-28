@@ -157,6 +157,27 @@ export function resolveStatusWord(word: string): IssueStatus | undefined {
 // here (not in server.ts) so they're unit-tested. Read doors stay casts — a
 // bad read id just finds nothing.
 
+/**
+ * The longest a title is allowed to be — past this, something almost
+ * certainly went wrong upstream rather than a crew member writing an
+ * unusually long headline. The CLI (`issue new`) checks this itself for a
+ * friendlier error, but this is the one place BOTH doors (CLI and web) are
+ * actually enforced — see `createIssue` (#7u5b: a missing `--` separator let
+ * npm silently eat a `--body` flag and join its whole value into the title,
+ * eight times over, before anyone noticed).
+ */
+export const MAX_TITLE_LENGTH = 200
+
+function assertTitleLength(title: string): void {
+  if (title.length > MAX_TITLE_LENGTH)
+    throw new Error(
+      `A title can't be over ${String(MAX_TITLE_LENGTH)} characters (got ${String(title.length)}). ` +
+        'If a body ended up in the title, refile with `--body "<text>"` — and if ' +
+        "you're on the CLI, make sure the `--` separator is there: " +
+        '`npm run issue -- new "<title>" --body "<text>"`.',
+    )
+}
+
 /** Shape-check an untrusted openIssue payload: a non-blank title is the contract. */
 export function validateOpenIssueInput(input: unknown): {
   title: string
@@ -170,6 +191,7 @@ export function validateOpenIssueInput(input: unknown): {
   }
   if (typeof data.title !== 'string' || !data.title.trim())
     throw new Error('An issue needs a title.')
+  assertTitleLength(data.title)
   return {
     title: data.title,
     body: typeof data.body === 'string' ? data.body : undefined,
@@ -221,6 +243,7 @@ export async function createIssue(
     generateNano?: () => string
   },
 ): Promise<IssueRow> {
+  assertTitleLength(input.title)
   const gen = input.generateNano ?? generateNano
   let lastErr: unknown
   for (let attempt = 0; attempt < NANO_MAX_ATTEMPTS; attempt++) {

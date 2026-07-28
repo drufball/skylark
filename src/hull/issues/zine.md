@@ -123,14 +123,20 @@ view (see [`rigging/zine.md`](../../rigging/zine.md)).
   falls back to slugifying the title), and `ensureOrchestrator` (boots it into
   the server process, subscribes it to `shipLogBus`, runs reconciliation). All
   `v8 ignore`d — the live builder is exercised manually, not in CI.
-- **Doors** — `cli.ts` (`npm run issue`:
+- **Doors** — `cli.ts` (`npm run issue -- ...`:
   `new <title> [--body <text>] [--owner <handle>] [--playbook <name>]`, `list`,
   `show`, `comment`, `handoff <id> <agent|OWNER> <message>`, `playbooks`,
   `status`, and the verb shorthands `building`/`open`/`done`/`close`) and
   `server.ts` (the web doors, including `listPlaybooksView`/`savePlaybook` for
   the editor tab). The CLI attributes every action to `cliActor()`, so the
   orchestrator's `SKYLARK_ACTOR=<agent id>` command prefix makes each agent's
-  comments, transitions, and handoffs show as that agent.
+  comments, transitions, and handoffs show as that agent. `new` fails loudly — a
+  usage error, not a silently mangled issue — on a leftover `--unknown` flag or
+  a title over 200 characters; both are backstops against the missing `--`
+  separator (`npm run issue new ...` instead of `npm run issue -- new ...`)
+  letting npm eat a flag like `--body` and dump its whole value into the title
+  (#7u5b). `createIssue` enforces the same title cap for the web door too, so
+  neither door can file that kind of garbage.
 - **The views** (rigging) — the **board** (issues grouped by status, author +
   comment count + the live status line for building issues), the **thread**
   (body, the merged comment/status-change timeline, a composer, status

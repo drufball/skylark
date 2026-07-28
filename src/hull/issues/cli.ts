@@ -7,6 +7,7 @@ import {
   createIssue,
   listComments,
   listIssues,
+  MAX_TITLE_LENGTH,
   resolveIssueRef,
   resolveStatusWord,
   transitionIssue,
@@ -41,7 +42,14 @@ const STATUS_MARK: Record<IssueStatus, string> = {
  * `--owner <handle>` (who answers for it; defaults to the creator downstream),
  * and `--playbook <name>` (how it gets worked; defaults to `build`). A flag
  * present without a value (or with another flag where its value should be) is
- * a loud usage error, not a silently unrouted issue.
+ * a loud usage error, not a silently unrouted issue — same for any leftover
+ * `--something` token: it's an unknown flag, not free-form title text, so it
+ * fails loudly instead of getting silently joined in (see #7u5b: npm eating
+ * `--body` because the `--` separator was missing turned 8 real issues into
+ * 1000+ character titles with an empty body). A title over MAX_TITLE_LENGTH
+ * fails the same way, as a backstop for the flags npm eats entirely (it never
+ * reaches us as a `--body` token to catch — it just vanishes, leaving its
+ * value stuck onto the title).
  */
 export function parseNewArgs(args: string[]): {
   title: string
@@ -63,8 +71,25 @@ export function parseNewArgs(args: string[]): {
   const body = takeFlag('--body')
   const ownerHandle = takeFlag('--owner')?.replace(/^@/, '')
   const playbookName = takeFlag('--playbook')
+  const unknownFlag = rest.find((token) => token.startsWith('--'))
+  if (unknownFlag) {
+    throw new Error(
+      `Unknown flag: ${unknownFlag} — did you forget the \`--\` separator? ` +
+        'Use `npm run issue -- new <title> [--body <text>] …`.',
+    )
+  }
+  const title = rest.join(' ').trim()
+  if (title.length > MAX_TITLE_LENGTH) {
+    throw new Error(
+      `Title is ${String(title.length)} characters, over the ${String(MAX_TITLE_LENGTH)}-character limit — same cap ` +
+        "as createIssue's own check. If you meant to pass a body, use the " +
+        '`--` separator: `npm run issue -- new "<title>" --body "<text>"` — ' +
+        'without it, npm silently eats `--body` and everything gets joined ' +
+        'into the title.',
+    )
+  }
   return {
-    title: rest.join(' ').trim(),
+    title,
     body,
     ownerHandle,
     playbookName,
@@ -75,7 +100,7 @@ async function cmdNew(args: string[]): Promise<void> {
   const { title, body, ownerHandle, playbookName } = parseNewArgs(args)
   if (!title)
     throw new Error(
-      'usage: issue new <title> [--body <text>] [--owner <handle>] [--playbook <name>]',
+      'usage: npm run issue -- new <title> [--body <text>] [--owner <handle>] [--playbook <name>]',
     )
   const issue = await withCliActor(async (tx, me) => {
     const owner = ownerHandle
@@ -127,7 +152,7 @@ async function cmdPlaybooks(): Promise<void> {
 async function cmdList(): Promise<void> {
   const list = await withCliActor((tx) => listIssues(tx))
   if (list.length === 0) {
-    process.stdout.write('No issues — open one with `npm run issue new`.\n')
+    process.stdout.write('No issues — open one with `npm run issue -- new`.\n')
     return
   }
   for (const i of list) {
@@ -140,7 +165,7 @@ async function cmdList(): Promise<void> {
 
 async function cmdShow(args: string[]): Promise<void> {
   const [ref] = args
-  if (!ref) throw new Error('usage: issue show <id>')
+  if (!ref) throw new Error('usage: npm run issue -- show <id>')
   await withCliActor(async (tx) => {
     const issue = await resolveIssueRef(tx, ref)
     if (!issue) throw new Error(`No such issue: ${ref}`)
@@ -170,7 +195,8 @@ async function cmdShow(args: string[]): Promise<void> {
 async function cmdComment(args: string[]): Promise<void> {
   const [ref, ...bodyParts] = args
   const body = bodyParts.join(' ').trim()
-  if (!ref || !body) throw new Error('usage: issue comment <id> <text>')
+  if (!ref || !body)
+    throw new Error('usage: npm run issue -- comment <id> <text>')
   const { nano, handle } = await withCliActor(async (tx, me) => {
     const issue = await resolveIssueRef(tx, ref)
     if (!issue) throw new Error(`No such issue: ${ref}`)
@@ -201,7 +227,8 @@ async function transitionTo(ref: string, word: string): Promise<void> {
 
 async function cmdStatus(args: string[]): Promise<void> {
   const [ref, word] = args
-  if (!ref || !word) throw new Error('usage: issue status <id> <state>')
+  if (!ref || !word)
+    throw new Error('usage: npm run issue -- status <id> <state>')
   await transitionTo(ref, word)
 }
 
@@ -209,7 +236,9 @@ async function cmdHandoff(args: string[]): Promise<void> {
   const [ref, target, ...messageParts] = args
   const message = messageParts.join(' ').trim()
   if (!ref || !target || !message)
-    throw new Error('usage: issue handoff <id> <agent-handle|OWNER> <message>')
+    throw new Error(
+      'usage: npm run issue -- handoff <id> <agent-handle|OWNER> <message>',
+    )
   const { issue, toHandle, toOwner } = await withCliActor((tx, me) =>
     requestHandoff(tx, { issueRef: ref, actorId: me.id, target, message }),
   )
@@ -243,12 +272,14 @@ async function main(): Promise<void> {
     case 'done':
     case 'close': {
       const [ref] = args
-      if (!ref) throw new Error(`usage: issue ${command} <id>`)
+      if (!ref) throw new Error(`usage: npm run issue -- ${command} <id>`)
       return transitionTo(ref, command)
     }
     default:
       process.stdout.write(
-        'usage: issue <new|list|show|comment|handoff|playbooks|status|building|open|done|close> …\n' +
+        'usage: npm run issue -- <new|list|show|comment|handoff|playbooks|status|building|open|done|close> …\n' +
+          '  (the `--` separator matters — without it, npm swallows any --flag and its\n' +
+          '   value, e.g. `npm run issue new "t" --body "x"` silently drops --body)\n' +
           '  new <title> [--body <text>] [--owner <handle>] [--playbook <name>]\n' +
           '                                open an issue\n' +
           '  list                          list issues, newest first\n' +
