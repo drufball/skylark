@@ -1,17 +1,11 @@
-import {
-  useCallback,
-  useMemo,
-  useState,
-  type ComponentType,
-  type ReactNode,
-} from 'react'
-import { AlertTriangle, ArrowUpRight, EyeOff, Plus, X } from 'lucide-react'
+import { useState, type ComponentType, type ReactNode } from 'react'
+import { ArrowUpRight, EyeOff, Plus, X } from 'lucide-react'
 
 import type { CanvasBox } from '@hull/chat/widgets'
 import type { HomeTileTarget } from '@hull/home-canvas/service'
 import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { useIsMobile } from '@rigging/lib/use-is-mobile'
-import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
+import type { EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 
@@ -23,10 +17,13 @@ import {
   phoneTileCapPx,
   SwipeColumn,
   TileFrame,
+  usePages,
   type GridHandles,
   type GridPage,
 } from './grid'
 import { resolveWidget } from './registry'
+import { ResolvedWidgetBody } from './resolved-widget-body'
+import { useWidgetLiveRevision } from './use-widget-live-revision'
 
 /**
  * The **home canvas**: your own screen, and the one surface in the ship that
@@ -147,40 +144,25 @@ export function HomeCanvas({
   const isMobile = useIsMobile()
   const answers = useAnswerGuard(busy)
   const [picking, setPicking] = useState(false)
-  const activePage = pages.find((p) => p.id === activePageId) ?? pages.at(0)
-  const onPage = useMemo(
-    () => tiles.filter((t) => t.pageId === activePage?.id),
-    [tiles, activePage?.id],
+  const { activePage, onPage, step } = usePages(
+    pages,
+    activePageId,
+    tiles,
+    onSelectPage,
   )
 
   // One subscription for the page, over the union of the kinds' own topics —
-  // the same shape the stack and the chat canvas use. The CHAT topics (a raise
-  // landing in a pointed-at conversation) are the host's: they need a reload of
-  // the resolved tiles, not just a redraw, so the route owns them.
-  const topics = [
-    ...new Set(
-      onPage.flatMap((tile) => {
-        if (tile.target.mode === 'lost' || !tile.target.widget) return []
-        const resolution = resolveWidget(
-          tile.target.widget.kind,
-          tile.target.widget.props,
-        )
-        return resolution.ok ? resolution.view.topics : []
-      }),
+  // the same machinery the stack and the chat canvas hold. The CHAT topics (a
+  // raise landing in a pointed-at conversation) are the host's: they need a
+  // reload of the resolved tiles, not just a redraw, so the route owns them.
+  const revision = useWidgetLiveRevision(
+    onPage.flatMap((tile) =>
+      tile.target.mode === 'lost' || !tile.target.widget
+        ? []
+        : [tile.target.widget],
     ),
-  ]
-  const [revision, setRevision] = useState(0)
-  const onEvent = useCallback(() => {
-    setRevision((n) => n + 1)
-  }, [])
-  useShipLog(topics, onEvent, eventSourceFactory)
-
-  function step(by: number) {
-    if (!activePage) return
-    const at = pages.findIndex((p) => p.id === activePage.id)
-    const next = pages.at((at + by) % pages.length)
-    if (next && next.id !== activePage.id) onSelectPage(next.id)
-  }
+    eventSourceFactory,
+  )
 
   function tile(item: HomeTileItem, handles?: GridHandles) {
     return (
@@ -474,6 +456,8 @@ function HomeTile({
 }) {
   const { target } = tile
   const headline = homeTileHeadline(target)
+  // A const, so the narrowing survives into the answer closure below.
+  const widget = target.mode === 'lost' ? null : target.widget
   const unpin = (
     <button
       type="button"
@@ -521,12 +505,14 @@ function HomeTile({
     >
       {target.mode === 'lost' ? (
         <Lost />
-      ) : target.widget ? (
-        <TileBody
-          widget={target.widget}
+      ) : widget ? (
+        <ResolvedWidgetBody
+          widget={widget}
           revision={revision}
-          spent={spent(target.widget.id)}
-          onAnswer={onAnswer}
+          spent={spent(widget.id)}
+          onAnswer={(value) => {
+            onAnswer(widget.id, value)
+          }}
         />
       ) : (
         <p className="px-3 py-2 text-xs text-muted-foreground">
@@ -552,52 +538,5 @@ function Lost() {
       <p>You no longer have access to this.</p>
       <p>Unpin it, or ask to be added back to the conversation.</p>
     </div>
-  )
-}
-
-/** The widget a tile is showing, resolved through the catalog like anywhere else. */
-function TileBody({
-  widget,
-  revision,
-  spent,
-  onAnswer,
-}: {
-  widget: {
-    id: string
-    kind: string
-    props: unknown
-    answerValue: string | null
-  }
-  revision: number
-  spent: boolean
-  onAnswer: (widgetId: string, value: string) => void
-}) {
-  // Memoised for the load-bearing reason the other surfaces memoise: `parse`
-  // returns a fresh `Body` closure, and a new component identity remounts the
-  // body, throwing away a live kind's fetched contents on every render.
-  const resolution = useMemo(
-    () => resolveWidget(widget.kind, widget.props),
-    [widget.kind, widget.props],
-  )
-  if (!resolution.ok) {
-    return (
-      <p className="flex items-start gap-1 p-2 text-xs text-muted-foreground">
-        <AlertTriangle className="size-4 shrink-0" />
-        {resolution.fault === 'unknown-kind'
-          ? 'This ship doesn’t know this widget kind'
-          : 'These props don’t parse'}
-        : {resolution.detail}
-      </p>
-    )
-  }
-  return (
-    <resolution.view.Body
-      revision={revision}
-      spent={spent}
-      answer={widget.answerValue}
-      onAnswer={(value) => {
-        onAnswer(widget.id, value)
-      }}
-    />
   )
 }

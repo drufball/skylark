@@ -48,6 +48,18 @@ generated from the same entries.
   write returns, but the answered tile is on screen until the refetch lands — a
   window a thumb double-taps straight through. Shared rather than copied,
   because the two surfaces answer the SAME rows through the same door.
+- **Live machinery** (`use-live-read.ts`, `use-widget-live-revision.ts`,
+  `resolved-widget-body.tsx`) — the three pieces every widget surface needs,
+  spelled once instead of per surface: `useLiveRead` (fetch fresh when
+  `revision` moves; on failure KEEP the last good value and say the read failed
+  — the ship degrades rather than crashing, and so does a tile on it),
+  `useWidgetLiveRevision` (the ONE ship-log subscription over the union of a
+  surface's widgets' declared topics, bumping the coarse counter), and
+  `ResolvedWidgetBody` (the memoised resolve-and-render of a row's body, with
+  the two designed fault tiles). Shared rather than copied for the answer
+  guard's reason: the surfaces show the SAME rows through the same catalog. Each
+  surface keeps its own chrome — the shelf line, the tile frame — around the
+  shared core.
 - **Canvas** (`canvas.tsx`) — the state-shaped surface: the tiles a chat
   arranged on the open page. Same catalog, same one subscription, same two
   failure tiles — but a canvas tile's body is **open by default**, because you
@@ -57,9 +69,10 @@ generated from the same entries.
   deck only draws it).
 - **Grid** (`grid.tsx`) — the layout engine BOTH canvases share: the page strip,
   the desktop `ArrangeableGrid` (drag by the title bar, resize from the corner,
-  arrows to nudge), the phone's `SwipeColumn`, and `TileFrame` (a tile's
-  chrome). Plus the two pure halves of arranging, `cellAt` and `nudge`, and the
-  tile's height contract — `phoneTileCapPx` and `isOverflowing` (see the
+  arrows to nudge), the phone's `SwipeColumn`, `TileFrame` (a tile's chrome),
+  and `usePages` (which page is open, what's on it, and how a swipe steps
+  between pages). Plus the two pure halves of arranging, `cellAt` and `nudge`,
+  and the tile's height contract — `phoneTileCapPx` and `isOverflowing` (see the
   decision below). It knows nothing of widget kinds, chats or pointers — that's
   what makes it shareable.
 - **Home canvas** (`home-canvas.tsx`) — your own screen and, since #cse8, the

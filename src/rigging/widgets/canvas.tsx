@@ -1,10 +1,9 @@
-import { useCallback, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowUpToLine, Home, Plus } from 'lucide-react'
+import { ArrowUpToLine, Home, Plus } from 'lucide-react'
 
 import type { CanvasBox } from '@hull/chat/widgets'
 import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { useIsMobile } from '@rigging/lib/use-is-mobile'
-import { useShipLog, type EventSourceFactory } from '@rigging/lib/use-ship-log'
+import type { EventSourceFactory } from '@rigging/lib/use-ship-log'
 import { cn } from '@rigging/lib/utils'
 import { Button } from '@rigging/components/ui/button'
 
@@ -16,9 +15,12 @@ import {
   phoneTileCapPx,
   SwipeColumn,
   TileFrame,
+  usePages,
   type GridHandles,
 } from './grid'
 import { resolveWidget } from './registry'
+import { ResolvedWidgetBody } from './resolved-widget-body'
+import { useWidgetLiveRevision } from './use-widget-live-revision'
 import type { WidgetItem } from './stack'
 
 /**
@@ -99,39 +101,21 @@ export function WidgetCanvas({
   // The same guard the stack holds, for the same reason: these are the same
   // rows and the same door, so a double tap has to mean the same thing here.
   const answers = useAnswerGuard(busy)
-  const activePage = pages.find((p) => p.id === activePageId) ?? pages.at(0)
-  const onPage = useMemo(
-    () => widgets.filter((w) => w.pageId === activePage?.id),
-    [widgets, activePage?.id],
+  const { activePage, onPage, step } = usePages(
+    pages,
+    activePageId,
+    widgets,
+    onSelectPage,
   )
 
   // One subscription for the whole page, over the union of its tiles' topics —
-  // the same shape the stack uses, and for the same reason: one EventSource,
-  // never one per widget, and no polling anywhere.
-  const topics = [
-    ...new Set(
-      onPage.flatMap((widget) => {
-        const resolution = resolveWidget(widget.kind, widget.props)
-        return resolution.ok ? resolution.view.topics : []
-      }),
-    ),
-  ]
-  const [revision, setRevision] = useState(0)
-  const onEvent = useCallback(() => {
-    setRevision((n) => n + 1)
-  }, [])
-  useShipLog(topics, onEvent, eventSourceFactory)
+  // the same machinery the stack holds, and for the same reason: one
+  // EventSource, never one per widget, and no polling anywhere.
+  const revision = useWidgetLiveRevision(onPage, eventSourceFactory)
 
   function answer(widgetId: string, value: string) {
     answers.mark(widgetId)
     onAnswerWidget(widgetId, value)
-  }
-
-  function step(by: number) {
-    if (!activePage) return
-    const at = pages.findIndex((p) => p.id === activePage.id)
-    const next = pages.at((at + by) % pages.length)
-    if (next && next.id !== activePage.id) onSelectPage(next.id)
   }
 
   function tile(widget: CanvasWidgetItem, handles?: GridHandles) {
@@ -258,13 +242,9 @@ function CanvasTile({
   onPinHome?: () => void
   onAnswer: (value: string) => void
 }) {
-  // Memoised for the same load-bearing reason the stack memoises: `parse`
-  // returns a fresh `Body` closure, and a new component identity would remount
-  // the body — throwing away a live kind's fetched contents on every render.
-  const resolution = useMemo(
-    () => resolveWidget(widget.kind, widget.props),
-    [widget.kind, widget.props],
-  )
+  // Only the headline is read here — the body itself is `ResolvedWidgetBody`,
+  // which owns the load-bearing memoisation of the resolve.
+  const resolution = resolveWidget(widget.kind, widget.props)
   const headline = resolution.ok ? resolution.view.headline : widget.kind
 
   // No grip means the phone layout, where these are the tile's ONLY controls
@@ -306,22 +286,12 @@ function CanvasTile({
         </>
       }
     >
-      {resolution.ok ? (
-        <resolution.view.Body
-          revision={revision}
-          onAnswer={onAnswer}
-          spent={spent}
-          answer={widget.answerValue}
-        />
-      ) : (
-        <p className="flex items-start gap-1 p-2 text-xs text-muted-foreground">
-          <AlertTriangle className="size-4 shrink-0" />
-          {resolution.fault === 'unknown-kind'
-            ? 'This ship doesn’t know this widget kind'
-            : 'These props don’t parse'}
-          : {resolution.detail}
-        </p>
-      )}
+      <ResolvedWidgetBody
+        widget={widget}
+        revision={revision}
+        spent={spent}
+        onAnswer={onAnswer}
+      />
     </TileFrame>
   )
 }

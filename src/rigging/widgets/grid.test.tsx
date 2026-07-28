@@ -1,10 +1,23 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  act,
+  cleanup,
+  render,
+  renderHook,
+  screen,
+} from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CANVAS_COLUMNS } from '@hull/chat/widgets'
 
-import { cellAt, isOverflowing, nudge, phoneTileCapPx, TileFrame } from './grid'
+import {
+  cellAt,
+  isOverflowing,
+  nudge,
+  phoneTileCapPx,
+  TileFrame,
+  usePages,
+} from './grid'
 
 // The two pure halves of arranging a tile, shared by the chat canvas and the
 // home canvas. They're the honest way to TEST arrangement at all: a pointer drag
@@ -64,6 +77,73 @@ describe('nudge', () => {
 
   it('ignores a key that isn’t an arrow', () => {
     expect(nudge(box, 'Enter', false)).toBeNull()
+  })
+})
+
+describe('usePages', () => {
+  const pages = [
+    { id: 'p1', title: 'Ops' },
+    { id: 'p2', title: 'Numbers' },
+    { id: 'p3', title: 'Crew' },
+  ]
+  const items = [
+    { id: 'a', pageId: 'p1' },
+    { id: 'b', pageId: 'p2' },
+    { id: 'c', pageId: 'p1' },
+  ]
+
+  function pagesHook(activePageId: string | null) {
+    const onSelectPage = vi.fn()
+    const { result } = renderHook(() =>
+      usePages(pages, activePageId, items, onSelectPage),
+    )
+    return { result, onSelectPage }
+  }
+
+  it('gives the open page and only the items arranged on it', () => {
+    const { result } = pagesHook('p1')
+    expect(result.current.activePage).toEqual(pages[0])
+    expect(result.current.onPage.map((i) => i.id)).toEqual(['a', 'c'])
+  })
+
+  it('falls back to the first page when the viewer has opened none', () => {
+    expect(pagesHook(null).result.current.activePage).toEqual(pages[0])
+  })
+
+  it('has no page at all only when there are none', () => {
+    const onSelectPage = vi.fn()
+    const { result } = renderHook(() => usePages([], null, [], onSelectPage))
+    expect(result.current.activePage).toBeUndefined()
+    expect(result.current.onPage).toEqual([])
+    // …and stepping goes nowhere rather than anywhere.
+    result.current.step(1)
+    expect(onSelectPage).not.toHaveBeenCalled()
+  })
+
+  it('steps to the neighbouring page — a swipe, in either direction', () => {
+    const { result, onSelectPage } = pagesHook('p2')
+    result.current.step(1)
+    expect(onSelectPage).toHaveBeenLastCalledWith('p3')
+    result.current.step(-1)
+    expect(onSelectPage).toHaveBeenLastCalledWith('p1')
+  })
+
+  it('wraps around at either end', () => {
+    const last = pagesHook('p3')
+    last.result.current.step(1)
+    expect(last.onSelectPage).toHaveBeenCalledWith('p1')
+    const first = pagesHook('p1')
+    first.result.current.step(-1)
+    expect(first.onSelectPage).toHaveBeenCalledWith('p3')
+  })
+
+  it('does not re-select the page it is already on', () => {
+    const onSelectPage = vi.fn()
+    const { result } = renderHook(() =>
+      usePages([pages[0]], 'p1', items, onSelectPage),
+    )
+    result.current.step(1)
+    expect(onSelectPage).not.toHaveBeenCalled()
   })
 })
 

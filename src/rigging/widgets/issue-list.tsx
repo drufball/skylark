@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 
 import { listBoard, type BoardIssue } from '@hull/issues/server'
@@ -13,10 +12,12 @@ import { cn } from '@rigging/lib/utils'
 
 import {
   asRecord,
-  isFilledString,
+  parseLimit,
+  parseStringList,
   type WidgetKind,
   type WidgetParse,
 } from './kind'
+import { useLiveRead, type LiveRead } from './use-live-read'
 
 /**
  * `issue-list` — a live list of issues, filtered.
@@ -94,24 +95,6 @@ export function issueListHeadline(props: IssueListProps): string {
   return 'Issues · all'
 }
 
-/** An optional list of non-empty strings: absent, or genuinely a list. */
-function parseStringList(
-  value: unknown,
-  field: string,
-): { ok: true; list?: string[] } | { ok: false; detail: string } {
-  if (value === undefined) return { ok: true }
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    !value.every(isFilledString)
-  )
-    return {
-      ok: false,
-      detail: `${field} must be a non-empty array of non-empty strings`,
-    }
-  return { ok: true, list: value }
-}
-
 function parseProps(
   json: unknown,
 ): { ok: true; props: IssueListProps } | { ok: false; detail: string } {
@@ -135,19 +118,8 @@ function parseProps(
   const issueIds = parseStringList(record.issueIds, 'issueIds')
   if (!issueIds.ok) return issueIds
 
-  const { limit } = record
-  if (
-    limit !== undefined &&
-    (typeof limit !== 'number' ||
-      !Number.isInteger(limit) ||
-      limit < 1 ||
-      limit > MAX_ISSUE_LIMIT)
-  ) {
-    return {
-      ok: false,
-      detail: `limit must be a whole number from 1 to ${String(MAX_ISSUE_LIMIT)}`,
-    }
-  }
+  const limit = parseLimit(record.limit, MAX_ISSUE_LIMIT)
+  if (!limit.ok) return limit
 
   // Rebuilt field by field, not spread: an agent's extra keys never become props.
   return {
@@ -155,15 +127,9 @@ function parseProps(
     props: {
       ...(statuses.list ? { statuses: statuses.list as IssueStatus[] } : {}),
       ...(issueIds.list ? { issueIds: issueIds.list } : {}),
-      ...(limit === undefined ? {} : { limit }),
+      ...(limit.limit === undefined ? {} : { limit: limit.limit }),
     },
   }
-}
-
-/** What one read of the issues door came back with. */
-interface IssuesState {
-  issues: BoardIssue[] | null
-  failed: boolean
 }
 
 /**
@@ -172,28 +138,8 @@ interface IssuesState {
  * row: the row holds the question, this holds the answer for exactly as long as
  * it's on screen.
  */
-function useIssues(revision: number): IssuesState {
-  const [state, setState] = useState<IssuesState>({
-    issues: null,
-    failed: false,
-  })
-  useEffect(() => {
-    let cancelled = false
-    void listBoard().then(
-      (issues) => {
-        if (!cancelled) setState({ issues, failed: false })
-      },
-      () => {
-        // The ship degrades to "database: down" rather than crashing, and so
-        // does a tile on it: keep the last good list, say the read failed.
-        if (!cancelled) setState((prev) => ({ ...prev, failed: true }))
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [revision])
-  return state
+function useIssues(revision: number): LiveRead<BoardIssue[]> {
+  return useLiveRead(() => listBoard(), [revision])
 }
 
 /** One issue as a row: its status, its short nano, its title. */
@@ -223,7 +169,7 @@ function IssueListBody({
   props: IssueListProps
   revision: number
 }) {
-  const { issues, failed } = useIssues(revision)
+  const { value: issues, failed } = useIssues(revision)
   if (!issues) {
     return (
       <p className="px-3 pb-3 text-sm text-muted-foreground">

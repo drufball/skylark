@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 
 import {
@@ -128,6 +128,41 @@ export function nudge(
     ? { ...box, gridW: box.gridW + step[0], gridH: box.gridH + step[1] }
     : { ...box, gridX: box.gridX + step[0], gridY: box.gridY + step[1] }
   return clampCanvasBox(moved)
+}
+
+/**
+ * Which page is open, what's arranged on it, and how a swipe moves between
+ * pages — the page behaviour both canvases share, in the one place it lives.
+ *
+ * `activePageId` is the page THIS viewer has open (per person, never per
+ * surface); a viewer who has opened none — or whose page is gone — lands on
+ * the first page rather than a blank. `step` is the swipe: a page over in
+ * either direction, wrapping at the ends, and a no-op when there's nowhere
+ * else to go.
+ */
+export function usePages<T extends { pageId: string }>(
+  pages: GridPage[],
+  activePageId: string | null,
+  items: T[],
+  onSelectPage: (pageId: string) => void,
+): {
+  activePage: GridPage | undefined
+  onPage: T[]
+  step: (by: number) => void
+} {
+  const activePage = pages.find((p) => p.id === activePageId) ?? pages.at(0)
+  const activeId = activePage?.id
+  const onPage = useMemo(
+    () => items.filter((item) => item.pageId === activeId),
+    [items, activeId],
+  )
+  function step(by: number) {
+    if (!activePage) return
+    const at = pages.findIndex((p) => p.id === activePage.id)
+    const next = pages.at((at + by) % pages.length)
+    if (next && next.id !== activePage.id) onSelectPage(next.id)
+  }
+  return { activePage, onPage, step }
 }
 
 /**

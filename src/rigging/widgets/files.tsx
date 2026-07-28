@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ChevronLeft, FileText } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 
@@ -11,9 +11,11 @@ import { cn } from '@rigging/lib/utils'
 import {
   asRecord,
   isFilledString,
+  parseLimit,
   type WidgetKind,
   type WidgetParse,
 } from './kind'
+import { useLiveRead, type LiveRead } from './use-live-read'
 
 /**
  * `files` — the crew's shared documents, in a tile.
@@ -112,19 +114,8 @@ function parseProps(
     }
   }
 
-  const { limit } = record
-  if (
-    limit !== undefined &&
-    (typeof limit !== 'number' ||
-      !Number.isInteger(limit) ||
-      limit < 1 ||
-      limit > MAX_FILE_LIMIT)
-  ) {
-    return {
-      ok: false,
-      detail: `limit must be a whole number from 1 to ${String(MAX_FILE_LIMIT)}`,
-    }
-  }
+  const limit = parseLimit(record.limit, MAX_FILE_LIMIT)
+  if (!limit.ok) return limit
 
   // Rebuilt field by field, not spread: an agent's extra keys never become props.
   return {
@@ -132,71 +123,31 @@ function parseProps(
     props: {
       ...(path.path ? { path: path.path } : {}),
       ...(folder.path ? { folder: folder.path } : {}),
-      ...(limit === undefined ? {} : { limit }),
+      ...(limit.limit === undefined ? {} : { limit: limit.limit }),
     },
   }
-}
-
-/** One read of a files door: what came back, and whether the read failed. */
-interface Read<T> {
-  value: T | null
-  failed: boolean
 }
 
 /**
  * The shared-document list, read fresh — on mount and again whenever `revision`
  * moves (the stack telling us a `file:*` event landed). Never stored on the row.
  */
-function useFileList(revision: number): Read<string[]> {
-  const [state, setState] = useState<Read<string[]>>({
-    value: null,
-    failed: false,
-  })
-  useEffect(() => {
-    let cancelled = false
-    void listFiles().then(
-      (paths) => {
-        if (!cancelled) setState({ value: paths, failed: false })
-      },
-      () => {
-        // The ship degrades to "database: down" rather than crashing, and so
-        // does a tile on it: keep the last good list, say the read failed.
-        if (!cancelled) setState((prev) => ({ ...prev, failed: true }))
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [revision])
-  return state
+function useFileList(revision: number): LiveRead<string[]> {
+  return useLiveRead(() => listFiles(), [revision])
 }
 
 /** One document's contents, read fresh. `null` content means it isn't there. */
-function useDocument(path: string, revision: number): Read<string> {
-  const [state, setState] = useState<Read<string>>({
-    value: null,
-    failed: false,
-  })
-  const [loaded, setLoaded] = useState<string | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    void readFile({ data: path }).then(
-      (content) => {
-        if (cancelled) return
-        setState({ value: content, failed: false })
-        setLoaded(path)
-      },
-      () => {
-        if (!cancelled) setState((prev) => ({ ...prev, failed: true }))
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [path, revision])
-  // `loaded` is what the CONTENT is of, so a tile can't show the previous
-  // document's body under the new one's name for a frame.
-  return { value: loaded === path ? state.value : null, failed: state.failed }
+function useDocument(path: string, revision: number): LiveRead<string> {
+  // The read carries the path its CONTENT is of, so a tile can't show the
+  // previous document's body under the new one's name for a frame.
+  const read = useLiveRead(
+    () => readFile({ data: path }).then((content) => ({ path, content })),
+    [path, revision],
+  )
+  return {
+    value: read.value?.path === path ? read.value.content : null,
+    failed: read.failed,
+  }
 }
 
 /**
