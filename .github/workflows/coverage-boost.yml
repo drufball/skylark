@@ -37,7 +37,10 @@ jobs:
           # The token the `/install-github-app` flow creates. If this repo
           # instead uses a raw API key, swap this for:
           #   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # OAuth setup-tokens from this account are rejected by the API since ~Jul 13
+          # (401 "OAuth access token is invalid" even freshly minted — #pykd);
+          # use the metered API key instead.
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --model claude-sonnet-4-6
             --max-turns 40
