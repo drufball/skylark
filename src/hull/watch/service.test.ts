@@ -22,6 +22,7 @@ import {
   getNudgeRow,
   healthCheckPrompt,
   jobCheckIntervalMs,
+  laterOf,
   listJobCheckRows,
   listNudgeRows,
   nudgePrompt,
@@ -75,6 +76,24 @@ describe('resolveWatchConfig', () => {
     expect(positiveIntOr('-10', 5)).toBe(5)
     expect(positiveIntOr('7.9', 5)).toBe(7)
     expect(positiveIntOr('42', 5)).toBe(42)
+  })
+})
+
+// --- laterOf (pure) ----------------------------------------------------------
+
+describe('laterOf', () => {
+  const early = new Date(1 * MIN)
+  const late = new Date(9 * MIN)
+
+  it('takes the later of two clocks, either order', () => {
+    expect(laterOf(early, late)).toBe(late)
+    expect(laterOf(late, early)).toBe(late)
+  })
+
+  it('falls back to whichever clock exists', () => {
+    expect(laterOf(null, late)).toBe(late)
+    expect(laterOf(early, null)).toBe(early)
+    expect(laterOf(null, null)).toBeNull()
   })
 })
 

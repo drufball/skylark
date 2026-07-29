@@ -130,6 +130,17 @@ export function resolveWatchConfig(env: {
 
 // --- Pure decisions ---------------------------------------------------------
 
+/**
+ * The later of two nullable clocks — how the stall clock merges the issue's
+ * `statusLineAt` with the holder session's `lastMessageAt` (the transcript
+ * outvotes a stale status line; see the zine's Decisions).
+ */
+export function laterOf(a: Date | null, b: Date | null): Date | null {
+  if (!a) return b
+  if (!b) return a
+  return a > b ? a : b
+}
+
 /** What the watch should do about a possibly-stalled building issue. */
 export type StallAction =
   | { kind: 'none' }
@@ -511,15 +522,10 @@ async function handleStall(
   // "Last real activity" is the LATER of the status line's tick and the
   // holder session's last transcript write — the status line can go quiet
   // while the session works (see runWatchSweep).
-  const holderMessageAt = holderSessionId
-    ? (ctx.lastMessageAt.get(holderSessionId) ?? null)
-    : null
-  const activityAt =
-    holderMessageAt &&
-    issue.statusLineAt &&
-    holderMessageAt > issue.statusLineAt
-      ? holderMessageAt
-      : (issue.statusLineAt ?? holderMessageAt)
+  const activityAt = laterOf(
+    issue.statusLineAt,
+    holderSessionId ? (ctx.lastMessageAt.get(holderSessionId) ?? null) : null,
+  )
 
   const nudgeRow = await getNudgeRow(db, issue.id)
   const action = decideStall({
