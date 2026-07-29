@@ -13,10 +13,32 @@ import {
 import { getUserById, handleOf } from '@hull/users/service'
 import { startIntervalSweep } from '@hull/lib/interval-sweep'
 
+import type { SessionToolsProvider } from '@hull/agent/runtime'
+
+import { createConfigSessionTools } from './config-tools'
 import { type ChatOrchestrator, createChatOrchestrator } from './orchestrator'
 import { createChatSessionTools } from './session-tools'
 import { fireDueSchedules } from './service'
 import { createAgentWaker } from './waker'
+
+/**
+ * Compose two session-tools providers into one: every tool either contributes
+ * for this session, concatenated. `createChatSessionTools` and
+ * `createConfigSessionTools` are both narrow (each returns `[]` unless the
+ * session matches what it's looking for — a chat membership, the Config
+ * room's own chat id), so a session ends up with whichever set(s) actually
+ * apply to it: `chat_post`/`chat_widget` on any chat membership, PLUS
+ * `config_playbook`/`config_persona`/`config_model` on the Config room's
+ * resident session specifically.
+ */
+export function combineSessionTools(
+  providers: SessionToolsProvider[],
+): SessionToolsProvider {
+  return async (session) => {
+    const lists = await Promise.all(providers.map((p) => p(session)))
+    return lists.flat()
+  }
+}
 
 /* v8 ignore start -- live wiring: the real agent runtime + the ship-log
    subscription. The orchestrator's DECISIONS (reply targeting, the bus-note
@@ -106,7 +128,10 @@ export function ensureChatOrchestrator(): ChatOrchestrator {
   // tap goes through — an LLM-driven path must never touch systemDb.
   const runtime = createServerRuntime(
     systemDb,
-    createChatSessionTools({ asActor: withActor }),
+    combineSessionTools([
+      createChatSessionTools({ asActor: withActor }),
+      createConfigSessionTools({ asActor: withActor }),
+    ]),
   )
   const orchestrator = createChatOrchestrator({ db: systemDb, runtime })
   registry.instance = orchestrator

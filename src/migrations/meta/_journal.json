@@ -274,6 +274,13 @@
       "when": 1785209600000,
       "tag": "0038_home_canvas_seeds_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1785302551291,
+      "tag": "0039_chunky_rockslide",
+      "breakpoints": true
     }
   ]
 }

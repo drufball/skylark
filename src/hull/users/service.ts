@@ -154,6 +154,10 @@ export const SEED_AGENTS: readonly {
   // The PR babysitter: the build playbook's second hand — takes the baton at
   // an open PR, waits on CI via the background tool, merges or hands back.
   { handle: 'babysitter', displayName: 'Babysitter', type: 'agent' },
+  // The ship's own configuration pilot: the resident of the Config room
+  // (#0eyx) — playbooks, the default model, and crew personas/prompts, all in
+  // one place to talk to instead of three unrelated surfaces.
+  { handle: 'keel', displayName: 'Keel', type: 'agent' },
 ]
 
 /**

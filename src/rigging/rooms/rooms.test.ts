@@ -16,11 +16,12 @@ describe('the default rooms', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('opens a room for each of the ship’s three standing surfaces', () => {
+  it('opens a room for each of the ship’s standing surfaces', () => {
     expect(DEFAULT_ROOMS.map((room) => room.title)).toEqual([
       'Issues',
       'Files',
       'Inbox',
+      'Config',
     ])
   })
 
@@ -32,6 +33,17 @@ describe('the default rooms', () => {
   it('gives the Inbox room no view link — that surface lives in the rail now', () => {
     const inbox = DEFAULT_ROOMS.find((room) => room.id === 'room-inbox')
     expect(inbox?.view).toBeUndefined()
+  })
+
+  /**
+   * The Config room (#0eyx) names no `view` either — but for a different
+   * reason than Inbox: its three underlying surfaces (`/models`,
+   * `/agents?tab=playbooks`, `/agents?tab=crew`) are surfaces the rail ALREADY
+   * reaches (Models, Crew), so a `view` here would list one of them twice.
+   */
+  it('gives the Config room no view link — its surfaces are already in the rail', () => {
+    const config = DEFAULT_ROOMS.find((room) => room.id === 'room-config')
+    expect(config?.view).toBeUndefined()
   })
 
   it('arranges only widgets the catalog can render, with props it accepts', () => {

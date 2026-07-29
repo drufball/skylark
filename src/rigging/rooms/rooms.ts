@@ -132,6 +132,22 @@ export const DEFAULT_ROOMS: readonly RoomSpec[] = [
     // broken. The tile marks unread and shows the rest.
     widgets: [{ kind: 'inbox', props: {}, gridW: 4, gridH: 3 }],
   },
+  {
+    id: 'room-config',
+    title: 'Config',
+    page: 'Config',
+    agentHandle: 'keel',
+    // No `view` either, for the same reason Inbox has none: this room is not
+    // the whole answer to a surface that used to live at one route. Its three
+    // underlying surfaces (`/models`, `/agents?tab=playbooks`,
+    // `/agents?tab=crew`) are ALREADY reachable from the permanent rail
+    // (Models, Crew) — giving this room its own `view` link would list one
+    // of those surfaces twice, which `navigation.test.ts` refuses. The room
+    // is a genuinely NEW front door (talk instead of clicking through three
+    // separate settings pages), not a replacement for an existing route, so
+    // it links to nothing and nothing needs to link back.
+    widgets: [{ kind: 'config', props: {}, gridW: 4, gridH: 3 }],
+  },
 ]
 
 /**

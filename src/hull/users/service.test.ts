@@ -180,6 +180,7 @@ describe('users service', () => {
         'captain',
         'dot',
         'hand',
+        'keel',
         'tilde',
       ])
       const captain = defined(await getUserByHandle(db, 'captain'))

@@ -12,6 +12,7 @@ import { actorCmd } from '@hull/lib/actor-cmd'
 import { createSession, findAgentSessionByTitle } from '@hull/agent/service'
 import { getUserById } from '@hull/users/service'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
+import { resolveDefaultModel } from '@hull/agent/settings'
 import { chatProgressLine } from '@hull/agent/progress'
 
 import { chatDocsDir } from './docs'
@@ -228,8 +229,9 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     const id = uuidv7()
     await createSession(db, {
       id,
-      // The ship default (the agent's own model override still wins at boot).
-      model: DEFAULT_MODEL,
+      // The ship default (the agent's own model override still wins at boot),
+      // or the Config room's live override when one has been set.
+      model: await resolveDefaultModel(db, DEFAULT_MODEL),
       agentUserId: agent.userId,
     })
     await setMemberSession(db, chatId, agent.userId, id)
@@ -397,8 +399,9 @@ export function createChatOrchestrator({ db, runtime }: ChatOrchestratorDeps) {
     const id = uuidv7()
     await createSession(db, {
       id,
-      // The ship default (an agent's own model override still wins at boot).
-      model: DEFAULT_MODEL,
+      // The ship default (an agent's own model override still wins at boot),
+      // or the Config room's live override when one has been set.
+      model: await resolveDefaultModel(db, DEFAULT_MODEL),
       title: INBOX_SESSION_TITLE,
       agentUserId: agent.id,
       // cwd omitted → repo root: the wake turn drives `npm run chat` etc.

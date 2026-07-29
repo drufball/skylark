@@ -1,6 +1,10 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 
-import { getDefaultModel, listGatewayModels } from '@hull/agent/server'
+import {
+  getDefaultModel,
+  listGatewayModels,
+  setDefaultModel,
+} from '@hull/agent/server'
 import { Dock } from '@rigging/views/dock'
 import { Models } from '@rigging/views/models'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
@@ -25,6 +29,13 @@ function ModelsRoute() {
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
   const unreadCount = useUnreadCount()
+  const router = useRouter()
+
+  async function onSetDefault(model: string) {
+    await setDefaultModel({ data: { model } })
+    await router.invalidate()
+  }
+
   return (
     <Dock
       active="models"
@@ -33,7 +44,11 @@ function ModelsRoute() {
       behindOrigin={behindOrigin}
       unreadCount={unreadCount}
     >
-      <Models defaultRef={defaultRef} gateway={gateway} />
+      <Models
+        defaultRef={defaultRef}
+        gateway={gateway}
+        onSetDefault={(model) => void onSetDefault(model)}
+      />
     </Dock>
   )
 }

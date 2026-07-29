@@ -2,6 +2,7 @@ import { uuidv7 } from '@earendil-works/pi-agent-core'
 
 import type { Database } from '@hull/db/client'
 import { DEFAULT_MODEL, type RunsTurns } from '@hull/agent/runtime'
+import { resolveDefaultModel } from '@hull/agent/settings'
 import { createSession, getSession, listSessions } from '@hull/agent/service'
 import type { NotifyPayload } from '@hull/events/bus'
 import { getEventById, trustedEvent } from '@hull/events/service'
@@ -347,11 +348,12 @@ export function createOrchestrator(deps: OrchestratorDeps) {
     if (existing) return existing.sessionId
 
     const sessionId = uuidv7()
+    const model = await resolveDefaultModel(db, DEFAULT_MODEL)
     try {
       await db.transaction(async (tx) => {
         await createSession(tx, {
           id: sessionId,
-          model: DEFAULT_MODEL,
+          model,
           title: input.title,
           cwd: input.worktreePath,
           agentUserId: input.agentUserId,
