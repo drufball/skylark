@@ -1,8 +1,125 @@
+
 # Builder Memory Index
 
 ## Recent Work
 
 ### Issue #933f: Promote Notifications to a permanent rail entry (PR #174) — handed to babysitter
+### Issue #0eyx: Config chat room — playbooks/model/personas (PR #176) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (1753 tests), both coverage
+  gates pass (global 98%+ stmts/98%+ funcs/99%+ lines/94%+ branches, diff
+  coverage 100% on the three files with real new logic not covered by their
+  own dedicated tests: `orchestrator-live.ts`, `issues/orchestrator.ts`,
+  `views/models.tsx`). No migration drift (`npm run db:generate` clean).
+  Handed off.
+- **What**: a fourth default room, Config (`rigging/rooms/rooms.ts`),
+  resident agent `@keel` (new seeded persona in `SEED_AGENTS`, picks up
+  standard `CHAT_CONFIG` like any other un-configured crew member — no
+  special-casing needed) — one conversational front door onto three
+  ship-config surfaces that stayed scattered even though the issue was
+  explicit the underlying services must stay exactly as separate as they
+  are: playbooks (`hull/issues/playbooks.ts`), the model gateway
+  (`hull/agent/models.ts`), agent personas (`hull/users/service.ts`).
+- **New tools module `hull/chat/config-tools.ts`** (`createConfigSessionTools`,
+  a `SessionToolsProvider`): `config_playbook` (list/save, wraps
+  `listPlaybooks`/`upsertPlaybook`, spelled in HANDLES resolved to ids via
+  `getUserByHandle` — a new `resolvePlaybookInput` helper), `config_persona`
+  (create/edit, wraps `createUser`/`updateAgentUser`), `config_model`
+  (get/set/clear, wraps the new `settings.ts` below). Gated to the Config
+  room's own well-known chat id (`CONFIG_ROOM_CHAT_ID = 'room-config'`) via
+  `findChatForSession` — one notch narrower than `session-tools.ts`'s
+  any-chat-membership gate, deliberately: these tools are more powerful (a
+  persona edit changes what another agent does), so a session only gets
+  them by BEING the Config room's resident session, not by being in any
+  chat. Composed alongside `createChatSessionTools` in
+  `orchestrator-live.ts` via a new small `combineSessionTools` helper
+  (concatenates whatever each narrow provider contributes — most sessions
+  get only the chat tools, the Config room's session gets both sets).
+- **The model-switch problem, solved with a new DB-backed singleton**:
+  `SKYLARK_DEFAULT_MODEL` is read once at process boot
+  (`hull/agent/runtime.ts`'s `DEFAULT_MODEL = defaultModelRef()`), so
+  "switch the default model by talking to an agent" needed a real
+  persisted override, not another env read. New `ship_settings` table
+  (migration `0039_chunky_rockslide.sql`) — singleton row, fixed id
+  `"ship"`, nullable `defaultModel` column, no RLS (same posture as
+  `users`/`playbooks`/`extensions` — whole-ship config, not crew-scoped).
+  New `hull/agent/settings.ts`: `getShipDefaultModel`/`setShipDefaultModel`
+  (upsert on the singleton, rejects blank/whitespace) /
+  `resolveDefaultModel(db, fallback)`. Wired into every session-creation
+  call site that used the static `DEFAULT_MODEL` import —
+  `hull/chat/orchestrator.ts` (`ensureAgentSession`, `ensureInboxSession`)
+  and `hull/issues/orchestrator.ts` (`ensureAgentSession`) — so the override
+  wins the moment it's set, no restart needed. `hull/agent/server.ts`'s
+  existing `getDefaultModel` now reflects it; new `setDefaultModel` server
+  fn lets the Models page (`routes/models.tsx`) set it directly too, via a
+  new "Make default" button per gateway-served model in
+  `rigging/views/models.tsx` — so the override isn't ONLY reachable by
+  talking to `@keel`.
+- **New widget kind `config`** (`rigging/widgets/config.tsx`): read-only,
+  unfiltered summary tile — current default model, every playbook + its
+  roster (`playbookLine`), crew personas and who has a custom prompt
+  (`crewLine`) — pure exported helpers, same shape as other widgets'
+  pure-render-logic split. No live topics (documented tradeoff: every fact
+  already lives behind its own service's topics; a save doesn't animate the
+  tile the way `issue-list` does — reopening the tile or the room posting
+  about the change is enough for something read far less than it's
+  written).
+- **What deliberately did NOT move**: `/models` and the Playbooks/Crew tabs
+  of `/agents` are untouched, unmoved, still the richer views-behind-the-
+  surface. The Config room carries **no** `view` link (unlike Issues/Files)
+  — same reasoning as Inbox's own view-less state (#933f): those three
+  surfaces are already permanently rail-reachable (Models, Crew), so a
+  `view` link would list a rail surface twice, which `navigation.test.ts`
+  refuses. This room is a genuinely NEW front door (talk instead of
+  clicking through three settings pages), not a replacement for an
+  existing route — nothing needs a way back in because nothing was moved
+  out.
+- **Red-green**: `settings.test.ts` (unset-by-default, set/read-back,
+  idempotent upsert, clear, rejects blank), `config-tools.test.ts` (13
+  cases including a session backing some OTHER chat gets `[]`, and the
+  unattributed-session `[]` case), `config.test.tsx` (9 cases), new
+  `orchestrator-live.test.ts` (2 cases covering `combineSessionTools` —
+  the one bit of real decision logic in a file that's otherwise
+  `/* v8 ignore */`d live wiring per `test-excludes.mjs`'s
+  `STRYKER_ONLY_EXCLUDES`). Updated `rooms.test.ts` (Config room, its
+  view-less state), `registry.test.ts` (new `config` kind),
+  `service.test.ts` (new seed agent count), `models.test.tsx` (new "Make
+  default" control, both with-handler and without-handler cases).
+- **Background-job/coverage-run gotcha this session (important — cost real
+  time)**: `npm run coverage:check`'s `vitest run --coverage` run got
+  legitimately stuck TWICE in the same session (~20 min of 100% CPU on a
+  single worker with a clean `coverage/.tmp/*.json` file count that hadn't
+  changed in minutes — i.e. all workers had already finished writing their
+  per-file coverage, but the run never exited). `sample <pid>` showed the
+  stuck process deep in V8's stack-trace/deopt machinery
+  (`CaptureSimpleStackTrace`/`TranslatedState`), not in test code — an
+  artifact of v8 coverage instrumentation interacting badly with
+  exception-heavy code paths, not a real hang in app logic. **Diagnostic
+  recipe that worked**: `ps aux | grep vitest` to find the actual vitest
+  worker PIDs (not just the wrapper `npm`/`sh` processes), then
+  `ls coverage/.tmp/*.json | wc -l` polled over time — if that count stops
+  changing for several minutes while a worker is still burning 100% CPU,
+  it's stuck in report-generation/exception-unwinding, not still running
+  tests; `sample <pid> 2-3` and grepping the call graph for
+  `TranslatedState`/`CaptureSimpleStackTrace`/`Deopt` confirms it. **Fix**:
+  `kill -9` every vitest-related pid (the wrapper `npm run coverage:check`
+  shell, the `vitest run --coverage` parent, all `forks.js` workers), `rm
+  -rf coverage`, and re-run fresh — the retry completed normally in ~90s
+  with full worker parallelism. Don't just keep re-backgrounding/waiting
+  past ~5x a run's normal duration; check `coverage/.tmp` file-count
+  stability first, and don't hesitate to kill and retry once diagnosed.
+- **Also this session**: found and removed a stray junk file literally
+  named `chat?` at the repo root (16 bytes, contents `--- users - ---`) —
+  leftover debris from an earlier CLI-quoting mishap in this same
+  worktree, unrelated to the actual issue; `git status --short` catches
+  this kind of thing immediately if you look before committing.
+- **Pattern reinforced**: when a build needs a NEW way to gate tool
+  availability that's narrower than an existing pattern (chat membership →
+  ONE specific chat's id), reach for the same underlying primitive
+  (`findChatForSession`) rather than inventing a new lookup, and compose
+  the two providers with a tiny generic combinator
+  (`combineSessionTools`) rather than teaching one provider about the
+  other's concerns.
+
 - **Status**: PR open, `npm run check` clean (1721 tests), both coverage
   gates pass (100% diff coverage on the three files with real logic:
   `dock.tsx`, `rooms.ts`, `use-unread-count.ts`; `server.ts`/routes excluded
