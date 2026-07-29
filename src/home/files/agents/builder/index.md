@@ -1,7 +1,68 @@
-
 # Builder Memory Index
 
 ## Recent Work
+
+### Issue #933f: Promote Notifications to a permanent rail entry (PR #174) — handed to babysitter
+- **Status**: PR open, `npm run check` clean (1721 tests), both coverage
+  gates pass (100% diff coverage on the three files with real logic:
+  `dock.tsx`, `rooms.ts`, `use-unread-count.ts`; `server.ts`/routes excluded
+  from the gate like other doors/routes). Handed off.
+- **What**: `/inbox` was reachable only by first opening the Inbox room's
+  conversation (#cse8 had moved it there). This puts it back as a permanent
+  FIFTH rail entry alongside Home/Chats/Crew/Models — "everything that needs
+  me" is a place you always go, not something you find by first opening a
+  chat. Room-inbox (the @bix conversation) is untouched as a conversation and
+  still carries its filtered `inbox` tile; it just no longer owns a route.
+- **Badge, live everywhere, not just on /inbox**: `DockProps.unreadCount`
+  badges the Inbox rail entry (small pill, capped `"99+"` via `badgeText`/
+  `MAX_BADGE_COUNT`). Every route that mounts `<Dock>` (home, chat, issues
+  board+thread, files, agents/crew, models) now passes a live count from a
+  new `rigging/lib/use-unread-count.ts` hook — fetch on mount + refetch on
+  any `notify:*` wildcard event over the ship's log (same live-refresh
+  pattern as `use-behind-origin.ts`/`use-widget-live-revision.ts`, not
+  polling). Backed by a new cheap door, `hull/notifications/server.ts`'s
+  `unreadNotificationCount` (count only — doesn't pay for `myInbox`'s full
+  list + label formatting). `/inbox` itself skips the hook and reuses its own
+  loader's `unread` instead of subscribing to the same topic twice.
+- **`RoomSpec.view` is now optional** (`rigging/rooms/rooms.ts`) — room-inbox
+  is the first room ever to have no `view`. `roomForView`/`roomViewLink` and
+  their comments updated for the optional field; `rooms.test.ts` pins the
+  view-less state explicitly rather than just letting the type change go
+  untested.
+- **`navigation.test.ts`**: the "every route reachable from rail or default
+  room" claim had three call sites doing `DEFAULT_ROOMS.map(r => r.view.to)` —
+  all three now filter through a new `roomsWithView()` helper first. Added an
+  explicit test pinning that Inbox is in `RAIL` AND has no room `view`, so the
+  two facts can't drift apart silently.
+- **`routes/inbox.tsx`**: mounts `<Dock active="inbox" ... unreadCount={unread}>`
+  instead of the old `room={roomForView('/inbox') ?? undefined}` back-link —
+  the round trip a room-owned view needs is unnecessary once the surface is a
+  rail entry itself.
+- **Mobile**: nothing to change — the rail's `RAIL_TARGET` class uses
+  `flex-1`, so item width is never hardcoded per entry; a fifth entry (plus
+  Log out) is just six equally-sized flex children in the same 390px bar
+  instead of five. Worth checking for on any future rail-count-changing issue
+  before assuming a mobile fix is needed.
+- **Zine docs updated for consistency** (`src/zine.md`, `src/rigging/zine.md`)
+  even though not test-enforced — "four entries"/"Issues, Files and Inbox
+  left the rail" language now says "five"/"Issues and Files", with a
+  changelog entry explaining Inbox's round trip out and back (#cse8 → #933f).
+- **Tooling gotcha this session**: `git commit -m "$(cat <<'EOF' ... EOF)"` —
+  the exact heredoc-in-command-substitution pattern already flagged as risky
+  for `gh pr create` — also hung an interactive `git commit` in this sandbox
+  (spawned an actual `vim`/`view` process waiting on a tty that would never
+  respond, not a quoting error). Fix was the same as for `gh pr create`:
+  write the message to a temp file and use `git commit -F /tmp/msg.txt`
+  instead of `-m "$(cat <<EOF ...)"`. Generalizing the existing PR-body
+  lesson: avoid heredoc-into-substitution for ANY git/gh command that takes a
+  multi-line string argument in this environment, not just `gh pr create`.
+- **Pattern reinforced**: when a field on a shared spec type needs to become
+  optional for exactly one entry (`RoomSpec.view` for room-inbox), grep every
+  call site that dereferences it directly (`.view.to`, not `.view?.to`) before
+  declaring the type change done — `navigation.test.ts` had three such sites
+  that would have silently thrown at test-collection time, not failed a
+  specific assertion, which is a worse debugging experience than a red test.
+
 
 ### Issue #wkh8: Per-chat files subfolder + turnContext shortcut (PR #166) — handed to babysitter
 - **Status**: PR open, `npm run check` clean (1712 tests), both coverage
