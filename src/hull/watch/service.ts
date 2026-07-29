@@ -135,8 +135,11 @@ export function resolveWatchConfig(env: {
  * `statusLineAt` with the holder session's `lastMessageAt` (the transcript
  * outvotes a stale status line; see the zine's Decisions).
  */
-export function laterOf(a: Date | null, b: Date | null): Date | null {
-  if (!a) return b
+export function laterOf(
+  a: Date | null,
+  b: Date | null | undefined,
+): Date | null {
+  if (!a) return b ?? null
   if (!b) return a
   return a > b ? a : b
 }
@@ -524,7 +527,7 @@ async function handleStall(
   // while the session works (see runWatchSweep).
   const activityAt = laterOf(
     issue.statusLineAt,
-    holderSessionId ? (ctx.lastMessageAt.get(holderSessionId) ?? null) : null,
+    holderSessionId ? ctx.lastMessageAt.get(holderSessionId) : null,
   )
 
   const nudgeRow = await getNudgeRow(db, issue.id)

@@ -315,7 +315,7 @@ describe('runWatchSweep', () => {
 
   /** A building issue with an agent baton holder, its session, and a stale line. */
   async function buildingIssue(opts?: {
-    statusLineAt?: Date
+    statusLineAt?: Date | null
     running?: boolean
     /** Override the issue owner (defaults to the human owner). */
     owner?: string
@@ -346,7 +346,7 @@ describe('runWatchSweep', () => {
       .set({
         status: 'building',
         statusLine: 'working on it',
-        statusLineAt: opts?.statusLineAt ?? T0,
+        statusLineAt: opts?.statusLineAt === undefined ? T0 : opts.statusLineAt,
       })
       .where(eq(issues.id, issue.id))
     if (opts?.running) await setStatus(db, sessionId, 'running')
@@ -438,6 +438,25 @@ describe('runWatchSweep', () => {
       .where(eq(agentSessions.id, sessionId))
 
     const { deps, drives } = sweepDeps(now)
+    await runWatchSweep(db, deps)
+
+    expect(drives).toEqual([])
+    expect(await getNudgeRow(db, issueId)).toBeUndefined()
+  })
+
+  it('stays conservative when there is no activity clock at all', async () => {
+    // statusLineAt null AND a stranded baton (no session to read a transcript
+    // clock from): no stall can be measured, so the watch must do nothing.
+    const stranded = await createUser(db, {
+      id: uuidv7(),
+      handle: 'drifter',
+      displayName: 'Drifter',
+      type: 'agent',
+    })
+    const { issueId } = await buildingIssue({ statusLineAt: null })
+    await setBatonHolder(db, issueId, stranded.id)
+
+    const { deps, drives } = sweepDeps(at(20 * MIN))
     await runWatchSweep(db, deps)
 
     expect(drives).toEqual([])
