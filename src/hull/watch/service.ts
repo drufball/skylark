@@ -2,6 +2,7 @@ import { desc, eq, sql } from 'drizzle-orm'
 
 import type { Database } from '@hull/db/client'
 import {
+  latestMessageAtBySession,
   listOutstandingBackgroundJobs,
   runningSessionIds,
 } from '@hull/agent/service'
@@ -440,6 +441,13 @@ export async function runWatchSweep(
     ...jobSessionIds,
   ])
   const running = new Set(await runningSessionIds(db, [...relevantSessions]))
+  // The transcript is ground truth for liveness: a session's last message can
+  // be fresh while the issue's status line has gone quiet (observed on #0eyx —
+  // the watch paused a healthy 40-minute build). The stall clock reads the
+  // LATER of the two.
+  const lastMessageAt = await latestMessageAtBySession(db, [
+    ...relevantSessions,
+  ])
 
   // Rule 1 — stall nudges.
   for (const issue of building) {
@@ -448,6 +456,7 @@ export async function runWatchSweep(
       sessionIds: sessionsByIssue.get(issue.id) ?? [],
       jobSessionIds,
       running,
+      lastMessageAt,
     }).catch((err: unknown) => {
       console.error(
         `watch: stall check for #${issue.nano} failed (continuing): ${errorMessage(err)}`,
@@ -480,6 +489,7 @@ async function handleStall(
     sessionIds: string[]
     jobSessionIds: Set<string>
     running: Set<string>
+    lastMessageAt: Map<string, Date>
   },
 ): Promise<void> {
   const { issue } = ctx
@@ -498,13 +508,26 @@ async function handleStall(
     ctx.jobSessionIds.has(id),
   )
 
+  // "Last real activity" is the LATER of the status line's tick and the
+  // holder session's last transcript write — the status line can go quiet
+  // while the session works (see runWatchSweep).
+  const holderMessageAt = holderSessionId
+    ? (ctx.lastMessageAt.get(holderSessionId) ?? null)
+    : null
+  const activityAt =
+    holderMessageAt &&
+    issue.statusLineAt &&
+    holderMessageAt > issue.statusLineAt
+      ? holderMessageAt
+      : (issue.statusLineAt ?? holderMessageAt)
+
   const nudgeRow = await getNudgeRow(db, issue.id)
   const action = decideStall({
     batonIsAgent,
     hasOutstandingJob,
     sessionRunning,
     statusLine: issue.statusLine,
-    statusLineAt: issue.statusLineAt ? issue.statusLineAt.toISOString() : null,
+    statusLineAt: activityAt ? activityAt.toISOString() : null,
     awaitingBackground: issue.awaitingBackground,
     nudgeCount: nudgeRow?.nudgeCount ?? 0,
     lastNudgeAt: nudgeRow?.lastNudgeAt
@@ -516,7 +539,7 @@ async function handleStall(
 
   if (action.kind === 'none') return
 
-  const stalledMs = deps.now.getTime() - (issue.statusLineAt?.getTime() ?? 0)
+  const stalledMs = deps.now.getTime() - (activityAt?.getTime() ?? 0)
   const holderHandle = await handleOf(db, holderId)
   const nextCount = (nudgeRow?.nudgeCount ?? 0) + 1
 

@@ -309,9 +309,15 @@ describe('runWatchSweep', () => {
       ownerId: owner,
     })
     const sessionId = uuidv7()
-    await db
-      .insert(agentSessions)
-      .values({ id: sessionId, model: 'test', agentUserId: agentId })
+    // Pin the transcript clock to the arranged quiet time — the column
+    // defaults to the REAL now(), which would read as fresh activity against
+    // the fake test clock and defeat every stall arrangement.
+    await db.insert(agentSessions).values({
+      id: sessionId,
+      model: 'test',
+      agentUserId: agentId,
+      lastMessageAt: opts?.statusLineAt ?? T0,
+    })
     await db
       .insert(issueSessions)
       .values({ issueId: issue.id, agentUserId: agentId, sessionId })
@@ -396,6 +402,41 @@ describe('runWatchSweep', () => {
 
     const events = await watchdogEvents(issueId, WATCHDOG_NUDGED)
     expect(events).toHaveLength(1)
+  })
+
+  it('trusts the session transcript over a stale status line — fresh messages mean no stall', async () => {
+    // Observed live (#0eyx, 2026-07-29): the issue's status line stopped
+    // ticking while the builder session kept writing messages every minute.
+    // The watch nudged, escalated, and paused a HEALTHY 40-minute build. The
+    // transcript is ground truth for "is anyone home" — a recent
+    // agent_messages row must reset the stall clock even when statusLineAt
+    // has gone stale.
+    const { issueId, sessionId } = await buildingIssue() // statusLineAt = T0
+    const now = at(20 * MIN)
+    await db
+      .update(agentSessions)
+      .set({ lastMessageAt: at(19 * MIN) })
+      .where(eq(agentSessions.id, sessionId))
+
+    const { deps, drives } = sweepDeps(now)
+    await runWatchSweep(db, deps)
+
+    expect(drives).toEqual([])
+    expect(await getNudgeRow(db, issueId)).toBeUndefined()
+  })
+
+  it('still nudges when both the status line and the transcript are old', async () => {
+    const { issueId, sessionId } = await buildingIssue() // statusLineAt = T0
+    await db
+      .update(agentSessions)
+      .set({ lastMessageAt: at(MIN) })
+      .where(eq(agentSessions.id, sessionId))
+
+    const { deps, drives } = sweepDeps(at(20 * MIN))
+    await runWatchSweep(db, deps)
+
+    expect(drives).toHaveLength(1)
+    expect((await getNudgeRow(db, issueId))?.nudgeCount).toBe(1)
   })
 
   it('does not stack a second nudge inside the threshold window', async () => {
