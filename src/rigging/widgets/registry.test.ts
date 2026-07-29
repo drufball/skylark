@@ -60,6 +60,7 @@ describe('resolveWidget', () => {
   it('carries the kinds this slice promised', () => {
     expect(Object.keys(WIDGET_REGISTRY).sort()).toEqual([
       'choice',
+      'config',
       'files',
       'inbox',
       'issue-list',

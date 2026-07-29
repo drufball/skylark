@@ -13,9 +13,16 @@ export interface ModelsData {
   /** Whether the gateway answered, the model names it serves, and where its
    * admin UI lives (models and provider keys are managed there). */
   gateway: { ok: boolean; models: string[]; uiUrl: string }
+  /**
+   * Set the ship-wide default — the same override the Config room's
+   * `config_model` tool writes (#0eyx). Optional so a caller that only wants
+   * the read-only summary (a test, a future embed) doesn't have to wire a
+   * handler that does nothing.
+   */
+  onSetDefault?: (model: string) => void
 }
 
-export function Models({ defaultRef, gateway }: ModelsData) {
+export function Models({ defaultRef, gateway, onSetDefault }: ModelsData) {
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-8 p-8">
       <header className="flex flex-col gap-1">
@@ -25,8 +32,9 @@ export function Models({ defaultRef, gateway }: ModelsData) {
           <code className="rounded bg-muted px-1.5 py-0.5 text-foreground">
             {defaultRef}
           </code>{' '}
-          — set <code>SKYLARK_DEFAULT_MODEL</code> in <code>.env</code> to
-          change it, or pin a model per agent in Crew.
+          — pick another below, ask the Config room to switch it, set{' '}
+          <code>SKYLARK_DEFAULT_MODEL</code> in <code>.env</code>, or pin a
+          model per agent in Crew.
         </p>
       </header>
 
@@ -75,12 +83,27 @@ export function Models({ defaultRef, gateway }: ModelsData) {
         {gateway.ok ? (
           <ul className="flex flex-col divide-y rounded-md border">
             {gateway.models.map((model) => (
-              <li key={model} className="flex items-center gap-2 p-3">
+              <li
+                key={model}
+                className="flex items-center justify-between gap-2 p-3"
+              >
                 <code className="text-sm">{model}</code>
-                {model === defaultRef && (
+                {model === defaultRef ? (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                     default
                   </span>
+                ) : (
+                  onSetDefault && (
+                    <button
+                      type="button"
+                      className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        onSetDefault(model)
+                      }}
+                    >
+                      Make default
+                    </button>
+                  )
                 )}
               </li>
             ))}

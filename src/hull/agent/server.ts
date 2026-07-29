@@ -13,6 +13,7 @@ import {
   gatewayUiUrl,
   parseGatewayModels,
 } from './models'
+import { resolveDefaultModel, setShipDefaultModel } from './settings'
 import { type AgentRuntime, DEFAULT_MODEL } from './runtime'
 import { sessionTopic } from './topic'
 import { createServerRuntime } from './server-runtime'
@@ -156,13 +157,29 @@ export const listAgentExtensions = createServerFn({ method: 'GET' }).handler(
 
 // --- Models (the gateway surface) -------------------------------------------
 
-/** The model a new session defaults to (the resolved SKYLARK_DEFAULT_MODEL). */
+/**
+ * The model a new session defaults to: the ship's own override (settable
+ * conversationally from the Config room, or from this same door) if one has
+ * been set, else the resolved `SKYLARK_DEFAULT_MODEL`.
+ */
 export const getDefaultModel = createServerFn({ method: 'GET' }).handler(
   async () => {
     await currentActor()
-    return { ref: defaultModelRef() }
+    return { ref: await resolveDefaultModel(db, defaultModelRef()) }
   },
 )
+
+/**
+ * Set (or clear, with `null`) the ship-wide default-model override. Every new
+ * session boots on it from then on; sessions already running are unaffected.
+ */
+export const setDefaultModel = createServerFn({ method: 'POST' })
+  .validator((input: { model: string | null }) => input)
+  .handler(async ({ data }) => {
+    await currentActor()
+    await setShipDefaultModel(db, data.model)
+    return { ref: await resolveDefaultModel(db, defaultModelRef()) }
+  })
 
 /** What the gateway probe reports: reachable + the model names it serves,
  * plus where its admin UI lives (models and provider keys are managed there,

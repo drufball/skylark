@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Models, type ModelsData } from './models'
 
@@ -73,5 +73,17 @@ describe('Models', () => {
       />,
     )
     expect(screen.getByText(/doesn.t serve it yet/i)).toBeDefined()
+  })
+
+  it('offers "Make default" on a non-default model when a handler is given', () => {
+    const onSetDefault = vi.fn()
+    render(<Models {...props({ onSetDefault })} />)
+    fireEvent.click(screen.getByRole('button', { name: /make default/i }))
+    expect(onSetDefault).toHaveBeenCalledWith('claude-haiku-4-5')
+  })
+
+  it('offers no "Make default" control without a handler', () => {
+    render(<Models {...props()} />)
+    expect(screen.queryByRole('button', { name: /make default/i })).toBeNull()
   })
 })

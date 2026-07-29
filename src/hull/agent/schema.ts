@@ -151,7 +151,26 @@ export const backgroundJobs = pgTable('background_jobs', {
     .defaultNow(),
 })
 
+/**
+ * The ship's own settings: a SINGLETON row (fixed id `"ship"`), never a
+ * per-user preference. One field today: an override for the default model
+ * every new session boots on — settable conversationally from the Config
+ * room (#0eyx) or read from the Models page — which takes precedence over
+ * `SKYLARK_DEFAULT_MODEL` without a restart (see `resolveDefaultModel` in
+ * settings.ts, which falls back to the env-resolved `DEFAULT_MODEL` when this
+ * is null). No RLS: like `users`, `playbooks` and `extensions`, this is
+ * whole-ship configuration every crew member may read, not a private or
+ * crew-scoped resource.
+ */
+export const shipSettings = pgTable('ship_settings', {
+  /** Always the literal "ship" — there is exactly one row, ever. */
+  id: text('id').primaryKey(),
+  /** Overrides SKYLARK_DEFAULT_MODEL when set; null defers to the env var. */
+  defaultModel: text('default_model'),
+})
+
 export type AgentSessionRow = typeof agentSessions.$inferSelect
 export type AgentMessageRow = typeof agentMessages.$inferSelect
 export type ExtensionRow = typeof extensions.$inferSelect
 export type BackgroundJobRow = typeof backgroundJobs.$inferSelect
+export type ShipSettingsRow = typeof shipSettings.$inferSelect
