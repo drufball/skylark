@@ -9,6 +9,7 @@ import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
+import { useUnreadCount } from '@rigging/lib/use-unread-count'
 
 // The thread route: a thin mount binding /issues/$id to the thread view. Live
 // updates subscribe to the issue's own topic, so comments, status changes, and
@@ -48,10 +49,16 @@ function ThreadRoute() {
 
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
+  const unreadCount = useUnreadCount()
 
   if (!thread) {
     return (
-      <Dock Link={Link} onLogout={onLogout} behindOrigin={behindOrigin}>
+      <Dock
+        Link={Link}
+        onLogout={onLogout}
+        behindOrigin={behindOrigin}
+        unreadCount={unreadCount}
+      >
         <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
           <div>
             <p>That issue doesn&apos;t exist.</p>
@@ -71,6 +78,7 @@ function ThreadRoute() {
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
+      unreadCount={unreadCount}
     >
       <IssueThreadView
         thread={thread}

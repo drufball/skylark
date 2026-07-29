@@ -24,6 +24,16 @@ describe('the default rooms', () => {
     ])
   })
 
+  /**
+   * `/inbox` is a permanent rail entry (#933f), not a surface the Inbox room
+   * owns — so unlike Issues and Files, it names no `view`. The room is still
+   * an ordinary conversation with @bix, carrying a filtered `inbox` tile.
+   */
+  it('gives the Inbox room no view link — that surface lives in the rail now', () => {
+    const inbox = DEFAULT_ROOMS.find((room) => room.id === 'room-inbox')
+    expect(inbox?.view).toBeUndefined()
+  })
+
   it('arranges only widgets the catalog can render, with props it accepts', () => {
     for (const room of DEFAULT_ROOMS) {
       expect(room.widgets.length).toBeGreaterThan(0)
@@ -38,13 +48,16 @@ describe('the default rooms', () => {
   })
 
   /**
-   * Issues, Files and Inbox left the rail when they got rooms. Their routes are
+   * Issues and Files left the rail when they got rooms; their routes are
    * deliberately still alive — a widget tile is a readout, not the whole board
-   * — so each room has to carry the way through to its own richer view, or the
-   * view becomes a page nobody can find.
+   * — so each of THOSE rooms has to carry the way through to its own richer
+   * view, or the view becomes a page nobody can find. Inbox is the exception
+   * (see above): it names no view because `/inbox` is in the rail.
    */
-  it('links every room through to the view it is the room for', () => {
-    for (const room of DEFAULT_ROOMS) {
+  it('links every room that names a view through to it', () => {
+    const withView = DEFAULT_ROOMS.filter((room) => room.view)
+    expect(withView.length).toBeGreaterThan(0)
+    for (const room of withView) {
       const link = roomViewLink(room.id)
       expect(link, room.title).not.toBeNull()
       expect(link?.to.startsWith('/')).toBe(true)
@@ -63,6 +76,7 @@ describe('the default rooms', () => {
    */
   it('links every room’s view back to the room it came from', () => {
     for (const room of DEFAULT_ROOMS) {
+      if (!room.view) continue
       const back = roomForView(room.view.to)
       expect(back, room.view.to).not.toBeNull()
       expect(back?.to).toContain(room.id)
@@ -76,6 +90,7 @@ describe('the default rooms', () => {
 
   it('round-trips: out to the view, and back to the same room', () => {
     for (const room of DEFAULT_ROOMS) {
+      if (!room.view) continue
       const out = roomViewLink(room.id)
       expect(out).not.toBeNull()
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion

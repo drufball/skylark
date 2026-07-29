@@ -5,6 +5,7 @@ import { Dock } from '@rigging/views/dock'
 import { Models } from '@rigging/views/models'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
+import { useUnreadCount } from '@rigging/lib/use-unread-count'
 
 // Thin mount: binds /models to the Models view and the data it needs.
 
@@ -23,12 +24,14 @@ function ModelsRoute() {
   const { gateway, defaultRef } = Route.useLoaderData()
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
+  const unreadCount = useUnreadCount()
   return (
     <Dock
       active="models"
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
+      unreadCount={unreadCount}
     >
       <Models defaultRef={defaultRef} gateway={gateway} />
     </Dock>

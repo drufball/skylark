@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from 'react'
 import {
   Anchor,
+  Bell,
   Boxes,
   ChevronLeft,
   House,
@@ -12,9 +13,9 @@ import {
 import { TAP_TARGET } from '@rigging/lib/tap-target'
 import { cn } from '@rigging/lib/utils'
 
-// The rail: the ship's permanent, hardcoded navigation. Four entries — Home
-// (your canvas), Chats (every conversation), Crew (people and agents), Models —
-// and a way out.
+// The rail: the ship's permanent, hardcoded navigation. Five entries — Home
+// (your canvas), Chats (every conversation), Crew (people and agents), Models,
+// Inbox (everything that needs you) — and a way out.
 //
 // **It is short and it is hardcoded on purpose.** Once the front door became
 // your home canvas, navigation became DATA: which chats you're in, which pages
@@ -22,18 +23,24 @@ import { cn } from '@rigging/lib/utils'
 // arrange their way into a corner where "where's my inbox?" turns into "which
 // page had the inbox tile?" with no way back. The rail is the answer to that:
 // it consults no row, it renders identically for a brand-new crew member with
-// an empty home, and every other surface hangs off one of its four entries.
+// an empty home, and every other surface hangs off one of its five entries.
 //
-// Issues, Files and Inbox are NOT here any more — each has a room now
-// (`rigging/rooms`), and the room links through to its richer view. That's the
-// thesis: the apps were conversations. Models stays, because a settings surface
-// is not a conversation and the thesis is proven by what migrates well.
+// Issues and Files are NOT here — each has a room (`rigging/rooms`), and the
+// room links through to its richer view. Inbox left the rail the same way
+// (#cse8) but comes BACK here now (#933f): a filtered `inbox` widget on a
+// chat's canvas is a fine app-specific view of "this chat's unread", but
+// "everything that needs me" is a different claim — a place you always go, not
+// a thing you find by first opening a conversation — and that's what a
+// permanent rail entry means. The Inbox ROOM (the @bix conversation) still
+// exists and still carries the widget; it just no longer owns the route.
+// Models stays for the same reason it always did: a settings surface is not a
+// conversation, and the thesis is proven by what migrates well.
 //
 // Presentational and router-agnostic: the link element is injected so the rail
 // is testable without a router and reusable across routes.
 
 /** A surface with a place in the rail. A route without one highlights nothing. */
-export type DockSection = 'home' | 'chats' | 'crew' | 'models'
+export type DockSection = 'home' | 'chats' | 'crew' | 'models' | 'inbox'
 
 /** A navigation link, injected so the dock doesn't depend on a router. */
 export type DockLink = ComponentType<{
@@ -59,13 +66,22 @@ export const RAIL: readonly DockItem[] = [
   { section: 'chats', to: '/chat', label: 'Chats', Icon: MessageSquare },
   { section: 'crew', to: '/agents', label: 'Crew', Icon: Users },
   { section: 'models', to: '/models', label: 'Models', Icon: Boxes },
+  { section: 'inbox', to: '/inbox', label: 'Inbox', Icon: Bell },
 ]
+
+/** The most a rail badge ever spells out — past this it just says "a lot". */
+const MAX_BADGE_COUNT = 99
+
+/** "3", or "99+" once a count would otherwise grow the rail entry. */
+function badgeText(count: number): string {
+  return count > MAX_BADGE_COUNT ? `${String(MAX_BADGE_COUNT)}+` : String(count)
+}
 
 export interface DockProps {
   /**
-   * The rail entry to highlight. Optional: `/issues`, `/files` and `/inbox` are
-   * still real surfaces you can be standing on, and none of the four is where
-   * you are, so they highlight nothing rather than lying.
+   * The rail entry to highlight. Optional: `/issues` and `/files` are still
+   * real surfaces you can be standing on, and neither one is a rail entry, so
+   * they highlight nothing rather than lying.
    */
   active?: DockSection
   /** The router's Link component (or a stand-in in tests). */
@@ -79,9 +95,9 @@ export interface DockProps {
    */
   behindOrigin?: number | null
   /**
-   * The ROOM this surface belongs to, for the three views that left the rail
-   * (`rigging/rooms`'s `roomForView`). Undefined everywhere else, which is most
-   * places.
+   * The ROOM this surface belongs to, for the views that left the rail for a
+   * room (`rigging/rooms`'s `roomForView`) — currently `/issues` and `/files`.
+   * Undefined everywhere else, which is most places.
    *
    * It lives in the shell rather than in each view for the same reason the rail
    * does: it's the way OUT of a surface, so it has to be in the one place that's
@@ -91,6 +107,16 @@ export interface DockProps {
    * invisible on the device that needs it most.
    */
   room?: { to: string; label: string }
+  /**
+   * How many unread notifications are waiting — badged on the rail's Inbox
+   * entry so a first-class destination can say how much is waiting without
+   * being opened. `undefined`, `null`, or `0` all draw no badge; every route
+   * but `/inbox` itself gets this live from `rigging/lib/use-unread-count`'s
+   * `useUnreadCount` (backed by `hull/notifications/server.ts`'s
+   * `unreadNotificationCount`), and `/inbox` passes its own loader's `unread`
+   * straight through instead of subscribing twice.
+   */
+  unreadCount?: number | null
   children: ReactNode
 }
 
@@ -112,6 +138,7 @@ export function Dock({
   onLogout,
   behindOrigin,
   room,
+  unreadCount,
   children,
 }: DockProps) {
   return (
@@ -146,6 +173,13 @@ export function Dock({
               item={item}
               active={item.section === active}
               Link={Link}
+              badge={
+                item.section === 'inbox' &&
+                typeof unreadCount === 'number' &&
+                unreadCount > 0
+                  ? badgeText(unreadCount)
+                  : null
+              }
             />
           ))}
           <button
@@ -194,10 +228,13 @@ function DockButton({
   item,
   active,
   Link,
+  badge,
 }: {
   item: DockItem
   active: boolean
   Link: DockLink
+  /** The rail badge's text, or null to draw none. */
+  badge?: string | null
 }) {
   const { Icon, label } = item
 
@@ -206,11 +243,22 @@ function DockButton({
       to={item.to}
       className={cn(
         RAIL_TARGET,
+        'relative',
         'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
         active && 'bg-accent text-accent-foreground',
       )}
     >
-      <Icon className="size-5" aria-current={active ? 'page' : undefined} />
+      <span className="relative">
+        <Icon className="size-5" aria-current={active ? 'page' : undefined} />
+        {badge && (
+          <span
+            data-testid="rail-badge"
+            className="absolute -top-1.5 -right-2 rounded-full bg-primary px-1 text-[9px] leading-tight font-semibold text-primary-foreground"
+          >
+            {badge}
+          </span>
+        )}
+      </span>
       {label}
     </Link>
   )

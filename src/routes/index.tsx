@@ -21,6 +21,7 @@ import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
 import { useInvalidatingAction } from '@rigging/lib/use-invalidating-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
+import { useUnreadCount } from '@rigging/lib/use-unread-count'
 
 // **The front door: your home canvas.** Pages of POINTERS at widgets that live
 // in chats you're in — a heads-up display of your software, with the agents
@@ -109,12 +110,14 @@ function HomeRoute() {
 
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
+  const unreadCount = useUnreadCount()
   return (
     <Dock
       active="home"
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
+      unreadCount={unreadCount}
     >
       <HomeCanvas
         pages={home.pages.map((p) => ({ id: p.id, title: p.title }))}

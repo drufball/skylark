@@ -35,11 +35,14 @@ replaced per ship without breaking anything below it.
 - **Default rooms** (`rooms/`) — the conversations a fresh ship boots with. A
   **room** is a chat with the crew in it, an agent aboard, and a readout already
   on its canvas: `Issues` (an `issue-list`, @tilde), `Files` (a `files` tile,
-  @dot), `Inbox` (an `inbox` tile, @bix). Each also names the **view it is the
-  room for** (`/issues`, `/files`, `/inbox`) and links through to it from its
-  own header — those surfaces left the rail, and the room is the way in now.
-  Each of those views carries the way BACK, too (`roomForView`, drawn by the
-  shell above the surface). `rooms.ts` is the specs as data, `seed.ts` the
+  @dot), `Inbox` (an `inbox` tile, @bix). Issues and Files also name the **view
+  they are the room for** (`/issues`, `/files`) and link through to it from
+  their own header — those two surfaces left the rail, and the room is the way
+  in now. Each of those views carries the way BACK, too (`roomForView`, drawn by
+  the shell above the surface). Inbox names no `view` (`view` is optional on a
+  `RoomSpec`) — `/inbox` is a permanent rail entry (#933f), not a surface this
+  room owns; it's an ordinary conversation carrying a filtered `inbox` tile,
+  same as any chat could. `rooms.ts` is the specs as data, `seed.ts` the
   idempotent write (rooms, then homes), `cli.ts` the door —
   `npm run rooms seed`, which `scripts/serve` runs on every boot right after
   `npm run users seed` — and `server.ts` the one web door, `welcomeAboard`,
@@ -95,13 +98,14 @@ it.
   view meet.
 - **One theme, in variables.** Components reference tokens; ships restyle by
   editing `styles.css`.
-- **The rail is four entries and it is hardcoded.** It's the ship's only
+- **The rail is five entries and it is hardcoded.** It's the ship's only
   navigation that isn't data. Everything else — your chats, your pages, your
   tiles — is rows the crew can delete, and without a fixed floor somebody can
   arrange their way into a corner with no path back to a surface they need. So
   the rail reads nothing, renders identically on an empty home, and is
   deliberately short: it holds the two things every ship needs (your screen,
-  your conversations) plus the two surfaces that AREN'T conversations.
+  your conversations) plus the three surfaces that AREN'T conversations — Crew,
+  Models, and Inbox (badged live with the unread count, #933f).
   `src/navigation.test.ts` is the enforcement — every route is reachable from
   the rail or from a default room, or it's named there as not being a
   destination.
@@ -166,6 +170,11 @@ it.
 
 ## Changelog
 
+- **#933f — Inbox rejoins the rail.** A fifth, permanent rail entry (`/inbox`),
+  badged everywhere with the live unread count (`use-unread-count.ts`), not just
+  on the inbox route. `rooms.ts`'s room-inbox drops its `view` link — the room
+  is still the same conversation with @bix, carrying the same filtered `inbox`
+  tile, it just no longer owns the route.
 - **#cse9 — The closing pass: durability, and a phone header that can't grow.**
   The three views that left the rail stop being one-way doors — `roomForView` is
   the way back, drawn by the shell above every one of them, and
@@ -181,11 +190,12 @@ it.
 - **#cse8 — The front door moves, and a rail replaces the dock.** The dock's
   seven entries become four permanent ones (Home, Chats, Crew, Models), a bottom
   bar on a phone; Issues, Files and Inbox leave for their rooms, and each room
-  now names and links to the view it replaced. `seedHomes` joins the seed, so a
-  crew member's home opens with the three rooms' readouts already on it, and
-  `welcomeAboard` runs the whole thing for somebody who signs up between boots.
-  The chat header's Open-Chats, People, Schedules and Send controls finally
-  reach the 44px floor the widget surfaces have used since #cse4.
+  now names and links to the view it replaced. (Inbox later rejoins the rail as
+  a fifth entry — #933f, above.) `seedHomes` joins the seed, so a crew member's
+  home opens with the three rooms' readouts already on it, and `welcomeAboard`
+  runs the whole thing for somebody who signs up between boots. The chat
+  header's Open-Chats, People, Schedules and Send controls finally reach the
+  44px floor the widget surfaces have used since #cse4.
 - **#cse7 — The ship's apps get rooms.** `rooms/` opens `Issues`, `Files` and
   `Inbox` as real conversations, each with a crew member's speciality agent in
   it and its readout already on the canvas — the two new tiles are `files` and

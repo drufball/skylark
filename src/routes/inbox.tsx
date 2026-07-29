@@ -8,12 +8,15 @@ import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
-import { roomForView } from '@rigging/rooms/rooms'
 
 // The inbox route: a thin mount binding /inbox to the notifications service.
-// Live updates ride the ship's log — every notification is announced on the
-// owner's private notify:<userId> topic, the route subscribes to its own and
-// re-runs the loader, so the bell rings the moment something lands.
+// A permanent rail destination (#933f) — "everything that needs me" is a place
+// you always go, not a filtered view you reach by first opening the Inbox
+// ROOM's conversation (that room still exists, with its own `inbox` tile, but
+// no longer owns this route — see rigging/rooms/rooms.ts). Live updates ride
+// the ship's log — every notification is announced on the owner's private
+// notify:<userId> topic, the route subscribes to its own and re-runs the
+// loader, so the bell rings the moment something lands.
 
 export const Route = createFileRoute('/inbox')({
   component: InboxRoute,
@@ -35,12 +38,11 @@ function InboxRoute() {
   const behindOrigin = useBehindOrigin()
   return (
     <Dock
-      // No `active`: this view left the rail for its ROOM. That room is what
-      // links here — and `room` is the way back, so the trip isn't one-way.
+      active="inbox"
       Link={Link}
-      room={roomForView('/inbox') ?? undefined}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
+      unreadCount={unread}
     >
       <InboxView
         entries={items}

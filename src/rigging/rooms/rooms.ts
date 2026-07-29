@@ -67,14 +67,20 @@ export interface RoomSpec {
    */
   agentHandle: string
   /**
-   * The surface this room replaced in the rail, still reachable from inside it.
+   * The surface this room replaced in the rail, still reachable from inside it
+   * — or undefined for a room whose canvas widget is a filtered, app-specific
+   * VIEW rather than the ship's whole answer to that surface (the Inbox room:
+   * `/inbox` is a permanent rail entry now, #933f, so the room no longer owns
+   * a route of its own; it's an ordinary conversation that happens to carry an
+   * `inbox` tile).
+   *
    * A room's canvas tile is a READOUT — eight issues, a folder, the last few
    * notifications — and the board it came from does things a tile doesn't. That
    * view stays a route; the room is now the way in. Without this link it would
    * be a page nobody could find, which is how a good working view gets deleted
    * by accident a slice later.
    */
-  view: RoomViewLink
+  view?: RoomViewLink
   /** What a fresh room is arranged with, on its canvas. */
   widgets: RoomWidgetSpec[]
 }
@@ -118,7 +124,10 @@ export const DEFAULT_ROOMS: readonly RoomSpec[] = [
     title: 'Inbox',
     page: 'Inbox',
     agentHandle: 'bix',
-    view: { to: '/inbox', label: 'Full inbox' },
+    // No `view`: `/inbox` is a permanent rail entry (#933f), not a surface this
+    // room owns. The room is an ordinary conversation with @bix that happens
+    // to carry a filtered `inbox` tile — exactly the "chat canvases can still
+    // have inbox widgets" half of that issue.
     // No `unreadOnly`: an inbox room that empties itself as you read looks
     // broken. The tile marks unread and shows the rest.
     widgets: [{ kind: 'inbox', props: {}, gridW: 4, gridH: 3 }],
@@ -141,11 +150,12 @@ export function roomViewLink(chatId: string): RoomViewLink | null {
  * for a surface that is nobody's room, which is most of them.
  *
  * `roomViewLink` is the door out of a room and this is the door back in. It
- * exists because for one slice there wasn't one: `/issues`, `/files` and
- * `/inbox` left the rail, gained a link IN from their rooms, and offered nothing
- * out, so the only way back was the browser's own back button — which is a
- * rescue, not navigation, and which strands anybody who arrived by typing the
- * URL or following a link an agent posted.
+ * exists because for one slice there wasn't one: `/issues` and `/files` left
+ * the rail, gained a link IN from their rooms, and offered nothing out, so
+ * the only way back was the browser's own back button — which is a rescue,
+ * not navigation, and which strands anybody who arrived by typing the URL or
+ * following a link an agent posted. (`/inbox` made the same trip and back
+ * out again — #cse8 then #933f — so it no longer needs this door at all.)
  *
  * The label is built from the SEEDED title, not the chat's current one: this is
  * a pure, node-free function the browser calls with no database in reach, for
@@ -157,7 +167,7 @@ export function roomViewLink(chatId: string): RoomViewLink | null {
  * Pure and node-free, so a route can call it during render.
  */
 export function roomForView(to: string): RoomViewLink | null {
-  const room = DEFAULT_ROOMS.find((spec) => spec.view.to === to)
+  const room = DEFAULT_ROOMS.find((spec) => spec.view?.to === to)
   if (!room) return null
   return { to: `/chat?chat=${room.id}`, label: `${room.title} room` }
 }

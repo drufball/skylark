@@ -16,7 +16,7 @@ const FakeLink: DockLink = ({ to, className, children }) => (
 )
 
 describe('Dock', () => {
-  it('renders the four permanent rail links and the children', () => {
+  it('renders the five permanent rail links and the children', () => {
     render(
       <Dock active="home" Link={FakeLink} onLogout={() => undefined}>
         <p>surface</p>
@@ -28,6 +28,7 @@ describe('Dock', () => {
     expect(href('Chats')).toBe('/chat')
     expect(href('Crew')).toBe('/agents')
     expect(href('Models')).toBe('/models')
+    expect(href('Inbox')).toBe('/inbox')
     expect(screen.getByText('surface')).toBeTruthy()
   })
 
@@ -79,9 +80,9 @@ describe('Dock', () => {
   })
 
   /**
-   * Issues, Files and Inbox left the rail when they got rooms, but their views
-   * are still routes you can be standing on. Highlighting nothing is the honest
-   * answer there — pretending one of the four is active would point somewhere
+   * Issues and Files left the rail when they got rooms, but their views are
+   * still routes you can be standing on. Highlighting nothing is the honest
+   * answer there — pretending one of the five is active would point somewhere
    * you aren't.
    */
   it('highlights nothing on a surface that has no rail entry', () => {
@@ -261,5 +262,59 @@ describe('Dock', () => {
       </Dock>,
     )
     expect(screen.getByText(/ship is 1 commit behind origin/)).toBeTruthy()
+  })
+
+  /**
+   * A first-class destination for "everything that needs me" earns its keep by
+   * saying how much is waiting without being opened — the unread count the
+   * notifications service already tracks (`unreadCount`), surfaced as a badge
+   * on the rail entry itself.
+   */
+  it('badges the Inbox entry with the unread count', () => {
+    render(
+      <Dock
+        active="home"
+        Link={FakeLink}
+        onLogout={() => undefined}
+        unreadCount={3}
+      >
+        <span />
+      </Dock>,
+    )
+    const inbox = screen.getByText('Inbox').closest('a')
+    expect(inbox?.textContent).toContain('3')
+  })
+
+  it('shows no badge when the unread count is zero, null, or undefined', () => {
+    for (const unreadCount of [0, null, undefined]) {
+      const { unmount } = render(
+        <Dock
+          active="home"
+          Link={FakeLink}
+          onLogout={() => undefined}
+          unreadCount={unreadCount}
+        >
+          <span />
+        </Dock>,
+      )
+      const inbox = screen.getByText('Inbox').closest('a')
+      expect(inbox?.querySelector('[data-testid="rail-badge"]')).toBeNull()
+      unmount()
+    }
+  })
+
+  it('caps the badge at 99+ rather than growing the rail entry unboundedly', () => {
+    render(
+      <Dock
+        active="home"
+        Link={FakeLink}
+        onLogout={() => undefined}
+        unreadCount={140}
+      >
+        <span />
+      </Dock>,
+    )
+    const inbox = screen.getByText('Inbox').closest('a')
+    expect(inbox?.textContent).toContain('99+')
   })
 })
