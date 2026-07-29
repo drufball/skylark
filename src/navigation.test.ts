@@ -17,10 +17,10 @@ import { RAIL } from '@rigging/views/dock'
  *
  * There are exactly two such things:
  *
- * 1. **The rail** (`rigging/views/dock`) — four entries, on every screen, for a
+ * 1. **The rail** (`rigging/views/dock`) — five entries, on every screen, for a
  *    crew member with zero pages and zero tiles.
- * 2. **A default room** (`rigging/rooms`) — `/issues`, `/files` and `/inbox`
- *    left the rail when the rooms arrived, and each room links through to the
+ * 2. **A default room** (`rigging/rooms`) — `/issues` and `/files` left the
+ *    rail when the rooms arrived, and each of those rooms links through to the
  *    view it's the room for. A room can be renamed or left, but the rail's
  *    Chats entry always reaches it and the seed reopens it on boot.
  *
@@ -29,11 +29,18 @@ import { RAIL } from '@rigging/views/dock'
  * exemption list is a decision, not a formality — the diff on it is the review.
  *
  * **Reachable is half a claim; the other half is a way back.** #cse7 linked a
- * room OUT to its view and gave the view nothing in return, so `/issues`,
- * `/files` and `/inbox` were one-way doors: the browser's back button was the
- * only exit, which is a rescue rather than navigation, and it strands anybody
- * who arrived by typing the URL or following a link an agent posted months ago.
- * So this file now pins the round trip too.
+ * room OUT to its view and gave the view nothing in return, so `/issues` and
+ * `/files` were one-way doors: the browser's back button was the only exit,
+ * which is a rescue rather than navigation, and it strands anybody who arrived
+ * by typing the URL or following a link an agent posted months ago. So this
+ * file pins the round trip too, for whichever rooms still name a view.
+ *
+ * **`/inbox` moved from the second bucket to the first.** #cse8 took it out of
+ * the rail for the Inbox room to carry; #933f puts it back — "everything that
+ * needs me" is a first-class destination, not something you reach only by
+ * first opening a conversation, so it's a permanent rail entry again and the
+ * Inbox room names no `view` any more (it's an ordinary chat with a filtered
+ * `inbox` tile, same as any chat could have).
  */
 
 /**
@@ -57,6 +64,14 @@ const NOT_DESTINATIONS = new Set([
   '/status',
   '/issues/$id',
 ])
+
+/** The rooms that still name a view of their own — Issues and Files, not Inbox. */
+function roomsWithView() {
+  return DEFAULT_ROOMS.filter(
+    (room): room is typeof room & { view: NonNullable<typeof room.view> } =>
+      room.view !== undefined,
+  )
+}
 
 const ROUTES_DIR = join(import.meta.dirname, 'routes')
 
@@ -86,7 +101,7 @@ describe('navigation: nothing the ship serves is unreachable', () => {
   it('reaches every destination route from the rail or a default room', () => {
     const reachable = new Set([
       ...RAIL.map((item) => item.to),
-      ...DEFAULT_ROOMS.map((room) => room.view.to),
+      ...roomsWithView().map((room) => room.view.to),
     ])
     const orphans = routePaths().filter(
       (path) => !NOT_DESTINATIONS.has(path) && !reachable.has(path),
@@ -101,23 +116,24 @@ describe('navigation: nothing the ship serves is unreachable', () => {
     ).toEqual([])
   })
 
-  it('keeps the three surfaces that left the rail alive as routes', () => {
+  it('keeps the surfaces that left the rail for a room alive as routes', () => {
     // Deleting a good working view in the same slice that moved the front door
     // would be two irreversible things at once. The rooms are the way IN; the
     // views themselves are untouched.
     const served = new Set(routePaths())
-    for (const room of DEFAULT_ROOMS) {
+    for (const room of roomsWithView()) {
       expect(served.has(room.view.to), room.view.to).toBe(true)
     }
   })
 
   it('gives every one of those surfaces a way back to its room', () => {
     // The route is where the two halves meet, so the route is what this checks:
-    // each of the three mounts the shell with the room `roomForView` resolves.
-    // A view that quietly dropped it would still render, still be reachable,
-    // and still be a one-way door — which is exactly how it shipped last time.
+    // each room-owned view mounts the shell with the room `roomForView`
+    // resolves. A view that quietly dropped it would still render, still be
+    // reachable, and still be a one-way door — which is exactly how it shipped
+    // last time.
     const byPath = new Map(routeFiles().map((r) => [r.path, r.file]))
-    for (const room of DEFAULT_ROOMS) {
+    for (const room of roomsWithView()) {
       const file = byPath.get(room.view.to)
       expect(file, room.view.to).toBeDefined()
       const source = readFileSync(join(ROUTES_DIR, file ?? ''), 'utf8')
@@ -130,8 +146,19 @@ describe('navigation: nothing the ship serves is unreachable', () => {
     // surface that earns a rail entry should lose its room link, and vice versa.
     const all = [
       ...RAIL.map((item) => item.to),
-      ...DEFAULT_ROOMS.map((room) => room.view.to),
+      ...roomsWithView().map((room) => room.view.to),
     ]
     expect(new Set(all).size).toBe(all.length)
+  })
+
+  /**
+   * The Inbox room deliberately joined the OTHER bucket (#933f): `/inbox` is a
+   * rail entry now, so the room that used to own it names no `view` — and this
+   * pins that on purpose, the way `rooms.test.ts` does from the rooms side.
+   */
+  it('gives the Inbox room no view of its own — /inbox lives in the rail', () => {
+    const inbox = DEFAULT_ROOMS.find((room) => room.id === 'room-inbox')
+    expect(inbox?.view).toBeUndefined()
+    expect(RAIL.some((item) => item.to === '/inbox')).toBe(true)
   })
 })

@@ -76,15 +76,17 @@ below it. The `src/` serving layer is the one exception — it may import from a
 three, because wiring them together is its job.
 
 **Getting around.** `/` is your home canvas; `/chat` is every conversation;
-`/agents` and `/models` are the two surfaces that aren't conversations. Issues,
-Files and Inbox are reached through their ROOMS (default chats,
+`/agents`, `/models` and `/inbox` are the surfaces that aren't conversations.
+Issues and Files are reached through their ROOMS (default chats,
 [`rigging/zine.md`](rigging/zine.md)), each of which links through to its own
 richer view — those routes are alive, they just aren't in the rail any more —
-and each of those views carries the way back to its room.
-`src/navigation.test.ts` holds the whole claim: every route the ship serves is
-reachable from the rail or from a default room, or is named in that file as
-deliberately not a destination, and the three that left the rail are reachable
-in BOTH directions.
+and each of those views carries the way back to its room. Inbox used to be one
+of them (#cse8) but came back to the rail as a permanent fifth entry (#933f):
+"everything that needs me" is a place you always go, not a thing you find by
+first opening a conversation. `src/navigation.test.ts` holds the whole claim:
+every route the ship serves is reachable from the rail or from a default room,
+or is named in that file as deliberately not a destination, and the rooms that
+left the rail are reachable in BOTH directions.
 
 **A request, end to end.** A browser hits a route in `src/routes` → the route's
 loader calls a server function → the server function calls a service's pure
@@ -122,7 +124,7 @@ in-memory PGlite — real Postgres, no external database.
   you made, which tiles you kept — all of it is rows, and rows can be deleted.
   Without a fixed floor, a crew member can arrange their way into a corner where
   "where's my inbox?" becomes "which page had the inbox tile?" with no path
-  back. The rail is that floor: four entries, hardcoded, on every screen,
+  back. The rail is that floor: five entries, hardcoded, on every screen,
   consulting no row, identical for somebody whose home is completely empty. It
   stays SHORT for the same reason it exists — a rail that grew an entry per
   surface would be the dock again, and the point of the chat-native turn is that
@@ -131,6 +133,14 @@ in-memory PGlite — real Postgres, no external database.
 
 ## Changelog
 
+- **#933f — Inbox rejoins the rail as a fifth, permanent entry.** #cse8 gave
+  Inbox to a room; this puts `/inbox` back in the rail alongside Home, Chats,
+  Crew and Models, badged live with the unread count everywhere in the ship
+  (`rigging/lib/use-unread-count.ts`), not just on the inbox route itself. The
+  Inbox ROOM (the @bix conversation) is untouched as a conversation and still
+  carries its filtered `inbox` tile — it just no longer names a `view`
+  (`rigging/rooms/rooms.ts`'s `view` is optional now), since `/inbox` isn't a
+  surface a room owns any more.
 - **#cse9 — The closing pass: nothing new, everything durable.** The three views
   that left the rail stop being one-way doors; the home seed learns to run once
   per person, so clearing your home is a decision the next boot respects; a tile

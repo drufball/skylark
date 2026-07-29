@@ -13,6 +13,7 @@ import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
+import { useUnreadCount } from '@rigging/lib/use-unread-count'
 import { roomForView } from '@rigging/rooms/rooms'
 
 // The files route: a thin mount binding /files to the shared-documents view and
@@ -76,6 +77,7 @@ function FilesRoute() {
 
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
+  const unreadCount = useUnreadCount()
   return (
     <Dock
       // No `active`: this view left the rail for its ROOM. That room is what
@@ -84,6 +86,7 @@ function FilesRoute() {
       room={roomForView('/files') ?? undefined}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
+      unreadCount={unreadCount}
     >
       <FilesView
         files={files}

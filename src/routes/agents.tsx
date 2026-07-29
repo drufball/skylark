@@ -33,6 +33,7 @@ import { useServerAction } from '@rigging/lib/use-server-action'
 import { useShipLogInvalidate } from '@rigging/lib/use-ship-log-invalidate'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
+import { useUnreadCount } from '@rigging/lib/use-unread-count'
 
 // The Agents surface: the dedicated agent-management view. Three sub-tabs —
 // the session **monitor** (the old front-door chat ux, which was only ever a
@@ -198,12 +199,14 @@ function AgentsRoute() {
 
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
+  const unreadCount = useUnreadCount()
   return (
     <Dock
       active="crew"
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
+      unreadCount={unreadCount}
     >
       <div className="flex h-full flex-col">
         <TabBar

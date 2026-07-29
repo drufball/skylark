@@ -54,6 +54,7 @@ import { useInvalidatingAction } from '@rigging/lib/use-invalidating-action'
 import { useShipLog, type ShipLogEvent } from '@rigging/lib/use-ship-log'
 import { useBehindOrigin } from '@rigging/lib/use-behind-origin'
 import { useLogout } from '@rigging/lib/use-logout'
+import { useUnreadCount } from '@rigging/lib/use-unread-count'
 
 // Every conversation on the ship. Participant-focused — it opens your most
 // recent one, since you keep messaging the same people with new tasks. Live
@@ -375,12 +376,14 @@ function ChatRoute() {
 
   const onLogout = useLogout()
   const behindOrigin = useBehindOrigin()
+  const unreadCount = useUnreadCount()
   return (
     <Dock
       active="chats"
       Link={Link}
       onLogout={onLogout}
       behindOrigin={behindOrigin}
+      unreadCount={unreadCount}
     >
       <ChatView
         chats={chatItems}

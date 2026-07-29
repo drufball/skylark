@@ -44,6 +44,16 @@ export interface InboxItem {
   read: boolean
 }
 
+/**
+ * The current actor's unread count alone — the cheap read every screen makes
+ * to badge the rail's Inbox entry (#933f), without paying for the full inbox
+ * (`myInbox`) list and label formatting on every page that isn't the inbox
+ * itself.
+ */
+export const unreadNotificationCount = createServerFn({
+  method: 'GET',
+}).handler(() => withCurrentActor((tx, me) => unreadCount(tx, me.id)))
+
 /** The current actor's inbox: who they are, the entries, the unread count. */
 export const myInbox = createServerFn({ method: 'GET' }).handler(async () => {
   ensureNotificationsReactor()
