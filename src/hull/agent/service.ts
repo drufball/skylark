@@ -168,6 +168,26 @@ export async function runningSessionIds(
   return rows.map((r) => r.id)
 }
 
+/**
+ * When did each of these sessions last write a transcript message? The night
+ * watch's ground truth for "is anyone home": a session's status row can lag
+ * (a crash leaves it running, a turn boundary leaves it idle) and an issue's
+ * status line can stop ticking while work continues — but a transcript write
+ * is the work itself (`appendMessage` bumps `lastMessageAt` in the same
+ * transaction).
+ */
+export async function latestMessageAtBySession(
+  db: Database,
+  sessionIds: string[],
+): Promise<Map<string, Date>> {
+  if (sessionIds.length === 0) return new Map()
+  const rows = await db
+    .select({ id: agentSessions.id, at: agentSessions.lastMessageAt })
+    .from(agentSessions)
+    .where(inArray(agentSessions.id, sessionIds))
+  return new Map(rows.map((r) => [r.id, r.at]))
+}
+
 export async function setStatus(
   db: Database,
   id: string,

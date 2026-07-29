@@ -22,6 +22,7 @@ import {
   getNudgeRow,
   healthCheckPrompt,
   jobCheckIntervalMs,
+  laterOf,
   listJobCheckRows,
   listNudgeRows,
   nudgePrompt,
@@ -75,6 +76,24 @@ describe('resolveWatchConfig', () => {
     expect(positiveIntOr('-10', 5)).toBe(5)
     expect(positiveIntOr('7.9', 5)).toBe(7)
     expect(positiveIntOr('42', 5)).toBe(42)
+  })
+})
+
+// --- laterOf (pure) ----------------------------------------------------------
+
+describe('laterOf', () => {
+  const early = new Date(1 * MIN)
+  const late = new Date(9 * MIN)
+
+  it('takes the later of two clocks, either order', () => {
+    expect(laterOf(early, late)).toBe(late)
+    expect(laterOf(late, early)).toBe(late)
+  })
+
+  it('falls back to whichever clock exists', () => {
+    expect(laterOf(null, late)).toBe(late)
+    expect(laterOf(early, null)).toBe(early)
+    expect(laterOf(null, null)).toBeNull()
   })
 })
 
@@ -296,7 +315,7 @@ describe('runWatchSweep', () => {
 
   /** A building issue with an agent baton holder, its session, and a stale line. */
   async function buildingIssue(opts?: {
-    statusLineAt?: Date
+    statusLineAt?: Date | null
     running?: boolean
     /** Override the issue owner (defaults to the human owner). */
     owner?: string
@@ -309,9 +328,15 @@ describe('runWatchSweep', () => {
       ownerId: owner,
     })
     const sessionId = uuidv7()
-    await db
-      .insert(agentSessions)
-      .values({ id: sessionId, model: 'test', agentUserId: agentId })
+    // Pin the transcript clock to the arranged quiet time — the column
+    // defaults to the REAL now(), which would read as fresh activity against
+    // the fake test clock and defeat every stall arrangement.
+    await db.insert(agentSessions).values({
+      id: sessionId,
+      model: 'test',
+      agentUserId: agentId,
+      lastMessageAt: opts?.statusLineAt ?? T0,
+    })
     await db
       .insert(issueSessions)
       .values({ issueId: issue.id, agentUserId: agentId, sessionId })
@@ -321,7 +346,7 @@ describe('runWatchSweep', () => {
       .set({
         status: 'building',
         statusLine: 'working on it',
-        statusLineAt: opts?.statusLineAt ?? T0,
+        statusLineAt: opts?.statusLineAt === undefined ? T0 : opts.statusLineAt,
       })
       .where(eq(issues.id, issue.id))
     if (opts?.running) await setStatus(db, sessionId, 'running')
@@ -396,6 +421,60 @@ describe('runWatchSweep', () => {
 
     const events = await watchdogEvents(issueId, WATCHDOG_NUDGED)
     expect(events).toHaveLength(1)
+  })
+
+  it('trusts the session transcript over a stale status line — fresh messages mean no stall', async () => {
+    // Observed live (#0eyx, 2026-07-29): the issue's status line stopped
+    // ticking while the builder session kept writing messages every minute.
+    // The watch nudged, escalated, and paused a HEALTHY 40-minute build. The
+    // transcript is ground truth for "is anyone home" — a recent
+    // agent_messages row must reset the stall clock even when statusLineAt
+    // has gone stale.
+    const { issueId, sessionId } = await buildingIssue() // statusLineAt = T0
+    const now = at(20 * MIN)
+    await db
+      .update(agentSessions)
+      .set({ lastMessageAt: at(19 * MIN) })
+      .where(eq(agentSessions.id, sessionId))
+
+    const { deps, drives } = sweepDeps(now)
+    await runWatchSweep(db, deps)
+
+    expect(drives).toEqual([])
+    expect(await getNudgeRow(db, issueId)).toBeUndefined()
+  })
+
+  it('stays conservative when there is no activity clock at all', async () => {
+    // statusLineAt null AND a stranded baton (no session to read a transcript
+    // clock from): no stall can be measured, so the watch must do nothing.
+    const stranded = await createUser(db, {
+      id: uuidv7(),
+      handle: 'drifter',
+      displayName: 'Drifter',
+      type: 'agent',
+    })
+    const { issueId } = await buildingIssue({ statusLineAt: null })
+    await setBatonHolder(db, issueId, stranded.id)
+
+    const { deps, drives } = sweepDeps(at(20 * MIN))
+    await runWatchSweep(db, deps)
+
+    expect(drives).toEqual([])
+    expect(await getNudgeRow(db, issueId)).toBeUndefined()
+  })
+
+  it('still nudges when both the status line and the transcript are old', async () => {
+    const { issueId, sessionId } = await buildingIssue() // statusLineAt = T0
+    await db
+      .update(agentSessions)
+      .set({ lastMessageAt: at(MIN) })
+      .where(eq(agentSessions.id, sessionId))
+
+    const { deps, drives } = sweepDeps(at(20 * MIN))
+    await runWatchSweep(db, deps)
+
+    expect(drives).toHaveLength(1)
+    expect((await getNudgeRow(db, issueId))?.nudgeCount).toBe(1)
   })
 
   it('does not stack a second nudge inside the threshold window', async () => {

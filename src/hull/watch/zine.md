@@ -119,6 +119,13 @@ is what falls silent — and pings the issue author if they're a distinct human.
 - **`nudgeCount` is monotonic — never reset on partial recovery.** Repeated
   stalling on one issue should reach a human FASTER, not restart at "gentle". A
   build that recovers and stalls again keeps climbing toward the owner ping.
+- **The transcript outvotes the status line.** The stall clock reads the LATER
+  of the issue's `statusLineAt` and the holder session's `lastMessageAt`
+  (`latestMessageAtBySession`). The status line is display plumbing and can stop
+  ticking while the session works; a transcript write IS the work. The naive
+  version (status line only) paused a healthy 40-minute build (#0eyx,
+  2026-07-29) after nudging it twice for being "quiet" — while it wrote messages
+  every minute.
 - **A human (or empty) baton is never nudged.** A human holder is the universal
   "waiting for input" signal; an empty holder (a pre-baton build we can't
   resolve) is treated the same way — conservatively left alone.
