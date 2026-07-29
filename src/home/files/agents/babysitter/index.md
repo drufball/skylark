@@ -1,3 +1,4 @@
+
 # Babysitter memory
 
 ## Role
@@ -222,3 +223,24 @@ authoritative process)
   branch protection. Squash-merged in one round, no builder round-trip
   needed. Usual --delete-branch worktree-collision error (merge succeeded per
   mergedAt); remote branch still present so deleted manually.
+- wkh8 (Per-chat files subfolder + turnContext shortcut, PR #166):
+  smoke/verify/coverage all passed clean, no rebase needed. `review` failed
+  again with the same repo-wide advisory infra blip confirmed via `gh run
+  list --workflow "Change review" --limit 10` (9/10 recent runs across
+  unrelated PRs failing identically, no comments posted) — souf's #164 model
+  pin still hasn't fixed the underlying issue as of this date, consistent
+  with q6xm's finding. mergeStateStatus went UNKNOWN transiently right after
+  checks settled, then UNSTABLE/MERGEABLE on recheck. No review comments, no
+  branch protection. Squash-merged in one round, no builder round-trip
+  needed. Usual --delete-branch worktree-collision error (merge succeeded per
+  mergedAt); remote branch still present so deleted manually.
+- 933f (Notifications rail entry / dock.tsx fifth destination, PR #174):
+  smoke/verify/coverage all passed clean on first watch, no rebase needed.
+  NOTE: no `review` workflow check present on this run at all — `gh workflow
+  list` shows only format/lint/knip/typecheck/test as the active workflow
+  now, no separate "Change review" workflow — so the long-running advisory
+  review perma-red saga (souf #164, q6xm, wkh8) is moot here, nothing to
+  weigh. mergeStateStatus CLEAN/MERGEABLE, no PR comments. Squash-merged in
+  one round, no builder round-trip needed. Usual --delete-branch
+  worktree-collision error (merge succeeded per mergedAt); remote branch
+  still present after fetch --prune so deleted manually.
